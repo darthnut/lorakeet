@@ -1,0 +1,23 @@
+# systemd unit for a Linux station (e.g. a Raspberry Pi collector). Adjust User and paths, then:
+#   sudo cp deploy/lorakeet.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lorakeet
+#   journalctl -u lorakeet -f        # follow the log
+[Unit]
+Description=Lorakeet Meshtastic logger
+After=network-online.target tailscaled.service
+Wants=network-online.target
+# a crash loop backs off instead of hammering the radio
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=lorakeet
+# the radio's serial port belongs to the dialout group
+SupplementaryGroups=dialout
+WorkingDirectory=/home/lorakeet/lorakeet
+ExecStart=/home/lorakeet/lorakeet/venv/bin/python -u server.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# Listening station config (copied by deploy/setup-station.sh). Every option: lorakeet.example.toml.
+
+[station]
+name = ""             # what to call this station (default: its radio's name)
+location = []         # [lat, lon] of the ANTENNA, e.g. [47.60620, -122.33210]
+note = ""             # e.g. "attic window, facing north"
+
+[sync]
+mode = "collector"
+hub_url = "http://HUB-TAILSCALE-NAME-OR-IP:5190"
+token = ""            # this station's own token (or the shared one), from the hub's lorakeet.toml
+interval_s = 15
+
+[http]
+lan = "off"           # "view" = a read-only dashboard on this station's own Wi-Fi

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data lives in the data folder (see lorakeet.toml), never in the repo. Guard against copies landing here.
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.log
+data/
+backup-tmp/
+storage_state.json
+
+# per-install configuration (personal); lorakeet.example.toml documents every option
+lorakeet.toml
+
+# shareable videos made by tools/record-viz.mjs
+recordings/
+
+# personal words for tools/release_check.py (never published)
+.release-denylist
+CLAUDE.local.md
+private/

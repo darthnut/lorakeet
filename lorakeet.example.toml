@@ -1,0 +1,85 @@
+# Lorakeet configuration. Copy to `lorakeet.toml` (next to server.py, or point LORAKEET_CONFIG at it)
+# and change what you need; anything left out uses the default shown here.
+
+[radio]
+# Serial port of the USB-connected Meshtastic radio, e.g. "COM7" (Windows) or "/dev/ttyACM0" (Linux).
+# Empty = auto-detect.
+port = ""
+
+[storage]
+# Where the database and logs live. Empty = per-OS default:
+#   Windows %LOCALAPPDATA%\Lorakeet, macOS ~/Library/Application Support/Lorakeet, Linux ~/.local/share/lorakeet
+# Use a disk that can take constant writes (an SSD, not a Raspberry Pi's SD card).
+data_dir = ""
+# Warn (dashboard banner + notification) when the database reaches this size. Nothing is ever deleted.
+db_warn_gb = 1.0
+# The radio's firmware debug log is high-volume; keep it this many days.
+debug_log_days = 7
+
+[logging]
+# Store the recipient of directed packets your radio overhears between other nodes. Header data
+# like this is visible to any radio in range; turn it off if you'd rather not keep it.
+store_recipients = true
+
+[backup]
+# Folders to copy a compressed, integrity-checked backup into each night, e.g. a cloud-synced folder.
+# Empty = no backups.
+destinations = []
+time = "03:30"
+
+[http]
+port = 5190
+# "off"  = the dashboard is reachable from this computer only.
+# "view" = other devices on your local network get a read-only view (sending and settings stay
+#          on this computer). You may also need to allow the port through your firewall.
+lan = "off"
+
+[map]
+# [lat, lon] to show before any node has shared a position. Empty = world view.
+center = []
+zoom = 10
+# Map tiles. "osm" (default): OpenStreetMap data, CARTO's light/dark styles and OpenTopoMap terrain, free with
+# attribution for light personal use. "esri": Esri's maps plus satellite imagery; check Esri's terms first.
+tiles = "osm"
+
+[base]
+# Optionally feature one node as your base station (its own card, watched by default), e.g. "!1234abcd".
+id = ""
+name = ""
+
+[alerts]
+# Scheduled traceroutes transmit on the shared mesh, so they're off for new installs. You can turn them
+# on later from the 🔔 panel; after the first run the setting is stored and this default no longer applies.
+auto_traceroute = false
+
+[sync]
+# Several listening stations, one database. A "collector" logs what its own radio hears (keeping a local
+# copy, so nothing is lost while offline) and sends it to a "hub", which stores every station's data with
+# a `station` column. Set up a private network between them first (Tailscale), so nothing is exposed to
+# the internet. See docs/PI-SETUP.md.
+mode = "off"            # "off", "collector" or "hub"
+# collector: the hub's address on the private network, e.g. "http://home-pc:5190"
+hub_url = ""
+# the same secret on both ends, 16+ characters. Generate one with:
+#   python -c "import secrets; print(secrets.token_urlsafe(24))"
+token = ""
+interval_s = 60         # collector: seconds between sync passes
+# hub: networks collectors may send from. Default = Tailscale's address ranges. A hub listens on all
+# interfaces even with http.lan = "off", but only /api/ingest (with the token) answers those networks.
+allow = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
+# hub: one secret per station (recommended once there are several). A station listed here must use its own
+# token; the shared token then only works for stations not listed. Each station's own lorakeet.toml puts
+# its token in sync.token. Revoke a station by removing its line.
+station_tokens = []     # e.g. ["!1234abcd:<token>", "!5678ef90:<token>"]
+require_station_tokens = false   # true = refuse the shared token entirely
+
+[station]
+# This listening station. The location is the ANTENNA's, as exact as you can (a phone's map app is fine):
+# it places the station on the maps and anchors position estimates for nodes that never share one.
+# Stations sync it to the hub, so set it on each station.
+name = ""             # default: the radio's name
+location = []         # [lat, lon] or [lat, lon, altitude_m]
+note = ""             # e.g. "attic window, facing north"
+# mobile = true: a station that moves (a car). Leave location empty: it comes from the radio's own GPS
+# fixes, logged as it goes, so every reception can be placed where the station was at the time.
+mobile = false

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualizations · Lorakeet</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="analytics.css">
+<link rel="stylesheet" href="viz.css">
+</head>
+<body class="analytics viz-app" data-station-picker>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html" aria-current="page">Visualizations</a><a href="/packets.html">Packets</a></nav>
+  <div class="seg ranges" id="ranges" role="group" aria-label="Time range">
+    <button data-range="24h">24 h</button>
+    <button data-range="7d" class="on">7 days</button>
+    <button data-range="30d">30 days</button>
+    <button data-range="90d">90 days</button>
+    <button data-range="all">All</button>
+  </div>
+</header>
+
+<main class="stage" id="topoReplay">
+  <div id="topoReplayGraph" class="topo stage-view" aria-label="Network topology graph"></div>
+  <div id="topoReplayMap" class="topo topomap stage-view" hidden></div>
+
+  <div class="vz-toolbar vz-ui">
+    <div class="seg vz-panel" id="topoMode" role="group" aria-label="View">
+      <button data-mode="graph" class="on">Graph</button><button data-mode="geo">Geographic</button>
+    </div>
+    <button type="button" class="btn vz-panel" id="vzGrow" aria-pressed="false" title="Radios appear only once the replay reaches their first packet, so the graph grows over time (G)">Grow</button>
+    <button type="button" class="btn vz-panel" id="vzFade" aria-pressed="false" title="Radios dim when they go quiet and brighten when heard again (D)">Fade</button>
+    <details class="vz-panel vz-fadeopts" id="vzFadeOpts">
+      <summary title="Fade options" aria-label="Fade options">▾</summary>
+      <div class="vz-panel vz-fade-menu">
+        <label>Fade after
+          <select id="vzFadeAfter">
+            <option value="auto">Auto: each radio's own rhythm</option>
+            <option value="1">1 hour of silence</option><option value="3">3 hours</option><option value="6">6 hours</option>
+            <option value="12">12 hours</option><option value="24">24 hours</option>
+          </select></label>
+        <label id="vzFadeMissesRow">Missed check-ins before fading
+          <select id="vzFadeMisses"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></label>
+        <label>Faded radios
+          <select id="vzFadeRemove"><option value="0">Stay as faint outlines</option><option value="1">Leave the graph</option></select></label>
+        <p class="hint">Auto learns how often each radio is usually heard (kept between 2 and 24 hours). Hours we weren't logging never count as silence.</p>
+      </div>
+    </details>
+    <button type="button" class="btn vz-panel" id="vzHide" title="Hide the controls, e.g. to screen-record (H)">Hide UI</button>
+    <button type="button" class="btn vz-panel" id="vzFull" title="Full screen (F)">⛶ Full screen</button>
+  </div>
+
+  <aside class="vz-side vz-ui">
+    <details class="vz-panel vz-box" id="vzKey" open>
+      <summary>Key</summary>
+      <div class="vz-box-body">
+        <div class="legend-row" id="replayLegend"></div>
+        <div class="legend-row" id="topoLegend"></div>
+        <details class="vz-about">
+          <summary>About this data</summary>
+          <p>A dot travels what our radio knew about each packet: sender → the relay it heard (1-byte relay ID) → our radio. A ring marks the transmission. Solid links = measured (direct reception, traceroute, neighbor report); dashed = inferred from relays. Click a type above to hide it; click a radio to open its page.</p>
+          <p class="muted" id="replayStatus"></p>
+          <p class="muted" id="topoNote"></p>
+        </details>
+      </div>
+    </details>
+    <details class="vz-panel vz-box vz-log" id="vzLog" open>
+      <summary>Log</summary>
+      <ul class="replay-ticker" id="replayTicker" aria-live="off"></ul>
+    </details>
+  </aside>
+
+  <div class="vz-bottom vz-panel vz-ui" id="vzBottom">
+    <div class="replay-ctl">
+      <button type="button" id="replayPlay" class="btn" aria-pressed="false">▶ Play</button>
+      <div class="seg" id="replaySpeed" role="group" aria-label="Playback speed"></div>
+      <span class="replay-clock" id="replayClock" aria-live="off"></span>
+    </div>
+    <div id="replayTimeline" class="replay-tl"></div>
+  </div>
+
+  <div class="vz-clean-clock" id="vzCleanClock" aria-hidden="true"></div>
+  <button type="button" class="btn vz-panel vz-show" id="vzShow" title="Show the controls (H or Esc)">Show UI</button>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="prov.js"></script>
+<script src="common.js"></script>
+<script src="insights.js"></script>
+<script src="topology.js"></script>
+<script src="replay.js"></script>
+<script src="viz.js"></script>
+<script src="alerts.js"></script>
+</body>
+</html>

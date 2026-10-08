@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics · Lorakeet</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="analytics.css">
+</head>
+<body class="analytics" data-station-picker>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html" aria-current="page">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a></nav>
+  <div class="seg ranges" id="ranges" role="group" aria-label="Time range">
+    <button data-range="24h">24 h</button>
+    <button data-range="7d" class="on">7 days</button>
+    <button data-range="30d">30 days</button>
+    <button data-range="90d">90 days</button>
+    <button data-range="all">All</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="nodeView" hidden></div>
+  <div id="overview">
+  <p class="scope" id="scope"></p>
+
+  <section class="kpis" id="kpis" aria-label="Summary"></section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Traffic over time</h2><p class="sub">Packets heard per <span class="bucket">hour</span>, by type. Hatched = dashboard wasn't running, so no data (not zero).</p></div>
+      <button class="linkbtn" data-table="traffic">Table</button>
+    </div>
+    <div class="legend-row" id="trafficLegend"></div>
+    <div class="chart" id="traffic"></div>
+    <div class="tableview" id="traffic-table" hidden></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <div class="card-head"><div><h2>Channel utilization</h2><p class="sub">How busy the airwaves are, as measured by our radio (% of time).</p></div></div>
+      <div class="chart" id="util"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2>Nodes online</h2><p class="sub">Nodes our radio considers active (heard in the last 2 h).</p></div></div>
+      <div class="chart" id="online"></div>
+    </section>
+  </div>
+
+  <section class="card" id="airCard">
+    <div class="card-head">
+      <div><h2>Airtime</h2><p class="sub">How much of the time the channel carried a transmission our radio heard, and whose. Airtime is calculated from each packet's length and the LoRa settings (every copy counts: relays transmit too); the line is our radio's own measurement of how busy the channel was. Hatched = not logged.</p></div>
+    </div>
+    <p class="scope" id="airSummary"></p>
+    <div class="legend-row" id="airLegend"></div>
+    <div class="chart" id="airChart"></div>
+    <div class="grid2" style="margin-top:12px">
+      <div><h3 class="minor">On air near us <span class="muted">(the radio transmitting each copy)</span></h3><div id="airTx"></div></div>
+      <div><h3 class="minor">Whose traffic <span class="muted">(sender; relayed copies included)</span></h3><div id="airOrig"></div></div>
+    </div>
+    <p class="muted" id="airNote"></p>
+  </section>
+
+  <section class="card" id="cmpCard" hidden>
+    <div class="card-head">
+      <div><h2>Listening stations</h2><p class="sub">Every station's view of the same mesh, over the minutes at least two of them were logging. <b>Capture</b> = of a node's packets that any station heard while this one was listening too, the share it heard. Packets from the stations' own radios are left out.</p></div>
+    </div>
+    <p class="scope" id="mxScope"></p>
+    <div class="tablewrap" id="mxStations"></div>
+    <h3 class="minor" style="margin-top:14px">Location and health</h3>
+    <div class="tablewrap" id="mxHealth"></div>
+    <h3 class="minor" style="margin-top:14px">Which stations hear each node</h3>
+    <div class="legend-row" id="mxLegend"></div>
+    <div class="tablewrap" id="mxGrid"></div>
+    <div class="card-head" style="margin-top:22px">
+      <div><h3 class="minor" style="margin:0">Compare two stations</h3><p class="sub">The same packets side by side: signal at each, which relay delivered each copy, and paths that differ.</p></div>
+      <div class="ctrls"><select id="cmpA" aria-label="First station"></select><span class="muted">vs</span><select id="cmpB" aria-label="Second station"></select></div>
+    </div>
+    <p class="scope" id="cmpScope"></p>
+    <section class="kpis" id="cmpKpis" aria-label="Comparison summary"></section>
+    <div class="legend-row" id="cmpLegend"></div>
+    <div class="chart" id="cmpChart"></div>
+    <div class="grid2" style="margin-top:12px">
+      <div><h3 class="minor">How each station's copies arrived <span class="muted">(last relay)</span></h3><div id="cmpRelays"></div></div>
+      <div><h3 class="minor">Same packets, different paths</h3><div id="cmpPaths"></div></div>
+    </div>
+    <h3 class="minor" style="margin-top:14px">Per node</h3>
+    <div class="tablewrap" id="cmpNodes"></div>
+    <p class="muted" id="cmpNote"></p>
+  </section>
+
+  <section class="card" id="topoCard">
+    <div class="card-head">
+      <div><h2>Radio links</h2><p class="sub">Which radios have been observed hearing each other directly: the RF links that carry the mesh, not who talks to whom. Measured = direct reception, traceroute or neighbor report; inferred = from relays.</p></div>
+      <a class="linkbtn" href="/visualizations.html">Graph, replay &amp; map →</a>
+    </div>
+    <div id="topoTable"></div>
+    <p class="muted" id="topoNote"></p>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Mesh health &amp; security</h2><p class="sub">Problems already visible in the logged data: airtime, over-frequent broadcasts, high hop limits, quiet routers, weakening links, old firmware, and key or identity issues. Click a row for its evidence.</p></div>
+    </div>
+    <p class="scope" id="healthSummary" style="margin:4px 0 8px"></p>
+    <div id="healthBody"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Coverage</h2><p class="sub">Position packets our radio heard, placed where the sender said it was and coloured by the signal we measured (darker = stronger). Filled = heard directly, which measures our radio's coverage.</p></div>
+      <div class="ctrls"><select id="covNode" title="Sender"></select>
+        <label class="chk"><input type="checkbox" id="covRelayed"> Include relayed</label>
+        <label class="chk"><input type="checkbox" id="covPrecise"> Precise only</label></div>
+    </div>
+    <div class="legend-row"><span>SNR −20 dB</span><span class="covscale"></span><span>+10 dB</span><span><i class="lg-node" style="border:2px solid var(--s1);background:transparent"></i>relayed</span></div>
+    <div id="covMap" class="topo topomap"></div>
+    <p class="muted" id="covNote"></p>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Traceroute explorer</h2><p class="sub">Every traceroute logged: ours (manual and scheduled) and any overheard. Paths drawn through known positions; dashed where they pass an estimated position.</p></div>
+      <div class="ctrls"><select id="trResult"><option value="all">All results</option><option value="ok">Answered</option><option value="fail">No answer</option></select>
+        <input id="trNode" class="filter" type="search" placeholder="Node…" style="width:120px">
+        <select id="trMax" title="Max relays"><option value="">Any hops</option><option>0</option><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
+    </div>
+    <div id="trMap" class="topo topomap" style="height:340px"></div>
+    <div id="trTable" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Readable vs private traffic</h2><p class="sub">Distinct packets heard over the air, by channel. Everything on the mesh is encrypted; "public" means the default LongFast channel whose key every radio has. Counted from every reception our radio logged (duplicates collapsed), aggregate only.</p></div>
+    </div>
+    <div id="radioChannels" class="radiochans"></div>
+    <p class="scope" id="privacySummary" style="margin:4px 0 8px"></p>
+    <div class="legend-row" id="privacyLegend"></div>
+    <div class="chart" id="privacyChart"></div>
+    <div id="privacyTable" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Weekly rhythm</h2><p class="sub">Average packets per hour by local day and hour, counting only hours the dashboard was running.</p></div>
+    </div>
+    <div class="heat" id="heat"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Nodes</h2><p class="sub">Click a column to sort. <b>Seen</b> is the share of logged hours the node was heard at all; <b>Packets</b> is how much it sent.</p></div>
+      <input class="filter" id="nodeFilter" type="search" placeholder="Filter…" autocomplete="off">
+    </div>
+    <div class="tablewrap"><table class="nodes" id="nodes"></table></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <div class="card-head"><div><h2>Node roles</h2><p class="sub">What each node is configured to do. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
+      <div id="roles"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2>Hardware</h2><p class="sub">Device models heard. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
+      <div id="hardware"></div>
+    </section>
+  </div>
+
+  <div class="grid3">
+    <section class="card">
+      <div class="card-head"><div><h2>Packet types</h2><p class="sub">Every application port heard.</p></div></div>
+      <div id="ports"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2>Hops travelled</h2><p class="sub">How far packets came. 0 = heard directly.</p></div></div>
+      <div id="hops"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2>Who relays to us</h2><p class="sub">Last hop before our radio, for multi-hop packets.</p></div></div>
+      <div id="relays"></div>
+    </section>
+  </div>
+
+  <div class="grid2 convgrid">
+    <section class="card">
+      <div class="card-head"><div><h2>Conversations</h2><p class="sub">Text messages grouped into threads (a 45-minute silence starts a new one).</p></div></div>
+      <div id="convs"></div>
+    </section>
+    <div class="stack">
+      <section class="card">
+        <div class="card-head"><div><h2>Most talkative</h2><p class="sub">Text messages sent.</p></div></div>
+        <div id="talkers"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div><h2>New nodes</h2><p class="sub">First ever heard within this range.</p></div></div>
+        <div id="newnodes"></div>
+      </section>
+    </div>
+  </div>
+  </div>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="prov.js"></script>
+<script src="common.js"></script>
+<script src="analytics.js"></script>
+<script src="topology.js"></script>
+<script src="insights.js"></script>
+<script src="alerts.js"></script>
+<script src="node.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Files that run on Linux stations must keep LF line endings, whatever the checkout platform does.
+*.sh text eol=lf
+*.service text eol=lf
+deploy/*.toml text eol=lf

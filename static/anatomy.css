@@ -1,0 +1,85 @@
+/* Packet anatomy (static/anatomy.js) */
+.anat { display: flex; flex-direction: column; gap: 14px; padding: 6px 2px 10px; white-space: normal; font-size: 13px; color: var(--text-primary); }
+.anat .small { font-size: 12px; margin: 6px 0 0; }
+.anat-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.anat-checks li span { font-weight: 700; margin-right: 4px; }
+.anat-checks li.ok span { color: var(--good); }
+.anat-checks li.bad span { color: var(--critical); }
+.anat-layer { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px 10px; background: var(--surface-1); }
+.anat-lh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.anat-lh h4 { margin: 0; font-size: 14px; }
+.anat-n { width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border); display: inline-grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.anat-x { margin: 3px 0 8px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.anat-pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+.anat-pill.anat-received, .anat-pill.anat-logged { border-color: var(--accent); color: var(--accent); }
+.anat-pill.anat-rebuilt { border-style: dashed; border-color: var(--text-muted); }
+.anat-pill.anat-unknown { color: var(--text-muted); }
+.anat-kv { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 10px; }
+.anat-kv > span { display: flex; flex-direction: column; font-size: 11px; color: var(--text-muted); }
+.anat-kv b { font-size: 15px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.anat-air { display: flex; gap: 2px; height: 26px; font-size: 10.5px; border-radius: 6px; overflow: hidden; }
+.anat-air span { display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); min-width: 0; }
+.anat-air .pre { background: color-mix(in srgb, var(--s7) 26%, var(--surface-2)); }
+.anat-air .pay { background: color-mix(in srgb, var(--s1) 26%, var(--surface-2)); }
+
+/* each layer: the bytes, then the field table underneath at the same width */
+.anat-split { display: flex; flex-direction: column; gap: 6px; }
+.anat-fields td:first-child { white-space: nowrap; }
+.hexdump { font: 12px/1.55 ui-monospace, Consolas, monospace; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+.hx-row { display: flex; gap: 14px; white-space: nowrap; }
+.hx-off { color: var(--text-muted); user-select: none; }
+.hx-bytes { display: inline-flex; }
+.hx-bytes .b { padding: 0 3px; }
+.hx-bytes .b:nth-child(8) { margin-right: 6px; }
+.hx-asc { color: var(--text-secondary); }
+.hx-missing { color: var(--text-muted); font-style: italic; white-space: normal; }
+.hexdump .b { border-radius: 3px; cursor: default; }
+.hexdump .b.tag { color: var(--text-muted); }
+.hexdump .b.unk { outline: 1px dashed var(--text-muted); outline-offset: -2px; color: var(--text-muted); }
+/* field tints: fill only, text stays in text colours */
+.anat .f0 { --ft: var(--s1); } .anat .f1 { --ft: var(--s2); } .anat .f2 { --ft: var(--s3); }
+.anat .f3 { --ft: var(--s4); } .anat .f4 { --ft: var(--s5); } .anat .f5 { --ft: var(--s7); }
+.hexdump .b[class*=" f"] { background: color-mix(in srgb, var(--ft) 16%, transparent); }
+.hexdump .b.hi { background: color-mix(in srgb, var(--ft) 55%, transparent); color: var(--text-primary); outline: 1px solid var(--ft); }
+.anat-fields { border-collapse: collapse; width: 100%; font-size: 12px; }
+.anat-fields th { text-align: left; font-weight: 600; color: var(--text-secondary); padding: 2px 8px; border-bottom: 1px solid var(--border); }
+.anat-fields td { padding: 1px 8px; line-height: 1.45; border-bottom: 1px solid var(--border); vertical-align: top; white-space: normal; max-width: none; overflow: visible; }
+.anat-fields td.mono { font: 11.5px/1.45 ui-monospace, Consolas, monospace; word-break: break-word; }
+.anat-fields td.num { text-align: right; white-space: nowrap; }
+.anat-fields .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: color-mix(in srgb, var(--ft) 60%, transparent); }
+.anat-fields tr.hi td { background: color-mix(in srgb, var(--ft) 18%, transparent); }
+.anat-fields tr.bad td { color: var(--critical); }
+.anat-fields .bits { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; color: var(--text-secondary); font-family: system-ui, sans-serif; }
+.anat-bits { display: flex; align-items: center; gap: 3px; margin-top: 8px; flex-wrap: wrap; }
+.anat-bits > span { width: 22px; height: 26px; display: grid; place-items: center; font: 600 14px ui-monospace, Consolas, monospace; border-radius: 4px; border: 1px solid var(--border); }
+.anat-bits .hs { background: color-mix(in srgb, var(--s1) 22%, transparent); }
+.anat-bits .mq { background: color-mix(in srgb, var(--s2) 22%, transparent); }
+.anat-bits .ack { background: color-mix(in srgb, var(--s3) 22%, transparent); }
+.anat-bits .hl { background: color-mix(in srgb, var(--s4) 22%, transparent); }
+.anat-bitlg { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11px; color: var(--text-secondary); }
+.anat-bitlg span { display: inline-flex; align-items: center; gap: 5px; }
+.anat-bitlg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--border); }
+.anat-bitlg .hs { background: color-mix(in srgb, var(--s1) 40%, transparent); } .anat-bitlg .mq { background: color-mix(in srgb, var(--s2) 40%, transparent); }
+.anat-bitlg .ack { background: color-mix(in srgb, var(--s3) 40%, transparent); } .anat-bitlg .hl { background: color-mix(in srgb, var(--s4) 40%, transparent); }
+.anat-kv > span > .prov { align-self: flex-start; margin: 2px 0 0; }
+
+/* anatomy beside the logged JSON */
+/* the anatomy column is about one hex row wide (16 bytes + ASCII); the JSON pane takes the rest */
+.anat-wrap { display: grid; grid-template-columns: minmax(0, 660px) minmax(320px, 1fr); gap: 14px; align-items: start; }
+/* follows the page down while the (taller) anatomy scrolls by: clear of the sticky top bar on the page,
+   and of the table's sticky header row when the anatomy is opened inside the packet table */
+.anat-jsonpane { position: sticky; top: var(--anat-stick, 60px); max-height: calc(100vh - var(--anat-stick, 60px) - 12px); overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+.anat-jh { position: sticky; top: 0; z-index: 1; background: var(--surface-1); padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.anat-jh span { font-size: 11px; color: var(--text-muted); }
+.anat-jtree { padding: 6px 0 10px; font: 11.5px/1.55 ui-monospace, Consolas, monospace; color: var(--text-secondary); }
+.jl { white-space: pre-wrap; word-break: break-all; padding-right: 10px; margin-left: 10px; border-radius: 3px; cursor: default; }
+.jl .jk { color: var(--text-primary); }
+.jl .jn { color: var(--accent); }
+.jl.jhi { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--text-primary); }
+.anat [data-j]:not([data-j=""]) { cursor: pointer; }
+@media (max-width: 1040px) {
+  .anat-wrap { grid-template-columns: minmax(0, 1fr); }
+  .anat-jsonpane { position: static; max-height: 420px; }
+}
+.pwrap .anat-wrap { --anat-stick: 34px; }
+.pwrap .anat-jsonpane { max-height: calc(100vh - 330px); }

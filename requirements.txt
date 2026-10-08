@@ -1,0 +1,2 @@
+# Python 3.11 or newer. Brings in protobuf, pyserial, pypubsub and bleak.
+meshtastic==2.7.11

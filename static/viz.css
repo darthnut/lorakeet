@@ -1,0 +1,87 @@
+/* Visualizations page: the graph or map fills the window; controls float over it in panels. */
+
+body.viz-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; margin: 0; }
+.viz-app .topbar { flex: none; }
+.stage { position: relative; flex: 1 1 auto; min-height: 0; background: var(--surface-2); --pad: 12px; --side-w: 320px; --bottom-h: 104px; --toolbar-h: 40px; }
+
+/* the visualization itself: full bleed, no card */
+.viz-app .stage-view { position: absolute; inset: 0; height: auto; border: 0; border-radius: 0; }
+.viz-app .stage-view[hidden] { display: none; }
+/* the left edge holds our toolbar and panels, so Leaflet's zoom buttons move to the top right */
+.viz-app .leaflet-top.leaflet-left { left: auto; right: 0; }
+.viz-app .leaflet-top.leaflet-left .leaflet-control { margin-left: 0; margin-right: var(--pad); }
+
+/* floating panels */
+.vz-panel { background: color-mix(in srgb, var(--surface-1) 90%, transparent); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.vz-toolbar { position: absolute; top: var(--pad); left: var(--pad); z-index: 700; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.vz-toolbar .seg.vz-panel { padding: 3px; }
+.vz-toolbar .btn { padding: 6px 12px; }
+
+.vz-side { position: absolute; top: calc(2 * var(--pad) + var(--toolbar-h)); left: var(--pad); bottom: calc(var(--bottom-h) + 2 * var(--pad)); width: var(--side-w);
+  z-index: 700; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.vz-side > * { pointer-events: auto; }
+.vz-box { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.vz-box > summary { cursor: pointer; padding: 8px 12px; font-weight: 600; font-size: 13px; color: var(--text-primary); list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; }
+.vz-box > summary::-webkit-details-marker { display: none; }
+.vz-box > summary::before { content: "▸"; color: var(--text-muted); transition: transform .15s; }
+.vz-box[open] > summary::before { transform: rotate(90deg); }
+#vzKey { flex: none; max-height: 55%; }
+#vzKey .vz-box-body { overflow: auto; padding: 0 12px 10px; }
+#vzKey .legend-row { margin: 0 0 8px; }
+#vzKey #replayLegend .lgkeys { margin-left: 0; }
+.vz-about { font-size: 12px; color: var(--text-secondary); }
+.vz-about summary { cursor: pointer; color: var(--text-secondary); }
+.vz-about p { margin: 6px 0 0; line-height: 1.45; }
+.vz-log { flex: 1 1 0; min-height: 90px; }
+.vz-log:not([open]) { flex: none; min-height: 0; }
+.vz-log .replay-ticker { overflow: auto; margin: 0; padding: 0 12px 10px; min-height: 0; flex: 1 1 auto; }
+.vz-log .replay-ticker li { display: block; white-space: normal; line-height: 1.4; padding: 4px 0; border-top: 1px solid var(--border); }
+.vz-log .replay-ticker li:first-child { border-top: 0; }
+.vz-log .replay-ticker li .t { display: block; min-width: 0; font-size: 11px; }
+.vz-log .replay-ticker li i { display: inline-block; margin-right: 5px; vertical-align: 0; }
+.vz-log .replay-ticker:empty::before { content: "Press Play. Packets appear here as they arrive."; color: var(--text-muted); display: block; padding: 4px 0; }
+
+.vz-bottom { position: absolute; left: var(--pad); right: var(--pad); bottom: var(--pad); z-index: 700; padding: 6px 12px 4px; }
+.vz-bottom .replay-ctl { margin: 0 0 2px; }
+
+/* hidden-UI mode, for watching or screen recording */
+.vz-clean-clock, .vz-show { display: none; }
+body.vz-clean .topbar, body.vz-clean .vz-ui { display: none; }
+body.vz-clean .stage { --side-w: 0px; --bottom-h: 0px; }
+body.vz-clean .vz-clean-clock:not(.off) { display: block; position: absolute; left: 16px; bottom: 14px; z-index: 700; pointer-events: none;
+  font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-primary); opacity: .75;
+  text-shadow: 0 0 6px var(--surface-2), 0 0 2px var(--surface-2); }
+body.vz-clean .vz-show { display: block; position: absolute; top: 12px; right: 12px; z-index: 750; opacity: 0; transition: opacity .3s; }
+body.vz-clean.vz-pointer .vz-show { opacity: 1; }
+body.vz-clean .leaflet-control-container { display: none; }
+
+/* phones and narrow windows: panels stack above the play bar, collapsed by default */
+@media (max-width: 760px) {
+  .stage { --pad: 8px; }
+  .vz-side { left: var(--pad); right: var(--pad); width: auto; top: auto; max-height: 48%; flex-direction: column-reverse; }
+  #vzKey { max-height: none; }
+  .vz-log .replay-ticker { max-height: 30vh; }
+  .vz-toolbar .btn { padding: 5px 9px; font-size: 13px; }
+}
+.anat-link { font-size: 11px; white-space: nowrap; }
+
+/* fade mode: --decay (0..1, set per radio and link by replay.js) dims radios that have gone quiet */
+.topo .node > circle, .topo .node > text { opacity: var(--decay, 1); }
+.topo .edge { opacity: calc(.75 * var(--decay, 1)); }
+.topo .edge.inferred { opacity: calc(.55 * var(--decay, 1)); }
+.topo .edge.hi { opacity: 1; }
+.topo .edge.dim { opacity: .15; }
+.topo .tether { opacity: calc(.45 * var(--decay, 1)); }
+.vz-fadeopts { position: relative; }
+.vz-toolbar { z-index: 720; }  /* above the side panels, so the Fade menu opens over the Key */
+.vz-fadeopts > summary { list-style: none; cursor: pointer; padding: 6px 10px; user-select: none; }
+.vz-fadeopts > summary::-webkit-details-marker { display: none; }
+.vz-fade-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 760; padding: 10px 12px; display: grid; gap: 8px; min-width: 270px; font-size: 13px; }
+.vz-fade-menu label { display: grid; gap: 3px; color: var(--text-secondary); }
+.vz-fade-menu select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.vz-fade-menu .hint { color: var(--text-muted); font-size: 12px; line-height: 1.4; margin: 0; }
+
+/* grow mode: radios fade in at their first packet (topology.js fade(), on the replay's clock) */
+.topo .unseen { opacity: 0 !important; pointer-events: none; }
+.vz-toolbar .btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }

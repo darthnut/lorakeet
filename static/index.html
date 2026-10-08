@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map · Lorakeet</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Lorakeet</div>
+  <nav class="pagenav"><a href="/" aria-current="page">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a></nav>
+  <div class="stats" id="stats"></div>
+  <button class="store" id="store" aria-haspopup="dialog" aria-expanded="false" hidden></button>
+  <div class="conn" id="conn"><span class="dot"></span><span class="label">Connecting…</span></div>
+  <div class="storepop" id="storepop" role="dialog" aria-label="Storage and backups" hidden></div>
+</header>
+<div class="banner" id="banner" role="alert" hidden></div>
+
+<main class="layout">
+  <section class="mapwrap">
+    <div id="map"></div>
+
+    <div class="map-controls">
+      <div class="row">
+        <div class="seg" id="basemap">
+          <button data-layer="map" class="on">Map</button>
+          <button data-layer="topo">Terrain</button>
+          <button data-layer="sat">Satellite</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="showLinks" checked> Links</label>
+        <label class="chk"><input type="checkbox" id="showStale" checked> Stale</label>
+        <label class="chk" title="Best-guess positions for nodes that never shared one, inferred from their radio links"><input type="checkbox" id="showEst" checked> Estimated</label>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span><i class="lg active"></i>Heard &lt; 2 h</span>
+        <span><i class="lg recent"></i>&lt; 24 h</span>
+        <span><i class="lg stale"></i>Older</span>
+        <span><i class="lg base"></i>Base</span>
+      </div>
+    </div>
+
+    <div class="nopos" id="nopos" hidden></div>
+
+    <aside class="basecard" id="basecard" hidden>
+      <div class="bc-head">
+        <div>
+          <div class="eyebrow">☀ Solar base station</div>
+          <div class="bc-name" id="bcName">—</div>
+        </div>
+        <button class="linkbtn" id="bcOpen">Details</button>
+      </div>
+      <div class="bc-tiles" id="bcTiles"></div>
+      <div class="chart" id="bcChart"></div>
+    </aside>
+  </section>
+
+  <aside class="side">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="nodes" class="on">Nodes</button>
+      <button role="tab" data-tab="traffic">Traffic</button>
+      <button role="tab" data-tab="messages">Messages<span class="badge" id="unread" hidden></span></button>
+      <button role="tab" data-tab="debug">Debug</button>
+    </nav>
+    <div class="panel" id="panel-nodes">
+      <input class="search" id="search" placeholder="Filter nodes…" autocomplete="off">
+      <ul class="nodelist" id="nodelist"></ul>
+    </div>
+    <div class="panel" id="panel-traffic" hidden><ul class="feed" id="feed"></ul></div>
+    <div class="panel chatpanel" id="panel-messages" hidden>
+      <div class="convs" id="convs"></div>
+      <div class="chanbar" id="chanBar" hidden>
+        <label>Channel <select id="chanPick"></select></label>
+        <span class="channote" id="chanNote"></span>
+      </div>
+      <ul class="chat" id="chat"></ul>
+      <form class="compose" id="compose" autocomplete="off">
+        <div class="to" id="composeTo"></div>
+        <div class="crow">
+          <textarea id="msgText" rows="2" placeholder="Write a message…"></textarea>
+          <button type="submit" class="btn primary" id="sendBtn">Send</button>
+        </div>
+        <div class="cmeta"><span class="err" id="sendErr"></span><span class="num" id="msgCount">0 / 200</span></div>
+      </form>
+    </div>
+    <div class="panel detail" id="panel-detail" hidden></div>
+    <div class="panel debugpanel" id="panel-debug" hidden>
+      <div class="dbg-bar">
+        <input class="dbg-search" id="dbgSearch" type="search" placeholder="Search the last 7 days…" autocomplete="off">
+        <select id="dbgLevel" title="Minimum level">
+          <option value="">All levels</option>
+          <option value="DEBUG">Debug +</option>
+          <option value="INFO">Info +</option>
+          <option value="WARN">Warnings +</option>
+          <option value="ERROR">Errors</option>
+        </select>
+        <select id="dbgSource" title="Firmware module"><option value="">All sources</option></select>
+        <button class="btn" id="dbgPause">Pause</button>
+      </div>
+      <div class="dbg-status" id="dbgStatus"></div>
+      <div class="dbg-lines" id="dbgLines" role="log" aria-live="off"></div>
+    </div>
+  </aside>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="prov.js"></script>
+<script src="app.js"></script>
+<script src="alerts.js"></script>
+</body>
+</html>

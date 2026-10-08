@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packets · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="analytics.css">
+<link rel="stylesheet" href="anatomy.css">
+<style>
+  .pfilters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-bottom: 12px; }
+  .pfilters label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-muted); }
+  .pfilters input, .pfilters select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 13px; min-width: 0; }
+  .pfilters input[type=number] { width: 72px; }
+  .pfilters .grow { flex: 1; min-width: 160px; }
+  .pfilters .grow input { width: 100%; }
+  .pmeta { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0 8px; font-size: 13px; color: var(--text-secondary); flex-wrap: wrap; }
+  .pmeta .btns { display: flex; gap: 8px; }
+  table.ptable { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.ptable th { text-align: left; font-weight: 600; color: var(--text-secondary); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; background: var(--surface-1); }
+  table.ptable td { padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  table.ptable tr.has-raw { cursor: pointer; }
+  table.ptable tr:hover td { background: var(--surface-2); }
+  table.ptable td.mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+  .arr { display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 4px; border: 1px dashed var(--text-muted); color: var(--text-secondary); margin-left: 6px; white-space: nowrap; vertical-align: 1px; }
+  .arr.unk { border-style: dotted; color: var(--text-muted); }
+  table.ptable tr.local td { color: var(--text-secondary); }
+  table.ptable tr.anat-row td { background: var(--surface-2); max-width: none; white-space: normal; padding: 8px 10px; overflow: visible; } /* visible: lets the JSON pane stick */
+  table.ptable tr.anat-row:hover td { background: var(--surface-2); }
+  #anatPanel { margin-bottom: 14px; }
+  .pwrap { overflow: auto; max-height: calc(100vh - 290px); border: 1px solid var(--border); border-radius: 8px; }
+  .srcnote { font-size: 12px; color: var(--text-muted); margin: -4px 0 10px; }
+</style>
+</head>
+<body class="analytics" data-station-picker>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html" aria-current="page">Packets</a></nav>
+  <div class="seg" id="source" role="group" aria-label="Source table">
+    <button data-s="packets" class="on">Packets</button><button data-s="rx_hops">Receptions</button><button data-s="tx_log">Our transmissions</button>
+  </div>
+</header>
+<main class="wrap">
+  <section class="card" id="anatPanel" hidden>
+    <div class="card-head"><div><h2 id="anatTitle">Packet anatomy</h2><p class="sub">One packet, layer by layer: the radio signal, the bytes on air, the encryption, and the decoded fields. Hover a byte to find its field.</p></div><a class="linkbtn" href="#" id="anatClose">Close</a></div>
+    <div id="anatBody"></div>
+  </section>
+  <p class="srcnote" id="srcnote"></p>
+  <form class="pfilters" id="filters" autocomplete="off">
+    <label>Time<select name="range"><option value="3600">Last hour</option><option value="86400" selected>Last 24 h</option><option value="604800">Last 7 days</option><option value="2592000">Last 30 days</option><option value="">All</option></select></label>
+    <label>Node (either end)<input name="node" placeholder="!1234abcd" size="11"></label>
+    <label>From<input name="from_id" placeholder="!id" size="10"></label>
+    <label>To<input name="to_id" placeholder="!id or ^all" size="10"></label>
+    <label data-only="packets">Type<select name="portnum"><option value="">Any</option></select></label>
+    <label data-only="packets" title="How the packet reached the dashboard, from fields the radio reported">Arrival<select name="arrival"><option value="">Any</option><option value="air">Over the air</option><option value="local">Local (not over the air)</option><option value="unknown">Unknown</option></select></label>
+    <label>Channel<select name="channel"><option value="">Any</option></select></label>
+    <label>Kind<select name="kind"><option value="">Any</option><option value="broadcast">Broadcast</option><option value="directed">Addressed</option></select></label>
+    <label>Hops ≥<input type="number" name="hopsMin" min="0" max="7"></label>
+    <label>Hops ≤<input type="number" name="hopsMax" min="0" max="7"></label>
+    <label data-not="tx_log">SNR ≥<input type="number" name="snrMin" step="0.5"></label>
+    <label class="grow" data-only="packets">Summary contains<input name="q" placeholder="text…"></label>
+  </form>
+  <div class="pmeta"><span id="count"></span>
+    <span class="btns"><button class="btn" id="prev">← Newer</button><button class="btn" id="next">Older →</button><a class="btn" id="csv" style="text-decoration:none;color:inherit" download>Export CSV</a></span></div>
+  <div class="pwrap"><table class="ptable" id="ptable"></table></div>
+  <p class="muted">Times are this PC's clock. Column meanings and caveats: <code>SELECT * FROM field_notes</code> in mesh.db (e.g. <i>channel</i> is a slot number for decoded packets but a hash in Receptions).</p>
+</main>
+<div class="tip" id="tip" hidden></div>
+<script src="prov.js"></script>
+<script src="anatomy.js"></script>
+<script src="packets.js"></script>
+<script src="alerts.js"></script>
+</body>
+</html>
