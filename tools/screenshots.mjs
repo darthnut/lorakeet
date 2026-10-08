@@ -1,11 +1,14 @@
 // README screenshots, anonymized, from a running Lorakeet server (Node 22+, a Chromium-based browser).
 //
 //   node tools/screenshots.mjs [out-dir] [--station *] [--range 7d] [--url http://127.0.0.1:5190]
+//                              [--packet <rowid> --allow !id1,!id2]
 //
 // Writes replay.png (Visualizations with the Key and Log, packets in flight), graph.png (the same graph,
 // UI hidden) and analytics.png (the summary tiles and traffic chart). Names on the Visualizations page are
 // anonymized with ?anon=1; the analytics crop is checked for anything that looks like a node name or id
-// and refused if it finds one. Look at every image before publishing it anyway.
+// and refused if it finds one. With --packet, also anatomy.png: that packet's layer-by-layer breakdown, written
+// only if every node id it shows is listed in --allow (use one of your own radios' packets). Look at every
+// image before publishing it anyway.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +19,7 @@ const opt = (name, dflt) => { const i = args.indexOf(`--${name}`); return i >= 0
 const OUT = args[0] && !args[0].startsWith("--") ? args[0] : "docs/screenshots";
 const STATION = opt("station", "*"), RANGE = opt("range", "7d"), BASE = opt("url", "http://127.0.0.1:5190").replace(/\/$/, "");
 const W = 1600, H = 900, PORT = 9334;
+const PACKET = opt("packet", ""), ALLOW = new Set(["!ffffffff", ...String(opt("allow", "")).split(",").filter(Boolean)]);
 const CHROME = [process.env.CHROME,
   "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium",
@@ -93,6 +97,19 @@ async function main() {
     const suspicious = box.text.match(/![0-9a-f]{8}\b|\b[AKNW][A-Z]?\d[A-Z]{2,3}\b/g);
     if (suspicious) console.error(`analytics.png NOT written: the crop shows ${[...new Set(suspicious)].join(", ")}`);
     else await shot("analytics.png", { x: Math.max(0, box.x), y: Math.max(0, box.y), width: box.width, height: box.height });
+
+    // 4. one packet's anatomy, only if it shows no node ids beyond --allow
+    if (PACKET) {
+      await cdp("Emulation.setDeviceMetricsOverride", { width: W, height: 1800, deviceScaleFactor: 1, mobile: false });
+      await cdp("Page.navigate", { url: `${BASE}/packets.html#packet=${encodeURIComponent(PACKET)}` });
+      await until(`document.querySelectorAll("#anatPanel .anat-layer").length >= 4`, "the packet anatomy");
+      await sleep(1500);
+      const a = await js(`(() => { const p = document.getElementById("anatPanel"), r = p.getBoundingClientRect();
+        return { x: Math.floor(r.x) - 8, y: Math.floor(r.y + scrollY) - 8, width: Math.ceil(r.width) + 16, height: Math.ceil(r.height) + 16, text: p.innerText }; })()`);
+      const ids = [...new Set(a.text.match(/![0-9a-f]{8}/g) || [])], extra = ids.filter((i) => !ALLOW.has(i));
+      if (extra.length) console.error(`anatomy.png NOT written: it shows ${extra.join(", ")} (not in --allow)`);
+      else await shot("anatomy.png", { x: Math.max(0, a.x), y: Math.max(0, a.y), width: a.width, height: a.height });
+    }
   } finally {
     try { ws?.close(); } catch { /* closed */ }
     chrome.kill();

@@ -40,6 +40,8 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 
 ![Analytics summary and traffic over time](docs/screenshots/analytics.png)
 
+![Packet anatomy: one of our own messages, layer by layer from radio signal to text](docs/screenshots/anatomy.png)
+
 ## Quick start
 
 You need **Python 3.11+** and a Meshtastic radio connected over **USB** (tested with Heltec V4, Heltec
