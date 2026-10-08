@@ -378,3 +378,12 @@ pre.raw .anat-link { display: inline-block; margin-bottom: 6px; font: 600 12px s
 
 /* dark mode on the OpenStreetMap tiles (prov.js lkTiles): invert, then rotate the hues back */
 .lk-dark-tiles { filter: invert(1) hue-rotate(180deg) brightness(.9) contrast(.85) saturate(.35); }
+
+/* key warning badge (prov.js keyBadge): compromised or shared public key */
+.kf-badge { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  line-height: 18px; white-space: nowrap; vertical-align: 1px; cursor: help; color: var(--text-primary); border: 1px solid var(--warning); background: color-mix(in srgb, var(--warning) 18%, transparent); }
+.kf-badge.kf-compromised { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 18%, transparent); }
+.kf-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45; color: var(--text-primary);
+  border: 1px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+/* likely firmware 2.8 (prov.js v28Tag) */
+.tag.v28 { border-color: var(--accent); color: var(--accent); }

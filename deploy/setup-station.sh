@@ -36,7 +36,10 @@ echo "== Tailscale (remote access + the link home)"
 command -v tailscale >/dev/null || { curl -fsSL https://tailscale.com/install.sh -o /tmp/ts-install.sh && sudo sh /tmp/ts-install.sh; }
 if ! tailscale ip -4 >/dev/null 2>&1; then
   echo "   open the link below to approve this station in your Tailscale account:"
-  sudo tailscale up --ssh --hostname "$(hostname)"
+  # no --ssh: the Pi's normal SSH server (your keys, one host key) answers over Tailscale too. Tailscale's own
+  # SSH server presents a different host key and its default policy asks for browser re-approval, which
+  # breaks unattended updates (update-station.sh).
+  sudo tailscale up --hostname "$(hostname)"
 fi
 
 echo "== service"

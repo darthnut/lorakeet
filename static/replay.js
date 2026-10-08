@@ -126,8 +126,8 @@ function anonymize(rd, drawn) {
     count[word] = (count[word] || 0) + 1;
     label.set(id, `${word} ${count[word]}`);
   }
-  for (const n of drawn) { n.name = n.short = label.get(n.id); delete n.hw; }
-  for (const id of Object.keys(rd.nodes || {})) rd.nodes[id] = { ...rd.nodes[id], name: label.get(id), short: label.get(id), hw: null };
+  for (const n of drawn) { n.name = n.short = label.get(n.id); delete n.hw; delete n.keyFlag; }  // a key warning could single a radio out
+  for (const id of Object.keys(rd.nodes || {})) rd.nodes[id] = { ...rd.nodes[id], name: label.get(id), short: label.get(id), hw: null, keyFlag: null };
   R.anonLabels = label;
 }
 
@@ -178,6 +178,7 @@ function seek(t) {
   R.flights = [];
   if (R.layer) R.layer.replaceChildren();
   $("replayTicker").replaceChildren();
+  resetChat();
   R.visKey = null;
   applyVisibility();
 }
@@ -359,7 +360,127 @@ function placeHead() {
 
 // ---------------------------------------------------------------- playback
 
+const flagOf = (id) => (ANON ? null : R.graph?.byId.get(id)?.keyFlag || R.data.nodes?.[id]?.keyFlag);
 const nameOf = (id) => (id === R.data.local ? "our radio" : (ANON ? R.anonLabels?.get(id) || "a radio" : R.graph.byId.get(id)?.name || R.data.nodes[id]?.name || id));
+
+// ---------------------------------------------------------------- text messages (chat panel)
+// Readable text messages join the bottom of a chat panel as the replay reaches them, each joined by a line to the
+// radio that sent it (bright at first, then fainter; hover an entry to light its line). Older ones fade out at
+// the top and the rest flow up: after CHAT_LIFE_MS of playing, or sooner when the panel is full. Ages run on a
+// clock that only advances while playing, so pausing freezes the panel. Playback speed is untouched.
+// Anonymized pages (?anon=1) show that a message was sent, never its words.
+const CHAT_LIFE_MS = 25000;     // playing time an entry stays
+const CHAT_FADE_MS = 900;       // then it fades out...
+const CHAT_CLOSE_MS = 450;      // ...and closes up, so the newer ones slide to the top
+const CHAT_GAP = 6;
+const LINK_BRIGHT_MS = 6000;    // a new line stays bright this long, then settles to LINK_FLOOR
+const LINK_FLOOR = 0.25;
+R.chatOn = (() => { try { return localStorage.getItem("meshdash.chat") === "1"; } catch { return false; } })();
+R.chat = [];                    // {el, m, born, dieAt, h}
+R.chatT = 0;                    // ms of playing time
+R.msgIdx = 0;
+
+function chatEntry(m) {
+  const el = document.createElement("li");
+  const where = m.direct ? "direct message" : (m.channelName || (m.channel ? `channel ${m.channel}` : "LongFast"));
+  el.innerHTML = `<div class="ch-head"><b>${esc(nameOf(m.from))}${keyBadge(flagOf(m.from), { short: true })}</b><span>${esc(where)} · ${esc(clockOf(m.ts))}</span></div>`
+    + `<div class="ch-text">${ANON ? "<i>a text message</i>" : esc(m.text)}</div>`;
+  el.style.opacity = "0";
+  el.addEventListener("pointerenter", () => el.classList.add("hot"));
+  el.addEventListener("pointerleave", () => el.classList.remove("hot"));
+  return { el, m, born: R.chatT, dieAt: null, h: 0 };
+}
+const clockOf = (ts) => { const d = new Date(ts * 1000);
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`; };
+
+function addChat(m) {
+  const list = $("chatList"); if (!list) return;
+  const c = chatEntry(m);
+  list.append(c.el); R.chat.push(c);
+}
+
+// seek, new range, toggled on: start empty at the playhead
+function resetChat() {
+  const msgs = R.data?.messages || [];
+  let lo = 0, hi = msgs.length;
+  while (lo < hi) { const k = (lo + hi) >> 1; if (msgs[k].ts <= R.t) lo = k + 1; else hi = k; }
+  R.msgIdx = lo;
+  $("chatList")?.replaceChildren(); R.chat = [];
+  $("vzChat")?.classList.toggle("empty", !msgs.length);
+  $("chatLinks")?.replaceChildren();
+}
+
+// Ages, fades and closes up the entries (JS on the play clock, not CSS transitions, so recordings match).
+function stepChat() {
+  const list = $("chatList"); if (!list) return;
+  const T = R.chatT;
+  // one at a time, oldest first, so a burst that arrived together still leaves as a flow
+  const next = R.chat.find((x) => x.dieAt == null);
+  if (next && T - next.born > CHAT_LIFE_MS && !R.chat.some((x) => x.dieAt != null)) next.dieAt = T;
+  // full: the oldest entry still standing starts to leave
+  if (list.scrollHeight > list.clientHeight + 1) { const c = R.chat.find((x) => x.dieAt == null); if (c && c !== R.chat[R.chat.length - 1]) c.dieAt = T; }
+  R.chat = R.chat.filter((c) => {
+    const age = T - c.born;
+    let op = Math.min(1, age / 300), k = 1;
+    if (c.dieAt != null) {
+      const d = T - c.dieAt;
+      if (!c.h) c.h = c.el.offsetHeight;
+      op = Math.max(0, 1 - d / CHAT_FADE_MS);
+      k = d <= CHAT_FADE_MS ? 1 : Math.max(0, 1 - (d - CHAT_FADE_MS) / CHAT_CLOSE_MS);
+      if (k === 0) { c.el.remove(); return false; }
+      c.el.style.height = `${(c.h * k).toFixed(1)}px`;
+      c.el.style.marginBottom = `${(CHAT_GAP * k).toFixed(1)}px`;
+      if (k < 1) { c.el.style.paddingTop = c.el.style.paddingBottom = "0"; c.el.style.overflow = "hidden"; }
+    }
+    c.op = op;
+    c.el.style.opacity = op.toFixed(3);
+    return true;
+  });
+}
+
+// Lines from each entry to its sender's dot, redrawn every frame (the graph settles, the map pans).
+function drawChatLinks() {
+  const svg = $("chatLinks"); if (!svg) return;
+  if (!R.chatOn || !R.chat.length || !R.graph) { svg.replaceChildren(); return; }
+  const stage = $("topoReplay").getBoundingClientRect(), view = $("chatList").getBoundingClientRect();
+  const gEl = R.view === "graph" && R.graph.g ? R.graph.g.node() : null;
+  const ctm = gEl ? gEl.getScreenCTM() : null, osvg = gEl ? gEl.ownerSVGElement : null;
+  let html = "";
+  for (const c of R.chat) {
+    const r = c.el.getBoundingClientRect();
+    if (!c.op || r.top > view.bottom - 6) continue;
+    const p = R.graph.pos(c.m.from); if (!p) continue;                   // sender not on screen
+    let x = p.x, y = p.y;
+    if (ctm && osvg) { const pt = osvg.createSVGPoint(); pt.x = p.x; pt.y = p.y; const q = pt.matrixTransform(ctm); x = q.x - stage.left; y = q.y - stage.top; }
+    const ax = r.left - stage.left, ay = Math.max(view.top, Math.min(view.bottom, r.top + Math.min(18, r.height / 2))) - stage.top;
+    const age = R.chatT - c.born;
+    const a = c.op * (c.el.classList.contains("hot") ? 1
+      : age < LINK_BRIGHT_MS ? 1 : Math.max(LINK_FLOOR, 1 - (age - LINK_BRIGHT_MS) / 2500));
+    const mx = (ax + x) / 2;
+    html += `<g style="opacity:${a.toFixed(3)}"><path d="M${ax.toFixed(1)},${ay.toFixed(1)} C${mx.toFixed(1)},${ay.toFixed(1)} ${mx.toFixed(1)},${y.toFixed(1)} ${x.toFixed(1)},${y.toFixed(1)}"/>`
+      + `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9"/><circle class="end" cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="3"/></g>`;
+  }
+  svg.innerHTML = html;
+}
+
+// its own loop while the panel is open, so lines follow the graph and the map even when playback is paused
+function chatLoop(now) {
+  if (R.playing && R.chatLast != null) R.chatT += Math.min(250, now - R.chatLast);
+  R.chatLast = now;
+  stepChat();
+  drawChatLinks();
+  R.chatRaf = R.chatOn ? requestAnimationFrame(chatLoop) : 0;
+}
+function setChat(on) {
+  R.chatOn = on;
+  try { localStorage.setItem("meshdash.chat", on ? "1" : "0"); } catch { /* storage blocked */ }
+  document.body.classList.toggle("vz-chat", on);
+  resetChat();
+  if (on && !R.chatRaf) { R.chatLast = null; R.chatRaf = requestAnimationFrame(chatLoop); }
+}
+window.setChat = setChat;
+document.body.classList.toggle("vz-chat", R.chatOn);
+if (R.chatOn) R.chatRaf = requestAnimationFrame(chatLoop);
 
 function frame(now) {
   const rd = R.data;
@@ -379,6 +500,11 @@ function frame(now) {
       if (spawned++ < 60) launch(e, now); else R.skipped++;
     }
     if (R.skipped !== skippedBefore) updateStatus();
+    const msgs = rd.messages || [];
+    while (R.msgIdx < msgs.length && msgs[R.msgIdx].ts <= R.t) {
+      const m = msgs[R.msgIdx++];
+      if (R.chatOn) addChat(m);
+    }
     if (R.t >= rd.until) { R.t = rd.until; R.playing = false; }
   }
   R.last = now;
@@ -475,9 +601,10 @@ function describeEvent(e) {
   else if (e.from === (e.at || R.data.local)) path = `${e.at ? `${esc(nameOf(e.at))}'s` : "our"} packet, rebroadcast by ${esc(nameOf(e.relay))}`;
   else {
     const us = e.at ? esc(nameOf(e.at)) : "us";
-    if (e.hops === 0) path = `${esc(nameOf(e.from))} → ${us}, direct`;
-    else if (e.hops == null) path = `${esc(nameOf(e.from))} → ${us}, hops unknown`;
-    else path = `${esc(nameOf(e.from))} → ${e.hops > 1 ? `${e.hops - 1} unknown hop${e.hops > 2 ? "s" : ""} → ` : ""}${e.relay ? esc(nameOf(e.relay)) : `relay 0x${(e.relayByte ?? 0).toString(16).padStart(2, "0")} (unresolved)`} → ${us}`;
+    const from = esc(nameOf(e.from)) + keyBadge(flagOf(e.from), { short: true });
+    if (e.hops === 0) path = `${from} → ${us}, heard directly (0 hops)`;
+    else if (e.hops == null) path = `${from} → ${us}, hops unknown`;
+    else path = `${from} → ${e.hops > 1 ? `${e.hops - 1} unknown hop${e.hops > 2 ? "s" : ""} → ` : ""}${e.relay ? esc(nameOf(e.relay)) : `relay 0x${(e.relayByte ?? 0).toString(16).padStart(2, "0")} (unresolved)`} → ${us}`;
   }
   const anat = e.row ? ` <a class="anat-link" href="/packets.html#packet=${e.row}" target="_blank" rel="noopener" title="Packet anatomy: bytes on air, encryption, decoded fields">bytes ↗</a>` : "";
   return `<li><span class="t">${esc(t)}</span><i style="${e.group === "Unknown" ? `border:2px solid ${rcol(e.group)}` : `background:${rcol(e.group)}`}"></i><b>${esc(type)}</b> ${path}${anat}</li>`;

@@ -4,6 +4,7 @@ Looked up at $LORAKEET_CONFIG, else `lorakeet.toml` next to this file. See `lora
 every option. The config file is per-install and git-ignored; nothing personal belongs in the code.
 """
 import copy
+import json
 import logging
 import os
 import sys
@@ -27,6 +28,9 @@ def default_data_dir():
 DEFAULTS = {
     "radio": {
         "port": "",               # serial port, e.g. "COM7" or "/dev/ttyACM0"; empty = auto-detect
+        "host": "",               # a radio on the network instead (Wi-Fi / Ethernet): IP or name, e.g.
+                                  # "192.168.1.50" or "meshtastic.local"; set = no USB auto-detect
+        "tcp_port": 4403,         # the radio's API port (Meshtastic's default)
     },
     "storage": {
         "data_dir": "",           # empty = per-OS default (see default_data_dir)
@@ -106,6 +110,11 @@ def _validate(c):
     center = c["map"]["center"]
     if center and (len(center) != 2 or not all(isinstance(x, (int, float)) for x in center)):
         raise ValueError("lorakeet.toml: map.center must be [lat, lon]")
+    r = c["radio"]
+    if r["host"] and r["port"]:
+        raise ValueError("lorakeet.toml: set radio.port (USB) or radio.host (network), not both")
+    if not (isinstance(r["tcp_port"], int) and 0 < r["tcp_port"] < 65536):
+        raise ValueError("lorakeet.toml: radio.tcp_port must be a port number")
     if c["map"]["tiles"] not in ("osm", "esri"):
         raise ValueError('lorakeet.toml: map.tiles must be "osm" or "esri"')
     loc = c["station"]["location"]
@@ -161,3 +170,65 @@ def public():
     """The subset the web pages may see."""
     return {"map": CFG["map"], "base": {"id": CFG["base"]["id"], "name": CFG["base"]["name"]},
             "lan": CFG["http"]["lan"]}
+
+
+# ---- first-run setup (server.py /api/setup, static/setup.html) ----
+
+def config_path():
+    """Where lorakeet.toml is, or will be written: $LORAKEET_CONFIG, else next to server.py."""
+    return Path(os.environ.get("LORAKEET_CONFIG") or HERE / "lorakeet.toml")
+
+
+def _toml(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml(x) for x in v) + "]"
+    return json.dumps(str(v), ensure_ascii=False)  # a JSON string is a valid TOML basic string
+
+
+def write_setup(answers):
+    """Write a new lorakeet.toml from the setup page's answers (validated exactly like a hand-written file).
+    Refuses to overwrite: setup is for first runs; an existing file is edited by hand."""
+    path = config_path()
+    if path.exists():
+        raise FileExistsError(f"{path} already exists")
+    a = answers or {}
+    radio = {}
+    if a.get("host"):
+        radio = {"host": str(a["host"]).strip(), "tcp_port": int(a.get("tcpPort") or 4403)}
+    elif a.get("port"):
+        radio = {"port": str(a["port"]).strip()}
+    user = {
+        "radio": radio,
+        "storage": {"data_dir": str(a.get("dataDir") or "").strip()},
+        "http": {"lan": "view" if a.get("lan") == "view" else "off"},
+        "logging": {"store_recipients": bool(a.get("storeRecipients", True))},
+        "alerts": {"auto_traceroute": bool(a.get("autoTraceroute", False))},
+        "map": {"tiles": "esri" if a.get("tiles") == "esri" else "osm"},
+        "station": {"name": str(a.get("stationName") or "").strip()[:60]},
+    }
+    loc = a.get("location")
+    if loc:
+        user["station"]["location"] = [round(float(loc[0]), 6), round(float(loc[1]), 6)]
+    _validate(_merge(DEFAULTS, user))  # raises ValueError with the same messages a hand-edited file gets
+
+    notes = {
+        "radio": "# The radio. Empty = auto-detect a USB radio. port = a specific serial port; host = a radio on your network.",
+        "storage": "# Where the database, logs and backups live. Empty = the per-OS default folder.",
+        "http": '# "off": the dashboard only answers on this computer. "view": also read-only from your local network.',
+        "logging": "# Record the recipients of other people's addressed packets (what your radio hears on the air).",
+        "alerts": "# Scheduled traceroutes TRANSMIT on the mesh, so they're off unless you turn them on.",
+        "map": '# Map tiles: "osm" (OpenStreetMap + OpenTopoMap) or "esri" (Esri maps and satellite; their terms apply).',
+        "station": "# This listening station: a name, and the antenna's position [lat, lon] for the maps.",
+    }
+    lines = ["# Lorakeet settings, written by the first-run setup page. Every option is explained in",
+             "# lorakeet.example.toml; edit this file and restart Lorakeet to change them.", ""]
+    for section, values in user.items():
+        lines += [notes[section], f"[{section}]"]
+        lines += [f"{k} = {_toml(v)}" for k, v in values.items() if not (k == "data_dir" and v == "")] or ["# (defaults)"]
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path

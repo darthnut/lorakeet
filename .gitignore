@@ -24,3 +24,6 @@ recordings/
 .release-denylist
 CLAUDE.local.md
 private/
+
+# local Claude Code config (dev servers, paths on this machine)
+.claude/

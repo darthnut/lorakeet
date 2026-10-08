@@ -54,6 +54,7 @@
     <label data-only="packets">Type<select name="portnum"><option value="">Any</option></select></label>
     <label data-only="packets" title="How the packet reached the dashboard, from fields the radio reported">Arrival<select name="arrival"><option value="">Any</option><option value="air">Over the air</option><option value="local">Local (not over the air)</option><option value="unknown">Unknown</option></select></label>
     <label>Channel<select name="channel"><option value="">Any</option></select></label>
+    <label title="Packets from radios whose public key is on Meshtastic's known-weak list, or shared with other radios">Sender key<select name="keyflag"><option value="">Any</option><option value="any">Compromised or shared</option><option value="compromised">Compromised</option><option value="shared">Shared</option></select></label>
     <label>Kind<select name="kind"><option value="">Any</option><option value="broadcast">Broadcast</option><option value="directed">Addressed</option></select></label>
     <label>Hops ≥<input type="number" name="hopsMin" min="0" max="7"></label>
     <label>Hops ≤<input type="number" name="hopsMax" min="0" max="7"></label>

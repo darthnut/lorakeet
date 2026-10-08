@@ -82,7 +82,8 @@ async function renderNode() {
   $("nodeView").innerHTML = `
     <p class="scope"><a href="#" class="back">← All nodes</a> · Showing ${esc(when(d.since))} – now · ${s.coveredHours} h logged</p>
     ${relayOnly}
-    <div class="nvhead"><div><h1>${esc(d.name)}${d.isBase ? ' <span class="tag base">base</span>' : ""}${d.isLocal ? ' <span class="tag">this radio</span>' : ""}</h1><div class="muted">${esc(sub)}</div></div>
+    ${d.keyFlag ? `<p class="kf-note">⚠ ${esc(keyFlagText(d.keyFlag))}${d.keyFlagWith?.length ? ` Same key: ${d.keyFlagWith.map((o) => nlink(o.id, o.name)).join(", ")}.` : ""}</p>` : ""}
+    <div class="nvhead"><div><h1>${esc(d.name)}${d.isBase ? ' <span class="tag base">base</span>' : ""}${d.isLocal ? ' <span class="tag">this radio</span>' : ""}${keyBadge(d.keyFlag)} ${v28Tag(d.v28)}</h1><div class="muted">${esc(sub)}</div></div>
       <div class="ctrls"><button class="star ${window.meshWatch?.isWatched(d.id) ? "on" : ""}" id="nvStar" title="Watch this node: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(d.id) ? "★" : "☆"}</button>
       <a class="btn" href="/api/analytics/node.csv?id=${encodeURIComponent(d.id)}&range=${encodeURIComponent(d.range)}${stationQS()}" download>Download CSV</a></div></div>
     <section class="kpis">

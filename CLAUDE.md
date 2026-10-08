@@ -26,7 +26,28 @@ untracked `CLAUDE.local.md`.
 - **Before publishing:** `python tools/release_check.py` must pass (IPs, node ids, MACs, emails, paths,
   coordinates, callsigns, plus a private git-ignored denylist).
 
+## Tests (`tests/`, `python -m pytest`; CI: `.github/workflows/tests.yml`)
+
+- **Synthetic data only.** `tests/synth.py` builds a two-station mesh with made-up ids (four zeros in a row,
+  e.g. `!a0000001`, which the release checker treats as placeholders) and known answers. Never commit a
+  copy of a real `mesh.db` or real ids, names, places or coordinates as fixtures.
+- `tests/conftest.py` points `LORAKEET_CONFIG` and the data folder at temp paths before anything is imported,
+  so a developer's own `lorakeet.toml` and data are never read.
+- Covers config + setup writer, firmware line parsing, channel hash, airtime, relay resolution, access
+  rules, backup retention, secret redaction, the release checker, sync (duplicates, tokens, reports),
+  analytics on the synthetic mesh (per-station counts, combined de-dup, coverage gaps, capture), drive
+  coverage, and phone-log imports. When adding a feature, add a test that fails without it.
+- CI also compiles every .py, `node --check`s every page script and tool, `bash -n`s the deploy scripts
+  and runs `tools/release_check.py`.
+
 ## Configuration
+
+**First run:** with no `lorakeet.toml`, `/` redirects the dashboard PC to `static/setup.html` (`?skipsetup=1`
+skips it). `GET /api/setup` (this PC only) = configured?, defaults, serial ports, the live link;
+`POST /api/setup` writes a commented `lorakeet.toml` through `config.write_setup` (validated like a hand-written
+file; refuses to overwrite). When supervised (`LORAKEET_SUPERVISED`, set by supervise.pyw, or systemd's
+`INVOCATION_ID`) the server exits 1 s later so it restarts on the new settings; otherwise the page asks
+for a restart. A configured install only gets a read-only summary.
 
 `config.py` loads `lorakeet.toml` (next to server.py, or `$LORAKEET_CONFIG`) over defaults; every option is
 documented in `lorakeet.example.toml`. Pages read `/api/config` (map center/zoom/tiles, base id/name, LAN
@@ -45,6 +66,13 @@ nonexistent radio.port).
 - **Network access:** loopback = full; private/link-local LAN addresses = view-only when `[http] lan =
   "view"` (every POST refused); anything else = 403. POSTs must be `application/json` from the same
   origin (the CSRF guard; keep it). There is no login: never expose the port to the internet.
+- **Network radios:** `[radio] host` (or `--host`) connects to a Wi-Fi/Ethernet radio's TCP API (port 4403)
+  instead of USB, through the same connect/watchdog path (`Mesh.run` builds a `TCPInterface(connectNow=False)`, then `connect()`
+  (which opens the socket itself: calling `myConnect()` too made a second connection the radio kept dropping)
+  + `waitForConfig()` as for serial). The status label shows host:port.
+  Tested end to end on a Heltec V4 over Wi-Fi: connects in ~2 s, stable. **The firmware sends its debug log only
+  over USB** (0 lines over TCP vs ~96/min over USB from the same radio), so a network radio gives decoded
+  packets and telemetry but no rx_hops / tx_log (no duplicate copies, airtime or per-hop replay detail).
 - **Disconnects** recover on their own: the radio thread polls every 5 s, auto-detects the port
   (`find_port`: Espressif, Adafruit nRF52, Seeed USB ids), connects with a 45 s timeout, and a 10-minute
   watchdog forces a reconnect if the radio goes silent. While unplugged, the last node DB is served.
@@ -72,7 +100,9 @@ nonexistent radio.port).
   library flattens LogRecords to text, so `_connect()` swaps in its own `_handleLogRecord` (keeps level,
   source, time). Known-harmless firmware lines are listed in `KNOWN_BENIGN` (static/app.js) and dimmed,
   never hidden.
-- **Secrets are stripped before logging:** `security.private_key`, `security.admin_key` and channel PSKs.
+- **Secrets are stripped before logging:** `security.private_key`, `security.admin_key`, the Bluetooth
+  `fixed_pin`, the Wi-Fi `wifi_psk`, the MQTT `password` and channel PSKs (`redacted_config`,
+  `redacted_module_config`, `redacted_channels`); `scrub_logged_secrets` removes any from older snapshots at start.
   Channel keys are used in memory only (on-air hashes, packet anatomy) and never stored or returned.
 - **Phone exports:** `import_datalog.py` loads the Android app's packet CSV and node-database JSON as a
   station's data (no packet ids, so the combined view leaves them out).
@@ -94,6 +124,27 @@ nonexistent radio.port).
   SNR/RSSI across different radio models aren't directly comparable.
 - **Insights** (`insights.py`, all passive): position estimates, health and security findings (weak keys
   from `weak_keys.py`, generated from the firmware's `LOW_ENTROPY_HASHES`; duplicate keys; impersonation).
+- **Firmware 2.8 renumbering** (`nodeids.py`): 2.8 renumbers a radio to crc32(its public key). Same key under
+  an old number and the crc32 number, the old one never heard after the new one first was = one radio
+  (`aliases` old -> new; both on the air at once stays a "shared key"). `analytics._connect` then reads every
+  node-number column (`ID_COLUMNS`, the station column included) through TEMP `_alias` views (`_a_<table>`), so
+  history, station scoping and the picker join across the upgrade; stored rows keep the number they arrived
+  with. Relay bytes logged before an upgrade end in the OLD number: `resolve_relay(..., aliases)` maps them.
+  Only built when an alias exists (a lookup per row and column). Radios numbered the 2.8 way get `v28` in
+  `describe`/`node_json` (a "2.8" tag; `fw:2.8` in the node filter) and the Analytics "Firmware 2.8 adoption"
+  card counts them per day. Config ids (`[base] id`, `station_tokens`) still need editing by hand after an
+  upgrade.
+- **Reception logging alarm** (`alerts._check_mining`): debug-log lines arriving and LoRa packets arriving for
+  30 min with no RX/TX line recognised (`Mesh.log_counts`) raises "Reception logging has stopped" (a firmware
+  log-format change); resolved when lines parse again. 2.8.1 already changed one thing: `Ch=` is decimal
+  (2.7: hex), which `_parse_header` handles.
+- **Key warnings** (`keyflags.py`, `GET /api/keyflags`): a radio whose newest announced public key is on the
+  firmware's weak-key list ("compromised") or is announced by other radios too ("shared"; the firmware 2.8
+  renumber case is exempt). Uses every station's identity log, worked out on request (cached 120 s), never
+  stored. Carried as `keyFlag` by `Mesh.describe` / `node_json`, as `from_keyflag` on packet search rows, and as
+  `keyFlags` in the anatomy; drawn by `keyBadge()` (prov.js) on the map's node list, panel and feed, node
+  pages, the Analytics node table (`key:flagged` filter), the Packets browser ("Sender key" filter), the
+  replay log and texts panel (not on `?anon=1` pages). insights.py's weak/duplicate findings share its rules.
 - **Packet anatomy** (`anatomy.py`): one packet rebuilt layer by layer (radio, 16-byte header, AES-CTR
   encryption, Data envelope, payload), every field labelled with where its value came from. Traceroutes
   addressed to us gain the radio's own SNR entry before the API sees them; `_traceroute_on_air` accounts
@@ -113,7 +164,23 @@ nonexistent radio.port).
 - **Grow mode** (radios appear at their first packet, the layout grows with them) and **Fade mode** (radios
   dim after a learned per-radio timeout; silence counts only logging hours). Fade-ins run on the replay's
   clock, not CSS transitions, so recordings match live playback.
+- **Coverage view** (`drive.py`, `/api/analytics/drive?range=&bin=&station=`, `static/drive.js`): what a moving
+  station heard along its route. Receptions (rx_hops, else packets) are placed at the station's latest exact
+  own fix within 12 min (never interpolated; precision-rounded fixes are ignored) and binned into squares
+  (100 m-1 km): minutes there, receptions/min, radios, heard directly, best/median SNR, relays. Squares passed
+  through with nothing heard are holes; route stretches with nothing within 60 s are dashed. With no station
+  picked (or combined), only stations whose track spans 200 m+ count.
 - `?anon=1` renames every radio by role and order of appearance for sharing.
+- **Texts panel** (toolbar "💬 Texts" / M, `localStorage meshdash.chat`, off by default): a chat log on the right
+  that fills as the replay reaches each readable text, with a line from each entry to its sender (new lines
+  bright for 6 s, then faint; hover an entry to light its line; lines redrawn every frame by their own rAF loop
+  so they follow the graph and the map while paused). New texts join the bottom; after 25 s of playing (or when
+  the panel is full) the oldest fades out and closes up so the rest flow to the top, one at a time. Ages run
+  on a clock that only advances while playing (JS, not CSS transitions, so recordings match). Playback speed is
+  never changed. Seeking empties the panel. It stays in hidden-UI mode (for recordings) and `vizInset` reserves its width. The
+  replay output carries `messages` (once each by sender + packet id, `channelName` from the LOGGING station's
+  channel list in its latest connect snapshot: channel numbers differ between radios). `?anon=1` shows "a text
+  message", never the words. The log's 0-hop wording is "heard directly (0 hops)" so it isn't read as a DM.
 - `tools/record-viz.mjs` records the replay to MP4 frame by frame (headless Chrome over CDP with Node's
   built-in WebSocket and a simulated page clock, piped to ffmpeg).
 

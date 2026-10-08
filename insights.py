@@ -5,14 +5,13 @@ Nothing here transmits. Every value carries its provenance so the UI can label i
   observed  - something this dashboard measured or recorded (timestamps, counts, our radio's SNR)
   inferred  - computed from other values (estimates, derived rates, relay-byte attribution)
 """
-import hashlib
 import json
 import math
 import statistics
 import time
-import zlib
 from collections import Counter, defaultdict
 
+import keyflags
 import topology
 import weak_keys
 from analytics import STATION_LOCATIONS, _connect, _window, scope_local
@@ -245,14 +244,6 @@ def _health(db, range_key, local, describe):
 
 # ------------------------------------------------------------------ security
 
-def _key_bytes(b64):
-    import base64
-    try:
-        return base64.b64decode(b64)
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _security(q, local, describe):
     out = []
     latest = {}
@@ -261,12 +252,12 @@ def _security(q, local, describe):
         if r["public_key"]:
             history[r["node"]].append((r["ts"], r["public_key"]))
             latest[r["node"]] = r["public_key"]
-    last_heard = {r[0]: r[1] for r in q("SELECT from_id, MAX(ts) FROM packets GROUP BY 1")}
+    # old -> new numbers of radios renumbered by firmware 2.8 (analytics views already merge most of them)
+    aliases = {r[0]: r[1] for r in q("SELECT old, new FROM _alias")} if q("SELECT 1 FROM sqlite_temp_master WHERE name = '_alias'") else {}
 
     # weak keys (firmware's own list)
     for nid, key in latest.items():
-        kb = _key_bytes(key)
-        if kb and len(kb) == 32 and hashlib.sha256(kb).hexdigest() in weak_keys.LOW_ENTROPY_SHA256:
+        if keyflags.is_weak(key):
             out.append(_finding("warn", "weak-key", "Uses a known compromised key",
                                 "Its public key is on the Meshtastic firmware's list of low-entropy keys, so its "
                                 "direct messages can be decrypted and it can be impersonated. Regenerating the key "
@@ -280,10 +271,7 @@ def _security(q, local, describe):
     for key, nodes in by_key.items():
         if len(nodes) < 2:
             continue
-        kb = _key_bytes(key)
-        crc = f"!{zlib.crc32(kb):08x}" if kb else None
-        stale = [n for n in nodes if time.time() - last_heard.get(n, 0) > 86400]
-        benign = len(nodes) == 2 and crc in nodes and len(stale) == 1 and stale[0] != crc
+        benign = keyflags.renumbered(nodes, aliases)
         names = ", ".join(describe(n)["name"] for n in nodes)
         out.append(_finding("info" if benign else "warn", "duplicate-key",
                             "Same key, two node numbers (likely a 2.8 firmware upgrade)" if benign

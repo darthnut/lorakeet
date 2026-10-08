@@ -94,6 +94,9 @@ function renderAnatomy(a) {
 </div>
        <div class="anat-bitlg">${flags.bits.map((b) => `<span title="${esc(b.src || "")}"><i class="${{ "hop start": "hs", "via MQTT": "mq", "want ACK": "ack", "hop limit": "hl" }[b.name] || ""}"></i>bit${b.bits.length > 1 ? "s" : ""} ${esc(b.bits)} ${esc(b.name)} = <b>${esc(b.value ?? "?")}</b></span>`).join("")}<span class="muted">the flags byte (byte 12) in binary</span></div>` : ""}`);
 
+  // a sender or recipient whose key can't be trusted (keyflags.py)
+  for (const k of a.keyFlags || []) html += `<p class="kf-note">⚠ <b>${k.role === "sender" ? "Sender" : "Recipient"} ${esc(k.name)}</b>: ${esc(k.text)}${k.role === "recipient" && a.json?.pkiEncrypted ? " This direct message's encryption depends on that key." : ""}</p>`;
+
   // 3. encryption
   if (a.crypto) {
     const c = a.crypto;

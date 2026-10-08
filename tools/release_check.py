@@ -2,8 +2,8 @@
 
     python tools/release_check.py [files...]      # default: every file git tracks
 
-Flags private and Tailscale IP addresses, real-looking node ids (!xxxxxxxx other than the broadcast id and
-documented placeholders), MAC addresses, email addresses, Windows user and drive paths, precise
+Flags private and Tailscale IP addresses, real-looking node ids (!xxxxxxxx other than the broadcast id,
+documented placeholders and made-up ids with four zeros in a row, which random real ids almost never have), MAC addresses, email addresses, Windows user and drive paths, precise
 coordinate pairs, amateur radio callsigns, and every term in .release-denylist (one per line, case-insensitive;
 the file is git-ignored, so the personal words it lists are never published). Exits 1 if anything is found.
 
@@ -19,6 +19,7 @@ DENYLIST = ROOT / ".release-denylist"
 
 PLACEHOLDER_IDS = {"!ffffffff", "!1234abcd", "!5678ef90", "!abcd1234", "!deadbeef"}
 EXAMPLE_COORDS = {"47.60620", "-122.33210", "47.6062", "-122.3321"}  # Seattle, the documented example
+EXAMPLE_IPS = {"192.168.1.50"}  # the documented example address for a network radio
 CHECKS = [
     ("private IP", re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")),
     ("Tailscale IP", re.compile(r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b(?!/)")),
@@ -62,7 +63,9 @@ def main(argv):
             for label, rx in CHECKS:
                 for m in rx.finditer(line):
                     v = m.group(0)
-                    if label == "node id" and v in PLACEHOLDER_IDS:
+                    if label == "node id" and (v in PLACEHOLDER_IDS or "0000" in v):  # 0000: a made-up id (tests)
+                        continue
+                    if label == "private IP" and v in EXAMPLE_IPS:
                         continue
                     if label == "email" and ALLOWED_EMAIL.search(v):
                         continue

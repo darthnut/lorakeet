@@ -12,9 +12,10 @@ Evidence, strongest first:
                relayer by one byte only, so this is used only when exactly one known node matches.
 """
 import json
+import sqlite3
 from collections import defaultdict
 
-from analytics import (_connect, _coverage, _window, is_combined, measured_neighbors, port_group, resolve_relay, scope_local,
+from analytics import (_connect, alias_map, _coverage, _window, is_combined, measured_neighbors, port_group, resolve_relay, scope_local,
                        station_ids, station_location)
 
 MEASURED = ("direct", "traceroute", "neighborinfo")
@@ -24,12 +25,14 @@ def relay_resolver(db, local):
     """relay byte -> (node id or None, how), as resolve_relay decides it against every known node."""
     known = {r[0] for r in db.execute("SELECT from_id FROM packets UNION SELECT node FROM node_info "
                                       "UNION SELECT a FROM links UNION SELECT b FROM links") if r[0]}
+    aliases = alias_map(db)
+    known |= set(aliases)  # pre-2.8 numbers: relay bytes logged before an upgrade end in them
     by_byte = defaultdict(list)
     for nid in known:
         if len(nid) == 9 and nid != local:
             by_byte[int(nid[-2:], 16)].append(nid)
     neighbors = measured_neighbors(db, local)
-    return lambda relay: resolve_relay(by_byte.get(relay, []), neighbors)
+    return lambda relay: resolve_relay(by_byte.get(relay, []), neighbors, aliases)
 
 
 def compute(db_path, range_key, local_id, describe):
@@ -226,13 +229,42 @@ def _replay(db, range_key, local):
                        "back": [h.get("id") for h in back], "snrBack": [h.get("snr") for h in back],
                        "origin": r["origin"], "doneTs": r["done_ts"]})
     events.sort(key=lambda e: e["ts"])
+    # Text messages we could read, once each (several stations, or our own copy and a relayed one, can log the
+    # same packet): the replay highlights them as they play. A channel number means different things on
+    # different radios, so it's named from the logging station's own channel list (its latest connect snapshot).
+    names = _channel_names(db)
+    messages, seen_msg = [], set()
+    for r in q("SELECT ts, from_id, to_id, channel, text, pkt_id, COALESCE(station, ?) AS at FROM messages WHERE ts >= ? "
+               "AND COALESCE(encrypted, 0) = 0 AND text IS NOT NULL AND text != '' ORDER BY ts", local, since):
+        k = (r["from_id"], r["pkt_id"]) if r["pkt_id"] is not None else ("row", r["ts"], r["text"])
+        if k in seen_msg:
+            continue
+        seen_msg.add(k)
+        direct = bool(r["to_id"]) and r["to_id"] not in ("^all", "!ffffffff")
+        messages.append({"ts": r["ts"], "from": r["from_id"], "to": r["to_id"], "text": r["text"][:240],
+                         "channel": r["channel"], "direct": direct,
+                         "channelName": None if direct else names.get(r["at"], {}).get(r["channel"] or 0)})
     truncated = len(events) > REPLAY_CAP
     if truncated:
         events = events[-REPLAY_CAP:]
     return {"range": range_key, "since": since, "until": until, "local": local, "stations": station_ids(db, local),
-            "events": events,
+            "events": events, "messages": messages,
             "coveredHours": sorted(_coverage(db, since, local)), "truncated": truncated,
             "miningSince": (q("SELECT MIN(ts) FROM rx_hops")[0][0])}
+
+
+def _channel_names(db):
+    """{station: {channel index: name}} from each station's latest connect snapshot (keys already removed)."""
+    out = {}
+    for st, detail in db.execute("SELECT station, detail FROM events WHERE kind = 'connected' AND station IS NOT NULL "
+                                 "ORDER BY ts"):
+        try:
+            chans = json.loads(detail).get("channels") or []
+        except (TypeError, ValueError):
+            continue
+        out[st] = {c.get("index", 0): ((c.get("settings") or {}).get("name") or "LongFast") for c in chans
+                   if c.get("role") in ("PRIMARY", "SECONDARY")}
+    return out
 
 
 def _event(r, portnum, resolve, local, kind, row=None):

@@ -2,7 +2,8 @@
 // Needs Node 22+ (built-in WebSocket), a Chromium-based browser and ffmpeg, and a running Lorakeet server.
 //
 //   node tools/record-viz.mjs [out.mp4] [--range 7d] [--station *] [--fps 60] [--no-anon] [--seconds N]
-//        [--ramp-hours 3] [--fade auto|<hours>] [--fade-misses 3] [--fade-remove] [--url http://127.0.0.1:5190]
+//        [--ramp-hours 3] [--fade auto|<hours>] [--fade-misses 3] [--fade-remove] [--texts] [--url ...]
+// --texts shows the texts panel (lines to each sender; "a text message" in place of the words when anonymized).
 //
 // Chrome (headless, 1920x1080, dark theme) is driven over the DevTools protocol with Node's built-in WebSocket:
 // no npm installs. The page's clock (performance.now, requestAnimationFrame, timers) is replaced by a simulated
@@ -73,6 +74,7 @@ const FAKE_CLOCK = `(() => {
       localStorage.setItem("meshdash.range", ${JSON.stringify(RANGE)});
       localStorage.setItem("meshdash.station", ${JSON.stringify(STATION)});
       localStorage.setItem("meshdash.fade", ${JSON.stringify(JSON.stringify(FADE))});
+      localStorage.setItem("meshdash.chat", ${JSON.stringify(args.includes("--texts") ? "1" : "0")});
     }
   } catch {}
 })();`;

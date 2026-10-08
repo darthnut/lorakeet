@@ -15,6 +15,23 @@ function prov(kind, note) {
   const t = note ? `${p[1]} ${note}` : p[1];
   return `<span class="prov prov-${kind in PROV ? kind : "unknown"}" title="${t.replace(/"/g, "&quot;")}" aria-label="${p[1].split(":")[0]}">${p[0]}</span>`;
 }
+// Key warning badge (keyflags.py): a radio whose public key is on Meshtastic's known-weak list, or shared with
+// other radios. flag = describe()/node_json's keyFlag ({kind, with}), or just the kind string.
+const KEY_FLAG = {
+  compromised: ["Compromised key", "Its public key is on Meshtastic's list of known weak keys: anyone can read direct messages to it and pretend to be it. Regenerating the key on the device fixes it."],
+  shared: ["Shared key", "Several radios announce this same public key (a cloned device or copied settings): they can read each other's direct messages and pretend to be each other."],
+};
+function keyBadge(flag, opts = {}) {
+  const kind = typeof flag === "string" ? flag : flag?.kind;
+  if (!KEY_FLAG[kind]) return "";
+  const n = typeof flag === "object" ? (flag.with || []).length : 0;
+  const t = KEY_FLAG[kind][1] + (n ? ` Shared with ${n} other radio${n > 1 ? "s" : ""}.` : "");
+  return `<span class="kf-badge kf-${kind}" title="${t.replace(/"/g, "&quot;")}" aria-label="${KEY_FLAG[kind][0]}">⚠${opts.short ? "" : ` ${KEY_FLAG[kind][0]}`}</span>`;
+}
+// "2.8" tag (nodeids.py): the radio's node number is crc32 of its key, which only firmware 2.8+ does.
+const V28_TIP = "Likely firmware 2.8: its node number is derived from its public key, which only 2.8 and later do. (Radios still on 2.7 or earlier, or whose key we haven't heard, can't be told apart.)";
+const v28Tag = (on) => (on ? `<span class="tag v28" title="${V28_TIP}">2.8</span>` : "");
+const keyFlagText = (flag) => (KEY_FLAG[flag?.kind || flag] || [])[1] || "";
 // Listening station: which station's data the analytics pages show (?station=). Empty = the radio this
 // server logs from. Pages that show per-station data opt in with <body data-station-picker>; the picker
 // appears in their top bar only when more than one station has logged anything.

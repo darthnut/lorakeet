@@ -3,8 +3,16 @@
 
 [radio]
 # Serial port of the USB-connected Meshtastic radio, e.g. "COM7" (Windows) or "/dev/ttyACM0" (Linux).
-# Empty = auto-detect.
+# Empty = auto-detect. A port set here is used strictly (handy with several radios on USB); if it
+# disappears, Lorakeet waits for it rather than picking another radio.
 port = ""
+# Or a radio on your network (Wi-Fi or Ethernet boards), by IP address or name, e.g. "192.168.1.50" or
+# "meshtastic.local". Set this OR port, not both. The radio's network API listens on tcp_port (4403).
+# Only one app can use the radio's network connection at a time: close the phone app's Wi-Fi link.
+# Over the network you get decoded packets but no per-reception detail: radios send their debug log
+# (duplicates, relays, airtime) only over USB.
+host = ""
+tcp_port = 4403
 
 [storage]
 # Where the database and logs live. Empty = per-OS default:

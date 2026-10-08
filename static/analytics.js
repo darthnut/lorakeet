@@ -175,6 +175,8 @@ function renderNodes(data) {
   const tok = q.match(/^(role|hw):(.*)$/);
   let rows = data.nodes.filter((n) => {
     if (!q) return true;
+    if (q === "fw:2.8") return n.v28;
+    if (q === "key:flagged" || q === "key:compromised" || q === "key:shared") return n.keyFlag && (q === "key:flagged" || `key:${n.keyFlag.kind}` === q);
     if (tok) return String((tok[1] === "role" ? n.role : n.hw) ?? "unknown").toLowerCase() === tok[2].trim();
     return `${n.name} ${n.short} ${n.id} ${n.hw} ${n.role}`.toLowerCase().includes(q);
   });
@@ -189,7 +191,7 @@ function renderNodes(data) {
     const hops = n.minHops == null ? "—" : n.minHops === n.maxHops ? `${n.minHops}` : `${n.minHops}–${n.maxHops}`;
     const tag = n.isBase ? " ☀" : "";
     return `<tr data-id="${esc(n.id)}">
-      <td><div class="nm" title="${esc(n.name)}">${esc(n.name)}${tag}<small>${esc([n.short, (n.hw || "").replace(/_/g, " ").toLowerCase(), n.role && n.role !== "CLIENT" ? n.role.replace(/_/g, " ").toLowerCase() : ""].filter(Boolean).join(" · "))}</small></div></td>
+      <td><div class="nm" title="${esc(n.name)}">${esc(n.name)}${tag}${keyBadge(n.keyFlag, { short: true })}${n.v28 ? " " + v28Tag(true) : ""}<small>${esc([n.short, (n.hw || "").replace(/_/g, " ").toLowerCase(), n.role && n.role !== "CLIENT" ? n.role.replace(/_/g, " ").toLowerCase() : ""].filter(Boolean).join(" · "))}</small></div></td>
       <td class="num"><div class="pbar"><span>${nf.format(n.packets)}</span><span class="b"><i style="width:${((n.packets / maxP) * 100).toFixed(1)}%"></i></span></div></td>
       <td class="num" ${est ? `title="Estimated from only ${data.kpis.coveredHours} logged hour${data.kpis.coveredHours === 1 ? "" : "s"}"` : ""}>${n.perDay == null ? "—" : `${est ? "~" : ""}${fmt(n.perDay, n.perDay < 10 ? 1 : 0)}`}</td>
       <td class="num"><div class="pbar"><span>${n.presence == null ? "—" : `${Math.round(n.presence * 100)}%`}</span><span class="b"><i style="width:${((n.presence || 0) * 100).toFixed(1)}%"></i></span></div></td>
@@ -330,6 +332,18 @@ function typeBreakdown(el, data, key) {
     if (f.value) $("nodes").closest(".card").scrollIntoView({ behavior: "smooth", block: "start" });
   });
 }
+// Firmware 2.8 adoption (nodeids.py): of the radios heard each day whose key we know, how many number
+// themselves the 2.8 way. 2.8 makes position and telemetry opt-in, so this explains falling counts elsewhere.
+function renderFw28(d) {
+  const f = d.firmware28; if (!f) return;
+  const pc = (a, b) => (b ? `${Math.round((a / b) * 100)} %` : "—");
+  const max = Math.max(1, ...f.days.map((x) => x.keyed));
+  $("fw28").innerHTML = `<p class="fw28-sum"><b>${f.radios.length}</b> of ${f.keyed} radios heard in this range (whose key we know, of ${f.heard}) are likely on 2.8: <b>${pc(f.radios.length, f.keyed)}</b>${prov("inferred", "From the node number: 2.8 derives it from the public key.")}</p>
+    ${f.radios.length ? `<p class="fw28-list">${f.radios.map((r) => `<a class="nlink" href="${nodeHref(r.id)}">${esc(r.name)}</a>`).join(", ")}</p>` : ""}
+    ${f.renumbered.length ? `<p class="muted small">Renumbered on upgrade, history joined: ${f.renumbered.map((r) => `${esc(r.name)} (${esc(r.old)} → ${esc(r.new)})`).join(", ")}.</p>` : ""}
+    <div class="bars">${f.days.map((x) => `<div class="r" title="${x.v28} of ${x.keyed} radios with a known key (${x.heard} heard)"><span class="l">${esc(new Date(x.day + "T12:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }))}</span><span class="fw28-bar"><i style="width:${((x.keyed / max) * 100).toFixed(1)}%"></i><i class="v" style="width:${((x.v28 / max) * 100).toFixed(1)}%"></i></span><span class="n">${x.v28} / ${x.keyed}</span></div>`).join("")}</div>`;
+}
+
 function renderTypes(d) { typeBreakdown($("roles"), d, "role"); typeBreakdown($("hardware"), d, "hw"); }
 
 /* ---------------------------------------------------------------- conversations */
@@ -610,6 +624,7 @@ function renderAll() {
   renderInsights(d.range);
   renderNodes(d);
   renderTypes(d);
+  renderFw28(d);
   bars($("ports"), d.ports.map((p) => ({ label: pretty(p.port), value: p.count, color: gcol(p.group) })),
     { title: (r) => `<b>${esc(r.label)}</b><br>${nf.format(r.value)} packets` });
   const hopsKnown = d.hops.filter((h) => h.hops != null), unknown = d.hops.find((h) => h.hops == null);

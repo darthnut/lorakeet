@@ -152,7 +152,7 @@
   <section class="card">
     <div class="card-head">
       <div><h2>Nodes</h2><p class="sub">Click a column to sort. <b>Seen</b> is the share of logged hours the node was heard at all; <b>Packets</b> is how much it sent.</p></div>
-      <input class="filter" id="nodeFilter" type="search" placeholder="Filter…" autocomplete="off">
+      <input class="filter" id="nodeFilter" type="search" placeholder="Filter…" autocomplete="off" title="Name, id, hardware or role. role:… and hw:… match exactly; key:flagged lists radios with a compromised or shared key.">
     </div>
     <div class="tablewrap"><table class="nodes" id="nodes"></table></div>
   </section>
@@ -167,6 +167,11 @@
       <div id="hardware"></div>
     </section>
   </div>
+
+  <section class="card">
+    <div class="card-head"><div><h2>Firmware 2.8 adoption</h2><p class="sub">Radios numbering themselves the 2.8 way (derived from their key), per day, out of those whose key we've heard (accent = on 2.8). 2.8 makes position and telemetry sharing opt-in, so as this grows, fewer positions and battery readings is the firmware, not the mesh. <code>fw:2.8</code> in the node filter lists them.</p></div></div>
+    <div id="fw28"></div>
+  </section>
 
   <div class="grid3">
     <section class="card">

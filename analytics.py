@@ -39,13 +39,17 @@ def measured_neighbors(db, local):
         "UNION SELECT b FROM links WHERE a = ? AND source IN ('direct','traceroute','neighborinfo')", (local, local))}
 
 
-def resolve_relay(candidates, neighbors):
+def resolve_relay(candidates, neighbors, aliases=None):
     """Which node a 1-byte relay ID refers to, or None.
 
     The relay that handed a copy to our radio must be within our radio's range. So when several known nodes
     share the byte, the one with a measured link to our radio is it - if exactly one has such a link.
     Returns (node or None, how): how is 'unique', 'by-link', 'ambiguous' or 'unknown'.
+    A pre-2.8 number in `candidates` (relay bytes logged before a radio's upgrade end in its OLD number) counts
+    as the radio's new number (aliases: old -> new).
     """
+    if aliases:
+        candidates = sorted({aliases.get(c, c) for c in candidates})
     if len(candidates) == 1:
         return candidates[0], "unique"
     if not candidates:
@@ -94,7 +98,7 @@ def station_track(db, station, since, until):
     """A station's own GPS fixes in [since, until], oldest first: [(ts, lat, lon, alt), ...]."""
     return [tuple(r) for r in db.execute(
         "SELECT ts, lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
-        "AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (station, since, until))]
+        "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (station, since, until))]
 
 
 def station_position(db, station, ts, max_age_s=TRACK_MAX_AGE_S):
@@ -105,7 +109,7 @@ def station_position(db, station, ts, max_age_s=TRACK_MAX_AGE_S):
     if loc:
         return (*loc[:3], "fixed")
     r = db.execute("SELECT lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
-                   "AND ts <= ?2 AND ts >= ?3 ORDER BY ts DESC LIMIT 1", (station, ts, ts - max_age_s)).fetchone()
+                   "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts <= ?2 AND ts >= ?3 ORDER BY ts DESC LIMIT 1", (station, ts, ts - max_age_s)).fetchone()
     return (r[0], r[1], r[2], "track") if r else None
 
 # "One station hearing another station's own radio": internal traffic between our stations, left out of
@@ -119,9 +123,10 @@ _IMPORTED = "(pkt_id IS NULL AND raw LIKE '{\"import\"%')"
 
 
 def _first(table, partition, where="1"):
-    """Combined-view TEMP view keeping the first row (by ts) of each `partition` group."""
-    return (f"CREATE TEMP VIEW {table} AS SELECT * FROM (SELECT rowid AS rowid, *, ROW_NUMBER() OVER "
-            f"(PARTITION BY {partition} ORDER BY ts) AS _copy FROM main.{table} WHERE {where}) WHERE _copy = 1")
+    """Combined-view TEMP view keeping the first row (by ts) of each `partition` group. {SRC}/{SEL} are the
+    source table and its columns: main.<table> with its rowid, or the renumber-mapped view (_connect)."""
+    return (f"CREATE TEMP VIEW {table} AS SELECT * FROM (SELECT {{SEL}}, ROW_NUMBER() OVER "
+            f"(PARTITION BY {partition} ORDER BY ts) AS _copy FROM {{SRC}} WHERE {where}) WHERE _copy = 1")
 
 
 # The combined view: the same packet heard by several stations counts once (its first copy, by
@@ -132,7 +137,7 @@ def _first(table, partition, where="1"):
 _COMBINED = [
     _first("packets", "CASE WHEN pkt_id IS NULL THEN rowid ELSE from_id || ':' || pkt_id END",
            f"NOT {_OTHER_STATION} AND NOT {_IMPORTED}"),
-    f"CREATE TEMP VIEW rx_hops AS SELECT rowid AS rowid, * FROM main.rx_hops WHERE NOT {_OTHER_STATION}",
+    f"CREATE TEMP VIEW rx_hops AS SELECT {{SEL}} FROM {{SRC}} WHERE NOT {_OTHER_STATION}",
     _first("messages", "CASE WHEN outgoing = 1 OR pkt_id IS NULL THEN rowid ELSE from_id || ':' || pkt_id END"),
     _first("links", "a, b, source, snr, CAST(ts / 120 AS INT)"),
     _first("telemetry", "node, battery, voltage, ch_util, air_util, uptime, temperature, CAST(ts / 120 AS INT)"),
@@ -141,6 +146,37 @@ _COMBINED = [
     _first("telemetry_full", "node, kind, data, CAST(ts / 120 AS INT)"),
     _first("node_info", "node, long_name, short_name, hw_model, role, public_key"),
 ]
+
+
+# Firmware 2.8 renumbers radios (nodeids.py). Where the log holds a radio under its old number too, every
+# node-number column is read through _alias (old -> new) so the radio's history is one radio: its packets,
+# telemetry, links, identity and, for a listening station, the station column itself. The stored rows are
+# untouched. Costs a lookup per row and column, and filters on the mapped columns can't use the indexes, so
+# it only happens when there is an alias.
+ID_COLUMNS = ("from_id", "to_id", "node", "station", "a", "b", "target")
+
+
+def _alias_views(db, path):
+    """Create the renumber-mapped TEMP views _a_<table>; returns the alias map ({} = none, no views)."""
+    import nodeids
+    aliases = nodeids.info(path)["aliases"]
+    if not aliases:
+        return {}
+    db.execute("CREATE TEMP TABLE _alias (old TEXT PRIMARY KEY, new TEXT NOT NULL) WITHOUT ROWID")
+    db.executemany("INSERT INTO _alias VALUES (?, ?)", aliases.items())
+    for t in STATION_TABLES:
+        cols = [r[1] for r in db.execute(f"PRAGMA main.table_info({t})")]
+        sel = ", ".join(f"COALESCE((SELECT new FROM _alias WHERE old = {c}), {c}) AS {c}" if c in ID_COLUMNS else c
+                        for c in cols)
+        db.execute(f"CREATE TEMP VIEW _a_{t} AS SELECT rowid AS rowid, {sel} FROM main.{t}")
+    return aliases
+
+
+def alias_map(db):
+    """old -> new node numbers this connection maps (empty when nothing was renumbered)."""
+    if not db.execute("SELECT 1 FROM sqlite_temp_master WHERE name = '_alias'").fetchone():
+        return {}
+    return dict(db.execute("SELECT old, new FROM _alias").fetchall())
 
 
 def scope_local(station):
@@ -164,18 +200,25 @@ def _connect(path, station=None):
     station's rows only: unqualified table names resolve to temp first, so every query in the analytics
     modules is scoped to one listening station without being rewritten. rowid passes through (the anatomy
     links use it) and the (station, ts) indexes keep the views fast."""
+    if station and station != ALL_STATIONS and not STATION_RE.match(station):
+        raise ValueError(f"not a station id: {station!r}")
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
     db.row_factory = sqlite3.Row
+    aliases = _alias_views(db, path)
+    src = (lambda t: (f"_a_{t}", "*")) if aliases else (lambda t: (f"main.{t}", "rowid AS rowid, *"))
     if station == ALL_STATIONS:
-        db.execute("CREATE TEMP TABLE _stations AS SELECT DISTINCT station AS id FROM main.packets WHERE station IS NOT NULL")
+        db.execute(f"CREATE TEMP TABLE _stations AS SELECT DISTINCT station AS id FROM {src('packets')[0]} WHERE station IS NOT NULL")
         for sql in _COMBINED:
-            db.execute(sql)
+            t = sql.split()[3]  # CREATE TEMP VIEW <table> ...
+            db.execute(sql.replace("{SRC}", src(t)[0]).replace("{SEL}", src(t)[1]))
     elif station:
-        if not STATION_RE.match(station):
-            db.close()
-            raise ValueError(f"not a station id: {station!r}")
+        station = aliases.get(station, station)  # asked for by its pre-2.8 number
         for t in STATION_TABLES:
-            db.execute(f"CREATE TEMP VIEW {t} AS SELECT rowid AS rowid, * FROM main.{t} WHERE station = '{station}'")
+            frm, sel = src(t)
+            db.execute(f"CREATE TEMP VIEW {t} AS SELECT {sel} FROM {frm} WHERE station = '{station}'")
+    elif aliases:
+        for t in STATION_TABLES:
+            db.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM _a_{t}")
     return db
 
 
@@ -211,9 +254,28 @@ def compute(db_path, range_key, local_id, describe):
         raise ValueError(f"range must be one of {', '.join(RANGES)}")
     db = _connect(db_path, local_id)
     try:
-        return _compute(db, range_key, scope_local(local_id) or "", describe)
+        out = _compute(db, range_key, scope_local(local_id) or "", describe)
+        out["firmware28"] = _firmware28(db, db_path, out["since"], describe)
+        return out
     finally:
         db.close()
+
+
+def _firmware28(db, db_path, since, describe):
+    """How many of the radios heard each day number themselves the firmware 2.8 way (nodeids.py). Only
+    radios whose key we've heard can be told apart, so the share is of those."""
+    import nodeids
+    info = nodeids.info(db_path)
+    days = defaultdict(set)
+    for day, nid in db.execute("SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime'), from_id FROM packets "
+                               "WHERE ts >= ? GROUP BY 1, 2", (since,)):
+        days[day].add(nid)
+    heard = set().union(*days.values()) if days else set()
+    return {"days": [{"day": d, "heard": len(ns), "keyed": len(ns & info["keyed"]), "v28": len(ns & info["v28"])}
+                     for d, ns in sorted(days.items())],
+            "heard": len(heard), "keyed": len(heard & info["keyed"]),
+            "radios": [{"id": n, "name": describe(n)["name"]} for n in sorted(heard & info["v28"])],
+            "renumbered": [{"old": o, "new": n, "name": describe(n)["name"]} for o, n in sorted(info["aliases"].items())]}
 
 
 def _window(db, range_key):
@@ -341,13 +403,15 @@ def _compute(db, range_key, local, describe):
     # A relayer may never have sent a packet of its own that we logged; traceroutes and links still name it.
     known_ids = set(first_seen_ever) | {r[0] for r in q("SELECT DISTINCT node FROM node_info")}
     known_ids |= {r[0] for r in q("SELECT a FROM links UNION SELECT b FROM links")}
+    aliases = alias_map(db)
+    known_ids |= set(aliases)  # old numbers: relay bytes logged before a radio's 2.8 upgrade end in them
     neighbors = measured_neighbors(db, local)
     relays = []
     for r in q(f"SELECT relay, COUNT(*) {P} AND hops > 0 AND relay IS NOT NULL GROUP BY 1 ORDER BY 2 DESC",
                since, local):
         hexb = f"{r[0]:02x}"
         cands = sorted(i for i in known_ids if i.endswith(hexb) and i != local)
-        chosen, how = resolve_relay(cands, neighbors)
+        chosen, how = resolve_relay(cands, neighbors, aliases)
         # list the resolved node first (alone) so the UI shows it; keep the full set for the tooltip
         relays.append({"byte": hexb, "count": r[1], "resolvedBy": how, "allCandidates": len(cands),
                        "candidates": [{"id": c, **describe(c)} for c in ([chosen] if chosen else cands)]})

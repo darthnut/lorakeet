@@ -85,3 +85,50 @@ body.vz-clean .leaflet-control-container { display: none; }
 /* grow mode: radios fade in at their first packet (topology.js fade(), on the replay's clock) */
 .topo .unseen { opacity: 0 !important; pointer-events: none; }
 .vz-toolbar .btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+
+/* Coverage view (drive.js): its own map and panels; the replay's are hidden */
+.vz-drivebox { display: none; }
+body.vz-drive .vz-drivebox { display: flex; }
+body.vz-drive #vzKey, body.vz-drive #vzLog, body.vz-drive #vzBottom, body.vz-drive #vzGrow, body.vz-drive #vzFade,
+body.vz-drive #vzFadeOpts, body.vz-drive #topoReplayGraph, body.vz-drive #topoReplayMap { display: none !important; }
+body.vz-drive .stage { --bottom-h: 0px; }
+#vzDrive { flex: none; }
+#vzCell { flex: 1 1 0; min-height: 90px; }
+#vzCell .vz-box-body { overflow: auto; }
+.vz-drivebox .vz-box-body { padding: 0 12px 10px; font-size: 13px; color: var(--text-secondary); }
+.dv-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.dv-row select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.dv-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 8px; font-size: 12px; }
+.dv-legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.dv-legend i.hole { background: transparent; border: 1.5px dashed var(--warning); }
+.dv-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
+.dv-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0 0 8px; }
+.dv-kv dt { color: var(--text-muted); } .dv-kv dd { margin: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.dv-list { margin: 2px 0 8px; padding: 0; list-style: none; } .dv-list li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.dv-list a { color: var(--text-primary); } .dv-h { margin: 8px 0 2px; font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+
+/* texts panel (replay.js): a chat log on the right; lines join each entry to its sender. It stays in
+   hidden-UI mode (recordings) and leaves with the Coverage view. */
+.vz-chat-panel { display: none; position: absolute; right: var(--pad); width: 300px; z-index: 700;
+  --chat-top: calc(2 * var(--pad) + var(--toolbar-h) + 64px); top: var(--chat-top);
+  max-height: calc(100% - var(--chat-top) - var(--bottom-h) - 2 * var(--pad)); flex-direction: column; overflow: hidden; }
+body.vz-chat .vz-chat-panel { display: flex; }
+body.vz-clean .vz-chat-panel { --chat-top: var(--pad); }
+body.vz-clean .vz-chat-panel:has(.chat-list:empty) { display: none; }  /* nothing to show in a recording */
+body.vz-drive .vz-chat-panel, body.vz-drive .chat-links { display: none !important; }
+.ch-title { padding: 8px 12px 6px; font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.chat-list { list-style: none; margin: 0; padding: 0 10px 4px; overflow: hidden; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.chat-list:empty::before { content: "Texts appear here as the replay reaches them."; color: var(--text-muted); font-size: 12px; padding: 4px 2px; }
+.vz-chat-panel.empty .chat-list:empty::before { content: "No readable text messages in this range."; }
+.chat-list li { box-sizing: border-box; flex: none; margin-bottom: 6px; padding: 6px 9px; border-radius: 9px; background: var(--surface-2); font-size: 13px; line-height: 1.35; color: var(--text-primary);
+  border-left: 3px solid var(--accent); }
+.chat-list li.hot { box-shadow: 0 0 0 1px var(--accent); }
+.chat-list .ch-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
+.chat-list .ch-head b { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-list .ch-head span { flex: none; color: var(--text-muted); }
+.chat-list .ch-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 690; overflow: visible; }
+.chat-links path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.chat-links circle { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chat-links circle.end { fill: var(--accent); stroke: none; }
+@media (max-width: 760px) { .vz-chat-panel { width: auto; left: var(--pad); top: auto; bottom: calc(var(--bottom-h) + 2 * var(--pad)); max-height: 34%; } }

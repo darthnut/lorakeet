@@ -9,12 +9,25 @@ import json
 import logging
 import threading
 import time
+from collections import deque
 
 import insights
 from config import CFG
 from storage import notify
 
 log = logging.getLogger("meshdash.alerts")
+
+# Reception logging (rx_hops / tx_log) reads the firmware's debug log text. A firmware update that rewords it
+# would stop that silently, so: over this window, debug lines kept arriving and packets kept arriving over the
+# air, yet not one reception line was recognised -> alert. (A radio on Wi-Fi sends no debug log: no alert.)
+MINING_WINDOW_S = 30 * 60
+MINING_MIN_LINES = 50
+MINING_MIN_PACKETS = 3
+
+
+def mining_stalled(lines, mined, lora_packets):
+    """True when the debug log is flowing and packets are arriving, but no RX/TX line was parsed."""
+    return lines >= MINING_MIN_LINES and lora_packets >= MINING_MIN_PACKETS and mined == 0
 
 DEFAULTS = {
     "watched": [],                 # node ids; the base station is added on first run
@@ -127,6 +140,7 @@ class Alerts:
                     self._check_battery(s)
                     self._check_new_nodes(s)
                     self._check_stations(s)
+                    self._check_mining()
                     if time.time() - last_health > 86400:
                         self._daily_health(s)
                         last_health = time.time()
@@ -161,6 +175,32 @@ class Alerts:
                 self.store.execute("UPDATE alerts SET resolved_ts = ? WHERE rowid = ?", time.time(), rowid)
                 self.raise_alert("back", f"{name} is back", "Heard again after a silence alert.", nid, "info",
                                  s["notifyBack"])
+
+    def _check_mining(self):
+        c, now = self.mesh.log_counts, time.time()
+        hist = self.state.setdefault("miningHist", deque())
+        hist.append((now, c["lines"], c["mined"]))
+        while len(hist) > 1 and now - hist[1][0] >= MINING_WINDOW_S:
+            hist.popleft()
+        t0, lines0, mined0 = hist[0]
+        if now - t0 < MINING_WINDOW_S - 90:
+            return  # not a full window of evidence yet
+        lines, mined = c["lines"] - lines0, c["mined"] - mined0
+        lora = self.store.query(
+            "SELECT COUNT(*) AS n FROM packets WHERE station = ? AND ts >= ? AND from_id != ? "
+            "AND json_extract(raw, '$.transportMechanism') LIKE 'TRANSPORT_LORA%'",
+            self.mesh.local_id, t0, self.mesh.local_id)[0]["n"]
+        open_ = self.state.get("miningAlert")
+        if open_ is None and mining_stalled(lines, mined, lora):
+            self.state["miningAlert"] = self.raise_alert(
+                "logging", "Reception logging has stopped",
+                f"In the last {MINING_WINDOW_S // 60} minutes the radio sent {lines} debug-log lines and {lora} packets "
+                "arrived over the air, but no reception line was recognised, so per-reception data (hops, relays, "
+                "duplicates, airtime) isn't being recorded. Most likely a firmware update changed the log format: "
+                "check server.py parse_rx against the radio's debug log.", None, "warn", True)
+        elif open_ is not None and mined > 0:
+            self.store.execute("UPDATE alerts SET resolved_ts = ? WHERE rowid = ?", now, self.state.pop("miningAlert"))
+            self.raise_alert("logging", "Reception logging is working again", "Reception lines are being recognised again.", None, "info")
 
     def _check_stations(self, s):
         """Hub only: a collector station that stopped syncing (its power, Wi-Fi or Tailscale is down,

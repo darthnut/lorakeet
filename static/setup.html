@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body class="setup-page">
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Lorakeet</div>
+</header>
+
+<main class="setup">
+  <h1 id="title">Welcome to Lorakeet</h1>
+  <p class="lead" id="lead">A few choices and it's ready. Everything here is saved to <code id="cfgPath">lorakeet.toml</code>, which you can edit later.</p>
+
+  <div id="configured" hidden>
+    <section class="card">
+      <h2>Already set up</h2>
+      <p>This install has its settings in <code id="cfgPath2"></code>. To change them, edit that file (every option is explained in <code>lorakeet.example.toml</code>) and restart Lorakeet.</p>
+      <dl class="summary" id="summary"></dl>
+      <p><a class="btn" href="/">Open the dashboard</a></p>
+    </section>
+  </div>
+
+  <form id="setupForm" hidden autocomplete="off">
+    <section class="card">
+      <h2>1. Your radio</h2>
+      <p class="live" id="live">Checking for a radio…</p>
+      <fieldset>
+        <label class="opt"><input type="radio" name="radioMode" value="auto" checked> <span><b>Find it automatically</b> on USB <span class="muted">(recommended with one radio plugged in)</span></span></label>
+        <label class="opt"><input type="radio" name="radioMode" value="port"> <span><b>A specific USB port</b></span></label>
+        <div class="sub" data-for="port"><select id="port"></select> <span class="muted" id="portHint"></span></div>
+        <label class="opt"><input type="radio" name="radioMode" value="host"> <span><b>A radio on my network</b> (Wi-Fi or Ethernet boards)</span></label>
+        <div class="sub" data-for="host">
+          <input id="host" placeholder="192.168.1.50 or meshtastic.local" size="28"> port <input id="tcpPort" value="4403" size="5" inputmode="numeric">
+          <p class="note">Over the network you get every decoded packet, but not the per-reception detail (duplicate copies, relays, airtime): radios send their debug log only over USB.</p>
+        </div>
+      </fieldset>
+      <p class="note">For full detail, turn on the radio's debug log once (with Lorakeet stopped): <code>meshtastic --set security.debug_log_api_enabled true</code></p>
+    </section>
+
+    <section class="card">
+      <h2>2. This station <span class="muted">(optional)</span></h2>
+      <label class="row">Name <input id="stationName" placeholder="e.g. Home" maxlength="60"></label>
+      <label class="row">Antenna location
+        <span><input id="lat" placeholder="latitude" size="11" inputmode="decimal"> <input id="lon" placeholder="longitude" size="11" inputmode="decimal">
+        <button type="button" class="btn" id="geo">Use this computer's location</button></span></label>
+      <p class="note">Places this station on the maps and helps estimate where radios without a position are. A computer's location can be off by a few hundred metres; correct it to where the antenna is if you can. Stays on this computer.</p>
+    </section>
+
+    <section class="card">
+      <h2>3. Privacy and access</h2>
+      <label class="opt"><input type="checkbox" id="storeRecipients" checked> <span><b>Record who other people's addressed packets were for</b><br><span class="muted">Your radio hears them on the shared airwaves anyway (contents stay encrypted unless you have the key). Turn this off to keep only the sender.</span></span></label>
+      <label class="opt"><input type="checkbox" id="lanView"> <span><b>Let other devices on my local network view the dashboard</b><br><span class="muted">Read-only: sending and settings stay on this computer. Off = only this computer can open it. Never expose Lorakeet to the internet.</span></span></label>
+      <label class="opt"><input type="checkbox" id="autoTraceroute"> <span><b>Scheduled traceroutes</b><br><span class="muted">Maps routes through the mesh, but <b>transmits</b> (about one a hour). Off unless you want it.</span></span></label>
+    </section>
+
+    <section class="card">
+      <h2>4. Storage and maps</h2>
+      <label class="row">Data folder <input id="dataDir" size="44"></label>
+      <p class="note">The database, logs and backups. Leave as is for the default.</p>
+      <fieldset class="inline">
+        <legend>Map tiles</legend>
+        <label class="opt"><input type="radio" name="tiles" value="osm" checked> <span>OpenStreetMap <span class="muted">(free for personal use)</span></span></label>
+        <label class="opt"><input type="radio" name="tiles" value="esri"> <span>Esri, with satellite imagery <span class="muted">(check Esri's terms)</span></span></label>
+      </fieldset>
+    </section>
+
+    <div class="actions">
+      <button type="submit" class="btn primary" id="save">Save and start</button>
+      <a href="/?skipsetup=1" class="muted">Skip for now (use the defaults)</a>
+      <p class="err" id="err" role="alert"></p>
+    </div>
+  </form>
+
+  <section class="card" id="done" hidden>
+    <h2 id="doneTitle">Saved</h2>
+    <p id="doneText"></p>
+  </section>
+</main>
+<script src="setup.js"></script>
+</body>
+</html>

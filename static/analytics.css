@@ -260,3 +260,8 @@ table.cmp tr.only-a td, table.cmp tr.only-b td { background: color-mix(in srgb, 
 #mxHealth td.bad { color: var(--critical); }
 #mxHealth td.warn, #mxHealth .warn { color: var(--warning); }
 #mxHealth .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+/* firmware 2.8 adoption (renderFw28): radios with a known key, and the 2.8 share drawn over them */
+.fw28-sum { margin: 0 0 6px; font-size: 13px; } .fw28-list { margin: 0 0 10px; font-size: 13px; line-height: 1.6; }
+.fw28-bar { position: relative; height: 10px; } .fw28-bar i { position: absolute; left: 0; top: 0; height: 100%; border-radius: 0 4px 4px 0; background: var(--border); min-width: 2px; }
+.fw28-bar i.v { background: var(--accent); }

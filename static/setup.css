@@ -1,0 +1,26 @@
+/* First-run setup page */
+body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; }
+.setup { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; color: var(--text-primary); }
+.setup h1 { font-size: 24px; margin: 8px 0 4px; }
+.setup .lead { color: var(--text-secondary); margin: 0 0 18px; }
+.setup .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin: 0 0 14px; }
+.setup h2 { font-size: 16px; margin: 0 0 10px; }
+.setup fieldset { border: 0; margin: 0; padding: 0; }
+.setup fieldset.inline legend { font-weight: 600; font-size: 13px; color: var(--text-secondary); margin: 10px 0 4px; padding: 0; }
+.setup .opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; cursor: pointer; line-height: 1.4; }
+.setup .opt input { margin-top: 3px; }
+.setup .sub { margin: 0 0 6px 26px; }
+.setup .sub[hidden] { display: none; }
+.setup .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0; }
+.setup .row > span { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.setup input[type="text"], .setup input:not([type]), .setup select {
+  font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
+.setup .note { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.45; }
+.setup code { font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; word-break: break-all; }
+.setup .live { margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+.setup .live.ok::before { content: "● "; color: var(--good); }
+.setup .live.wait::before { content: "○ "; color: var(--text-muted); }
+.setup .actions { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 6px; }
+.setup .err { flex-basis: 100%; color: var(--critical); margin: 0; min-height: 1em; }
+.setup .summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.setup .summary dt { color: var(--text-muted); } .setup .summary dd { margin: 0; }

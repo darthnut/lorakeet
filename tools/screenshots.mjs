@@ -1,14 +1,15 @@
 // README screenshots, anonymized, from a running Lorakeet server (Node 22+, a Chromium-based browser).
 //
 //   node tools/screenshots.mjs [out-dir] [--station *] [--range 7d] [--url http://127.0.0.1:5190]
-//                              [--packet <rowid> --allow !id1,!id2]
+//                              [--packet <rowid> --allow !id1,!id2] [--only replay,graph,analytics,texts,anatomy]
 //
 // Writes replay.png (Visualizations with the Key and Log, packets in flight), graph.png (the same graph,
 // UI hidden) and analytics.png (the summary tiles and traffic chart). Names on the Visualizations page are
 // anonymized with ?anon=1; the analytics crop is checked for anything that looks like a node name or id
 // and refused if it finds one. With --packet, also anatomy.png: that packet's layer-by-layer breakdown, written
 // only if every node id it shows is listed in --allow (use one of your own radios' packets). Look at every
-// image before publishing it anyway.
+// image before publishing it anyway. texts.png: the replay's texts panel during the busiest conversation in range,
+// anonymized (radios renamed, every message shown as "a text message"); refused if the panel shows anything else.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +20,7 @@ const opt = (name, dflt) => { const i = args.indexOf(`--${name}`); return i >= 0
 const OUT = args[0] && !args[0].startsWith("--") ? args[0] : "docs/screenshots";
 const STATION = opt("station", "*"), RANGE = opt("range", "7d"), BASE = opt("url", "http://127.0.0.1:5190").replace(/\/$/, "");
 const W = 1600, H = 900, PORT = 9334;
+const ONLY = new Set(String(opt("only", "replay,graph,analytics,texts,anatomy")).split(","));
 const PACKET = opt("packet", ""), ALLOW = new Set(["!ffffffff", ...String(opt("allow", "")).split(",").filter(Boolean)]);
 const CHROME = [process.env.CHROME,
   "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
@@ -69,6 +71,7 @@ async function main() {
     await cdp("Page.addScriptToEvaluateOnNewDocument", { source: PRESET });
 
     // 1. Visualizations, mid-replay, with the Key and the Log
+    if (ONLY.has("replay") || ONLY.has("graph")) {
     await cdp("Page.navigate", { url: `${BASE}/visualizations.html?anon=1` });
     await until(`typeof R !== "undefined" && !!(R.data && R.graph)`, "the replay");
     await sleep(6000);  // the layout settles
@@ -82,8 +85,33 @@ async function main() {
     await until(`!!R.graph && document.body.classList.contains("vz-clean")`, "hidden UI");
     await sleep(7000);
     await shot("graph.png");
+    }
+
+    // 1b. the texts panel: the busiest 30 minutes of text messages in range, anonymized
+    if (ONLY.has("texts")) {
+      await cdp("Page.navigate", { url: `${BASE}/visualizations.html?anon=1` });
+      await until(`typeof R !== "undefined" && !!(R.data && R.graph)`, "the replay");
+      await sleep(6000);
+      const start = await js(`(() => { const m = R.data.messages || []; let best = null, n = 0;
+        for (const a of m) { const k = m.filter((b) => b.ts >= a.ts && b.ts < a.ts + 1800).length; if (k > n) { n = k; best = a.ts; } }
+        return n >= 3 ? best : null; })()`);
+      if (start == null) console.error("texts.png NOT written: fewer than 3 text messages close together in this range");
+      else {
+        await js(`setChat(true); document.getElementById("vzChatBtn").setAttribute("aria-pressed", "true"); seek(${start} - 120); R.speed = 600; document.getElementById("replayPlay").click(); 1`);
+        await sleep(4000);
+        await js(`document.getElementById("replayPlay").click(); 1`);
+        await sleep(1500);
+        const panel = await js(`[...document.querySelectorAll("#chatList li .ch-text")].map((e) => e.innerText)`);
+        const names = await js(`document.getElementById("chatList").innerText`);
+        if (!panel.length || panel.some((t) => t !== "a text message") || /![0-9a-f]{8}\b|\b[AKNW][A-Z]?\d[A-Z]{2,3}\b/.test(names))
+          console.error("texts.png NOT written: the panel shows message text or a name/id");
+        else await shot("texts.png");
+      }
+      await js(`setChat(false); 1`);
+    }
 
     // 3. Analytics: summary tiles and the traffic chart, refused if it shows anything name-like
+    if (ONLY.has("analytics")) {
     await cdp("Page.navigate", { url: `${BASE}/analytics.html` });
     await until(`document.querySelectorAll("#kpis > *").length > 0 && !!document.querySelector("section.card svg")`, "analytics");
     await sleep(2500);
@@ -97,16 +125,17 @@ async function main() {
     const suspicious = box.text.match(/![0-9a-f]{8}\b|\b[AKNW][A-Z]?\d[A-Z]{2,3}\b/g);
     if (suspicious) console.error(`analytics.png NOT written: the crop shows ${[...new Set(suspicious)].join(", ")}`);
     else await shot("analytics.png", { x: Math.max(0, box.x), y: Math.max(0, box.y), width: box.width, height: box.height });
+    }
 
     // 4. one packet's anatomy, only if it shows no node ids beyond --allow
-    if (PACKET) {
+    if (PACKET && ONLY.has("anatomy")) {
       await cdp("Emulation.setDeviceMetricsOverride", { width: W, height: 1800, deviceScaleFactor: 1, mobile: false });
       await cdp("Page.navigate", { url: `${BASE}/packets.html#packet=${encodeURIComponent(PACKET)}` });
       await until(`document.querySelectorAll("#anatPanel .anat-layer").length >= 4`, "the packet anatomy");
       await sleep(1500);
       const a = await js(`(() => { const p = document.getElementById("anatPanel"), r = p.getBoundingClientRect();
         return { x: Math.floor(r.x) - 8, y: Math.floor(r.y + scrollY) - 8, width: Math.ceil(r.width) + 16, height: Math.ceil(r.height) + 16, text: p.innerText }; })()`);
-      const ids = [...new Set(a.text.match(/![0-9a-f]{8}/g) || [])], extra = ids.filter((i) => !ALLOW.has(i));
+      const ids = [...new Set(a.text.match(/![0-9a-f]{8}\b/g) || [])], extra = ids.filter((i) => !ALLOW.has(i));
       if (extra.length) console.error(`anatomy.png NOT written: it shows ${extra.join(", ")} (not in --allow)`);
       else await shot("anatomy.png", { x: Math.max(0, a.x), y: Math.max(0, a.y), width: a.width, height: a.height });
     }

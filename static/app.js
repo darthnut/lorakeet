@@ -252,7 +252,7 @@ function renderList() {
   $("nodelist").innerHTML = rows.map((n) => {
     const tags = [n.isBase ? '<span class="tag base">base</span>' : "", n.isLocal ? '<span class="tag">this radio</span>' : "",
       n.isStation ? '<span class="tag">station</span>' : "", n.remote && !n.heardHere ? `<span class="tag" title="Heard only by the listening station ${esc(n.remote.stationName)}">via ${esc(n.remote.stationName)}</span>` : "",
-      n.battery != null && n.battery <= 20 ? '<span class="tag low">⚠ low batt</span>' : "", n.lat == null && !n.isLocal ? '<span class="tag">no position</span>' : ""].join("");
+      n.battery != null && n.battery <= 20 ? '<span class="tag low">⚠ low batt</span>' : "", keyBadge(n.keyFlag), v28Tag(n.v28), n.lat == null && !n.isLocal ? '<span class="tag">no position</span>' : ""].join("");
     const sig = n.isLocal ? "" : n.hopsAway === 0 ? `SNR ${fmt(n.snr, 1)} dB` : n.hopsAway != null ? `${n.hopsAway} hop${n.hopsAway === 1 ? "" : "s"}` : "";
     return `<li data-id="${esc(n.id)}"><span class="sdot ${status(n)}"></span>
       <div style="min-width:0"><div class="nm">${esc(n.longName)}${tags}</div><div class="sub">${esc([prettyHw(n.hwModel), n.relayOnly ? "seen relaying" : prettyRole(n.role)].filter(Boolean).join(" · "))}</div></div>
@@ -285,7 +285,7 @@ function feedItem(p, flash) {
   const name = p.name || S.nodes.get(p.from_id)?.longName || p.from_id;
   const local = p.arrival === "local"
     ? '<span class="arr" title="The radio reported this to the dashboard itself; it never went over the air (no transport, no signal reading).">local · not over the air</span>' : "";
-  return `<li class="${flash ? "flash" : ""} ${local ? "local" : ""}" data-row="${p.rowid ?? ""}" data-key="${p.pkt_id != null ? esc(`${p.from_id}:${p.pkt_id}`) : ""}" title="Click for the full packet"><div class="row1"><span class="who" data-id="${esc(p.from_id)}">${esc(name)}${local}${stationBadges(p)}</span><span class="when">${clock(p.ts)}</span></div>
+  return `<li class="${flash ? "flash" : ""} ${local ? "local" : ""}" data-row="${p.rowid ?? ""}" data-key="${p.pkt_id != null ? esc(`${p.from_id}:${p.pkt_id}`) : ""}" title="Click for the full packet"><div class="row1"><span class="who" data-id="${esc(p.from_id)}">${esc(name)}${keyBadge(S.nodes.get(p.from_id)?.keyFlag, { short: true })}${local}${stationBadges(p)}</span><span class="when">${clock(p.ts)}</span></div>
     <div class="row2"><span class="port">${esc((p.portnum || "").replace(/_APP$/, ""))}</span><span>${esc(sig)}</span></div>
     ${p.summary ? `<div class="row2">${esc(p.summary)}</div>` : ""}</li>`;
 }
@@ -780,8 +780,9 @@ async function renderDetail(id) {
   const el = $("panel-detail");
   const prec = precisionMeters(n.precisionBits);
   el.innerHTML = `<button class="back" id="back">← All nodes</button>
-    <h2>${esc(n.longName)} ${n.isBase ? '<span class="tag base">base</span>' : ""}</h2>
+    <h2>${esc(n.longName)} ${n.isBase ? '<span class="tag base">base</span>' : ""}${keyBadge(n.keyFlag)} ${v28Tag(n.v28)}</h2>
     <div class="hw">${esc([n.shortName, prettyHw(n.hwModel), prettyRole(n.role)].filter(Boolean).join(" · "))} · <span class="num">${esc(n.id)}</span></div>
+    ${n.keyFlag ? `<p class="kf-note">⚠ ${esc(keyFlagText(n.keyFlag))}${n.keyFlag.with.length ? ` Same key: ${n.keyFlag.with.map((o, i) => esc(n.keyFlag.withNames?.[i] || S.nodes.get(o)?.longName || o)).join(", ")}.` : ""}</p>` : ""}
     ${n.isLocal ? "" : `<div class="actions"><button class="btn" id="dMsg">Message</button><button class="btn" id="dTrace">Traceroute</button><button class="star ${window.meshWatch?.isWatched(n.id) ? "on" : ""}" id="dStar" title="Watch: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(n.id) ? "★" : "☆"}</button><a class="btn" href="/analytics.html#node=${encodeURIComponent(n.id)}" style="text-decoration:none;color:inherit">Analytics</a><span class="err" id="dErr"></span></div>`}
     <div class="tiles">${tile("Battery", n.battery == null ? "—" : n.battery > 100 ? "Ext" : fmt(n.battery, 0), n.battery > 100 ? "" : "%")}${tile("Voltage", fmt(n.voltage, 2), "V")}${tile("Ch. util", fmt(n.chUtil, 1), "%")}</div>
     <dl class="kv">

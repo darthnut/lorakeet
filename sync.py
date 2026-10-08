@@ -169,6 +169,21 @@ def check_token(header, token):
     return bool(token) and hmac.compare_digest(given.encode(), token.encode())
 
 
+def _strip_secrets(detail):
+    """A logged config snapshot (JSON) minus the Bluetooth PIN, Wi-Fi password and MQTT password."""
+    try:
+        d = json.loads(detail)
+    except (TypeError, ValueError):
+        return detail
+    for path in (("config", "bluetooth", "fixedPin"), ("config", "network", "wifiPsk"), ("module_config", "mqtt", "password")):
+        node = d
+        for k in path[:-1]:
+            node = node.get(k) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node.pop(path[-1], None)
+    return json.dumps(d)
+
+
 def station_tokens(entries):
     """sync.station_tokens ["!id:token", ...] -> {station id: token}."""
     out = {}
@@ -270,6 +285,8 @@ class Hub:
             if not isinstance(r, dict) or r.get("station") != station or not isinstance(r.get("src_rowid"), int):
                 raise IngestError(400, "every row needs this batch's station and an integer src_rowid")
             unknown |= set(r) - cols - {"src_rowid", "station"}
+            if table == "events" and r.get("kind") == "connected" and r.get("detail"):
+                r = {**r, "detail": _strip_secrets(r["detail"])}  # a collector on older code may still log them
             values.append(r)
         use = sorted(cols & set().union(*(set(r) for r in values)))  # columns both sides know
         names = ",".join(use + ["station", "src_rowid"])

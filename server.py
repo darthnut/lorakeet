@@ -30,7 +30,10 @@ import alerts as alerts_mod
 import analytics
 import anatomy
 import compare
+import drive
 import insights
+import keyflags
+import nodeids
 import node_analytics
 import packetsearch
 import topology
@@ -42,6 +45,16 @@ import sync as sync_mod
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 DATA_DIR = CFG["storage"]["data_dir"]
+
+
+def key_flag(nid):
+    """A radio's compromised / shared public key flag (keyflags.py), or None."""
+    return keyflags.flags(DATA_DIR / "mesh.db").get(nid)
+
+
+def likely_28(nid):
+    """Numbered the firmware 2.8 way (crc32 of its key; nodeids.py)."""
+    return nid in nodeids.info(DATA_DIR / "mesh.db")["v28"]
 # Optional featured base station (lorakeet.toml [base]); empty = none.
 BASE_ID = CFG["base"]["id"]
 BASE_NAME = CFG["base"]["name"] or BASE_ID
@@ -203,7 +216,8 @@ def _parse_header(message, tx=False):
     to = int(f["to"], 16) if f.get("to") else None
     return {"from_id": node_id(frm), "relay": relay or None,
             "pkt_id": int(f["id"], 16) if f.get("id") else None,
-            "channel": int(f["Ch"], 16) if f.get("Ch") else None,
+            # 2.7 prints the channel hash in hex ("Ch=0x1f"), 2.8.1 in decimal ("Ch=31"): read what's there
+            "channel": (int(f["Ch"], 16) if f["Ch"].lower().startswith("0x") else int(f["Ch"])) if f.get("Ch") else None,
             "directed": None if to is None else int(to != BROADCAST_NUM),
             "to_id": None if to is None else ("^all" if to == BROADCAST_NUM else node_id(to)),
             "want_ack": int(f["WantAck"]) if f.get("WantAck") else None,
@@ -526,12 +540,38 @@ def clean(obj):
 
 
 def redacted_config(cfg):
-    """Radio config minus secrets: the node's private key and admin keys never go in the log."""
+    """Radio config minus secrets: the node's private and admin keys, the Bluetooth pairing PIN and the
+    Wi-Fi password never go in the log."""
     c = type(cfg)()
     c.CopyFrom(cfg)
     c.security.ClearField("private_key")
     c.security.ClearField("admin_key")
+    c.bluetooth.ClearField("fixed_pin")
+    c.network.ClearField("wifi_psk")
     return c
+
+
+def redacted_module_config(cfg):
+    """Module config minus secrets: the MQTT password never goes in the log."""
+    c = type(cfg)()
+    c.CopyFrom(cfg)
+    c.mqtt.ClearField("password")
+    return c
+
+
+# JSON paths of the same secrets in already-logged "connected" events (scrub_logged_secrets)
+LOGGED_SECRET_PATHS = ("$.config.bluetooth.fixedPin", "$.config.network.wifiPsk", "$.module_config.mqtt.password")
+
+
+def scrub_logged_secrets(store):
+    """Remove secrets from config snapshots logged before they were redacted. Idempotent; runs at start."""
+    paths = ", ".join(f"'{p}'" for p in LOGGED_SECRET_PATHS)
+    with store.lock:
+        cur = store.db.execute(f"UPDATE events SET detail = json_remove(detail, {paths}) WHERE kind = 'connected' AND ("
+                               + " OR ".join(f"json_extract(detail, '{p}') IS NOT NULL" for p in LOGGED_SECRET_PATHS) + ")")
+        store.db.commit()
+    if cur.rowcount:
+        log.info("removed secrets from %d logged config snapshots", cur.rowcount)
 
 
 # ---- on-air channel hashes, reimplemented from firmware src/mesh/Channels.cpp (v2.7.26):
@@ -724,7 +764,13 @@ def packet_anatomy(store, mesh, rowid):
         keys = {}
     keys.setdefault(_xor(b"LongFast") ^ _xor(DEFAULT_PSK), DEFAULT_PSK)  # the public default key, always known
     # traceroutes addressed to the station that logged this packet were edited by that station's radio
-    return anatomy.build(row, dict(rx[0]) if rx else None, channels, lora, keys, row["station"] or mesh.local_id)
+    out = anatomy.build(row, dict(rx[0]) if rx else None, channels, lora, keys, row["station"] or mesh.local_id)
+    # sender / recipient with a compromised or shared public key (keyflags.py)
+    flagged = keyflags.flags(DATA_DIR / "mesh.db")
+    to = row["raw"].get("toId")
+    out["keyFlags"] = [{"role": role, "id": nid, "name": mesh.name(nid), **flagged[nid], "text": keyflags.text(flagged[nid], mesh.name)}
+                       for role, nid in (("sender", row["from_id"]), ("recipient", to)) if nid in flagged]
+    return out
 
 
 def redacted_channels(channels):
@@ -748,6 +794,29 @@ def dumps(obj):
 RADIO_VIDS = (ESPRESSIF_VID, 0x239A, 0x2886)
 
 
+def serial_ports():
+    """USB serial ports for the setup page, likely radios first."""
+    out = [{"device": p.device, "description": p.description or "", "radio": p.vid in RADIO_VIDS,
+            "vid": f"{p.vid:04x}" if p.vid else None} for p in list_ports.comports()]
+    return sorted(out, key=lambda x: (not x["radio"], x["device"]))
+
+
+def setup_info(mesh):
+    """What the setup page shows: whether this install is configured, the defaults, ports, the live link."""
+    import config as cfgmod
+    info = {"configured": CFG["_path"] is not None, "path": str(cfgmod.config_path()),
+            "defaults": {"dataDir": str(cfgmod.default_data_dir()), "httpPort": CFG["http"]["port"]},
+            "ports": serial_ports(), "status": mesh.status(),
+            "supervised": bool(os.environ.get("LORAKEET_SUPERVISED") or os.environ.get("INVOCATION_ID"))}
+    if info["configured"]:  # a read-only summary; the file itself is edited by hand
+        r = CFG["radio"]
+        info["summary"] = {"radio": r["host"] and f"{r['host']}:{r['tcp_port']}" or r["port"] or "auto-detect (USB)",
+                           "dataDir": str(CFG["storage"]["data_dir"]), "lan": CFG["http"]["lan"],
+                           "storeRecipients": CFG["logging"]["store_recipients"], "tiles": CFG["map"]["tiles"],
+                           "stationName": CFG["station"]["name"], "location": bool(CFG["station"]["location"])}
+    return info
+
+
 def find_port():
     ports = list_ports.comports()
     for vid in RADIO_VIDS:
@@ -758,15 +827,20 @@ def find_port():
 
 
 class Mesh:
-    def __init__(self, store, port_hint, debug_log=None):
+    def __init__(self, store, port_hint, debug_log=None, host=None, tcp_port=4403):
+        """port_hint: a serial port (else auto-detect). host: a radio on the network instead (TCP API)."""
         self.store = store
         self.debug_log = debug_log
         self.port_hint = port_hint
+        self.host, self.tcp_port = host or None, tcp_port
         self.iface = None
         self.connected = False
         self.port = None
         self.local_id = None
         self.rx = {}  # node id -> {"rssi","snr","ts","count"} as heard by our radio
+        # firmware debug-log records received / RX-TX header lines mined from them (alerts.py watches the
+        # pair: lines still arriving but nothing mined means the firmware's log format changed)
+        self.log_counts = {"lines": 0, "mined": 0}
         self.rx_remote = {}  # node id -> newest reception at ANOTHER listening station (sync hub): {station, ts, snr, rssi, hops}
         self.station_ids = set()  # every listening station seen (ours + collectors)
         r = store.query("SELECT MAX(ts) AS ts FROM packets WHERE relay=? AND hops>0", BASE_BYTE) if BASE_ID else None
@@ -798,7 +872,16 @@ class Mesh:
 
     # -- connection management (reconnects forever)
     def run(self):
-        from meshtastic.serial_interface import SerialInterface
+        if self.host:
+            from meshtastic.tcp_interface import TCPInterface
+
+            def SerialInterface(_label, timeout, connectNow):  # noqa: N802 - same shape for _connect
+                # connectNow=False leaves the socket closed; _connect's connect() opens it (TCPInterface.connect
+                # calls myConnect itself: opening it here as well made a second connection, and a radio serves
+                # one client at a time, so it kept dropping us)
+                return TCPInterface(self.host, portNumber=self.tcp_port, timeout=timeout, connectNow=False)
+        else:
+            from meshtastic.serial_interface import SerialInterface
 
         last_snapshot = 0
         while True:
@@ -827,10 +910,11 @@ class Mesh:
             log.exception("could not record event %s", kind)
 
     def _pick_port(self):
-        ports = {p.device for p in list_ports.comports()}
-        if self.port_hint and self.port_hint in ports:
-            return self.port_hint
-        return find_port()  # COM number can change after a replug
+        if self.host:  # a network radio: the "port" is its address, shown wherever the COM port would be
+            return f"{self.host}:{self.tcp_port}"
+        if self.port_hint:  # a configured port is used strictly: with several radios on USB, never pick another
+            return self.port_hint if self.port_hint in {p.device for p in list_ports.comports()} else None
+        return find_port()  # auto-detect (the COM number can change after a replug)
 
     def _connect(self, SerialInterface):  # noqa: N803
         port = self._pick_port()
@@ -869,7 +953,7 @@ class Mesh:
             self.last_connect_error = None
             self.event("connected", port=port, local=self.local_id, nodes=len(self.node_cache),
                        my_info=iface.myInfo, metadata=iface.metadata,
-                       config=redacted_config(iface.localNode.localConfig), module_config=iface.localNode.moduleConfig,
+                       config=redacted_config(iface.localNode.localConfig), module_config=redacted_module_config(iface.localNode.moduleConfig),
                        channels=redacted_channels(iface.localNode.channels))
             self._seed_history()
             try:  # what our radio can read: drives the readable/private split in analytics
@@ -914,7 +998,9 @@ class Mesh:
                                rec.message, rec.time or None)
         rx = parse_rx(rec.message)
         tx = None if rx else parse_tx(rec.message)
+        self.log_counts["lines"] += 1
         if rx or tx:
+            self.log_counts["mined"] += 1
             try:
                 self._store_header(rx, tx)
             except Exception:  # noqa: BLE001 - mining must never disturb the radio link
@@ -1410,7 +1496,8 @@ class Mesh:
         role = n.get("role") or k.get("role") or ("CLIENT" if announced else None)
         return {"name": name, "short": n.get("shortName") or k.get("short_name") or nid[-4:],
                 "hw": n.get("hwModel") or k.get("hw_model"), "role": role, "announced": announced,
-                "isBase": nid == BASE_ID, "isLocal": nid == self.local_id}
+                "isBase": nid == BASE_ID, "isLocal": nid == self.local_id, "keyFlag": key_flag(nid),
+                "v28": likely_28(nid)}
 
     def name(self, nid):
         n = self._nodes().get(nid)
@@ -1464,6 +1551,8 @@ class Mesh:
             "temperature": em.get("temperature"), "humidity": em.get("relativeHumidity"),
             "isLocal": nid == self.local_id, "isBase": nid == BASE_ID,
             "relayOnly": nid == BASE_ID and rx.get("ts") is None and n.get("lastHeard") is None,
+            "v28": likely_28(nid),
+            "keyFlag": dict(kf, withNames=[self.name(o) for o in kf["with"]]) if (kf := key_flag(nid)) else None,
         }
 
     def state(self):
@@ -1616,8 +1705,21 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                 return self._json({"error": "only devices on the local network may connect"}, 403)
             if path == "/api/config":
                 return self._json(config_public())
+            if path == "/api/keyflags":  # radios with a compromised or shared public key (keyflags.py)
+                f = keyflags.flags(DATA_DIR / "mesh.db")
+                return self._json({nid: dict(v, name=mesh.name(nid), text=keyflags.text(v, mesh.name)) for nid, v in f.items()})
             if path == "/api/whoami":
                 return self._json({"access": access, "readOnly": access != "full"})
+            if path == "/api/setup":  # paths and ports: this PC only
+                if access != "full":
+                    return self._json({"error": "setup is only available on the dashboard PC"}, 403)
+                return self._json(setup_info(mesh))
+            # first run (no lorakeet.toml yet): the dashboard PC lands on the setup page
+            if path in ("/", "/index.html") and CFG["_path"] is None and access == "full" and "skipsetup" not in qs:
+                self.send_response(302)
+                self.send_header("Location", "/setup.html")
+                self.end_headers()
+                return
 
             if path == "/api/state":
                 return self._json(mesh.state())
@@ -1730,6 +1832,18 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                 except Exception as e:  # noqa: BLE001
                     log.exception("topology failed")
                     return self._json({"error": f"topology failed: {e}"}, 500)
+            if path == "/api/analytics/drive":
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    # no station picked: every station that moved (the local radio rarely does)
+                    return self._json(drive.compute(DATA_DIR / "mesh.db", qs.get("range", "24h"), qs.get("station") or "*", describe,
+                                                    int(qs.get("bin", 250) or 250)))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("drive coverage failed")
+                    return self._json({"error": f"drive coverage failed: {e}"}, 500)
             if path == "/api/analytics/replay":
                 try:
                     cache = {}
@@ -1802,14 +1916,21 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                     if path == "/api/insights/traceroutes":
                         return self._json(insights.traceroutes(dbp, rng, describe, station))
                     if path == "/api/packets/search":
+                        if qs.get("keyflag"):
+                            qs = dict(qs, keyflagNodes=keyflags.flags(dbp))
                         r = packetsearch.search(dbp, qs.get("source", "packets"), qs, qs.get("limit", 200), qs.get("offset", 0), station)
+                        flagged = keyflags.flags(dbp)
                         for row in r["rows"]:
+                            if row.get("from_id") in flagged:
+                                row["from_keyflag"] = flagged[row["from_id"]]["kind"]
                             for k in ("from_id", "to_id"):
                                 if row.get(k) and row[k].startswith("!"):
                                     row[k.replace("_id", "_name")] = describe(row[k])["name"]
                         return self._json(r)
                     if path == "/api/packets/search.csv":
                         src = qs.get("source", "packets")
+                        if qs.get("keyflag"):
+                            qs = dict(qs, keyflagNodes=keyflags.flags(dbp))
                         return self._send(packetsearch.search_csv(dbp, src, qs, station).encode("utf-8"), "text/csv; charset=utf-8",
                                           {"Content-Disposition": f'attachment; filename="mesh-{src}.csv"'})
                     if path == "/api/alerts":
@@ -1842,6 +1963,24 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             else:
                 self.send_error(404)
 
+        def _setup(self, body):
+            """Write lorakeet.toml from the setup page, then restart to apply it when something will start us
+            again (the Windows supervisor, or systemd); otherwise ask the user to restart."""
+            import config as cfgmod
+            if CFG["_path"] is not None:
+                return self._json({"error": "already configured: edit lorakeet.toml to change settings"}, 409)
+            try:
+                path = cfgmod.write_setup(body)
+            except FileExistsError as e:
+                return self._json({"error": str(e)}, 409)
+            except (ValueError, TypeError) as e:
+                return self._json({"error": str(e)}, 400)
+            supervised = bool(os.environ.get("LORAKEET_SUPERVISED") or os.environ.get("INVOCATION_ID"))
+            log.info("setup: wrote %s%s", path, "; restarting to apply it" if supervised else "")
+            self._json({"saved": True, "path": str(path), "restarting": supervised})
+            if supervised:  # let the response go out, then exit: the supervisor or systemd starts us again
+                threading.Timer(1.0, lambda: os._exit(0)).start()
+
         def do_POST(self):  # noqa: N802
             # A collector station sending what it logged. The one POST that may come from another machine:
             # only with sync.mode = "hub", only from the allowed networks (Tailscale), only with the token.
@@ -1861,6 +2000,8 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 path = urlparse(self.path).path
+                if path == "/api/setup":
+                    return self._setup(body)
                 if path == "/api/send":
                     return self._json(mesh.send_text(body.get("text"), body.get("to"), body.get("channel", 0)))
                 if path == "/api/traceroute":
@@ -1923,8 +2064,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=CFG["radio"]["port"] or None,
                     help="serial port (default: lorakeet.toml radio.port, else auto-detect)")
+    ap.add_argument("--host", default=CFG["radio"]["host"] or None,
+                    help="a radio on the network (IP or name) instead of USB (default: lorakeet.toml radio.host)")
     ap.add_argument("--http", type=int, default=CFG["http"]["port"])
     args = ap.parse_args()
+    if args.host and args.port:
+        ap.error("use --port (USB) or --host (network), not both")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     handlers = [logging.handlers.RotatingFileHandler(DATA_DIR / "server.log", maxBytes=2_000_000,
@@ -1936,8 +2081,9 @@ def main():
     logging.getLogger("meshtastic").setLevel(logging.WARNING)
 
     store = Store(DATA_DIR / "mesh.db")
+    scrub_logged_secrets(store)
     debug_log = DebugLog(DATA_DIR / "debug.db")
-    mesh = Mesh(store, args.port, debug_log)
+    mesh = Mesh(store, args.port, debug_log, host=args.host, tcp_port=CFG["radio"]["tcp_port"])
     debug_log.on_batch = lambda rows: mesh.broadcast("debug", rows)
     # Bind before touching the radio: a second instance must exit here, not fight over the COM port.
     try:

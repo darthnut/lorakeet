@@ -57,6 +57,9 @@ def _where(source, f):
         sql.append("to_id NOT IN ('^all','!ffffffff')")
     if f.get("q") and "summary" in cols:
         sql.append("summary LIKE ?"); args.append(f"%{f['q']}%")
+    if f.get("keyflag"):  # sender has a compromised or shared key; the server passes keyflags.flags() in
+        nodes = [n for n, v in (f.get("keyflagNodes") or {}).items() if f["keyflag"] == "any" or v["kind"] == f["keyflag"]]
+        sql.append(f"from_id IN ({','.join('?' * len(nodes)) or 'NULL'})"); args += nodes
     if f.get("arrival") and source == "packets":
         if f["arrival"] == "air":
             sql.append(f"({ARRIVAL_SQL}) IN ('lora', 'mqtt', 'udp')")

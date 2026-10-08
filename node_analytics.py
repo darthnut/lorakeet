@@ -8,7 +8,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
-from analytics import (OTHER, PORT_GROUPS, _bucket_starts, _connect, _coverage, _covered, _window, measured_neighbors,
+from analytics import (OTHER, PORT_GROUPS, _bucket_starts, _connect, alias_map, _coverage, _covered, _window, measured_neighbors,
                        port_group, resolve_relay, scope_local)
 
 
@@ -16,7 +16,7 @@ def compute_node(db_path, nid, range_key, local_id, describe):
     db = _connect(db_path, local_id)
     local_id = scope_local(local_id)
     try:
-        return _compute_node(db, nid, range_key, local_id or "", describe)
+        return _compute_node(db, alias_map(db).get(nid, nid), range_key, local_id or "", describe)  # a pre-2.8 number: the radio's page
     finally:
         db.close()
 
@@ -25,6 +25,7 @@ def _relay_candidates(db, byte, local):
     hexb = f"{byte:02x}"
     ids = {r[0] for r in db.execute(
         "SELECT from_id FROM packets UNION SELECT node FROM node_info UNION SELECT a FROM links UNION SELECT b FROM links")}
+    ids |= set(alias_map(db))  # pre-2.8 numbers: relay bytes logged before an upgrade end in them
     return sorted(i for i in ids if i and i.endswith(hexb) and i != local)
 
 
@@ -107,7 +108,7 @@ def _compute_node(db, nid, range_key, local, describe):
     relays = []
     for r in q(f"SELECT relay, COUNT(*) {N} AND hops > 0 AND relay IS NOT NULL GROUP BY 1 ORDER BY 2 DESC", nid, since):
         cands = _relay_candidates(db, r[0], local)
-        chosen, how = resolve_relay(cands, measured_neighbors(db, local))
+        chosen, how = resolve_relay(cands, measured_neighbors(db, local), alias_map(db))
         relays.append({"byte": f"{r[0]:02x}", "count": r[1], "resolvedBy": how,
                        "candidates": [{"id": c, **describe(c)} for c in ([chosen] if chosen else cands)]})
     ports = [{"port": r[0], "group": port_group(r[0]), "count": r[1]}
@@ -151,11 +152,13 @@ def _compute_node(db, nid, range_key, local, describe):
     # "relayed to us" is exact when this node is the only one with the byte, or the only one with a measured
     # link to our radio among those sharing it (a relay must be in our radio's range)
     all_with_byte = _relay_candidates(db, byte, local) if byte is not None else []
-    chosen, _how = resolve_relay(all_with_byte, measured_neighbors(db, local)) if all_with_byte else (None, None)
+    chosen, _how = resolve_relay(all_with_byte, measured_neighbors(db, local), alias_map(db)) if all_with_byte else (None, None)
     sharing = [] if chosen == nid else [c for c in all_with_byte if c != nid]
 
     return {
-        "id": nid, **describe(nid), "range": range_key, "since": since, "until": until, "bucket": bucket,
+        "id": nid, **describe(nid),
+        "keyFlagWith": [{"id": o, "name": describe(o)["name"]} for o in (describe(nid).get("keyFlag") or {}).get("with", [])],
+        "range": range_key, "since": since, "until": until, "bucket": bucket,
         "groups": groups, "series": series, "rhythm": rhythm,
         "stats": {
             "packets": len(stamps), "firstEver": ever[0], "lastEver": ever[1], "packetsEver": ever[2],
@@ -175,6 +178,7 @@ def node_csv(db_path, nid, range_key, station=None):
     """The node's packets in range as CSV; raw_json carries anything that isn't a column."""
     db = _connect(db_path, station)
     try:
+        nid = alias_map(db).get(nid, nid)
         since = _window(db, range_key)[0]
         rows = db.execute("""SELECT ts, from_id, to_id, portnum, channel, hops, snr, rssi, relay, via_mqtt, pki,
                                     pkt_id, summary, raw FROM packets WHERE from_id = ? AND ts >= ? ORDER BY ts""",

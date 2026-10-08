@@ -25,12 +25,13 @@ $("ranges").addEventListener("click", (e) => {
 // The part of the stage each panel covers, so the graph and map centre in the open area (replay.js asks).
 const narrow = () => matchMedia("(max-width: 760px)").matches;
 window.vizInset = () => {
-  if (document.body.classList.contains("vz-clean")) return { top: 0, right: 0, bottom: 0, left: 0 };
   const pad = narrow() ? 8 : 12, box = (sel) => document.querySelector(sel).getBoundingClientRect();
+  const right = R.chatOn && !narrow() && !document.body.classList.contains("vz-drive") ? box("#vzChat").width + 2 * pad : 0;
+  if (document.body.classList.contains("vz-clean")) return { top: 0, right, bottom: 0, left: 0 };
   const bottom = box("#vzBottom").height + 2 * pad, top = box(".vz-toolbar").height + 2 * pad;
   return narrow()
     ? { top, right: 0, left: 0, bottom: bottom + box(".vz-side").height + pad }
-    : { top, right: 0, bottom, left: box(".vz-side").width + 2 * pad };
+    : { top, right, bottom, left: box(".vz-side").width + 2 * pad };
 };
 // keep the side panels between the toolbar and the play bar, whatever their heights
 new ResizeObserver(() => stage.style.setProperty("--bottom-h", `${$("vzBottom").offsetHeight}px`)).observe($("vzBottom"));
@@ -51,6 +52,13 @@ function setClean(on) {
 }
 $("vzHide").addEventListener("click", () => setClean(true));
 $("vzGrow").setAttribute("aria-pressed", String(R.grow));
+function toggleChat() {
+  setChat(!R.chatOn);
+  $("vzChatBtn").setAttribute("aria-pressed", String(R.chatOn));
+  redrawSoon();  // the panel takes the right edge: re-frame the graph / map
+}
+$("vzChatBtn").setAttribute("aria-pressed", String(R.chatOn));
+$("vzChatBtn").addEventListener("click", toggleChat);
 $("vzGrow").addEventListener("click", () => setGrow(!R.grow));
 function syncFadeUI() {
   $("vzFade").setAttribute("aria-pressed", String(R.fade.on));
@@ -92,13 +100,14 @@ document.addEventListener("fullscreenchange", () => {
   redrawSoon();
 });
 
-// H hide/show UI · G grow mode · D fade mode · F full screen · Space play/pause · C clock (hidden-UI mode) · Esc show UI
+// H hide/show UI · G grow mode · D fade mode · M texts panel · F full screen · Space play/pause · C clock (hidden-UI mode) · Esc show UI
 addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, textarea, select, [contenteditable]")) return;
   const clean = document.body.classList.contains("vz-clean");
   if (e.key === "h" || e.key === "H") setClean(!clean);
   else if (e.key === "g" || e.key === "G") setGrow(!R.grow);
   else if (e.key === "d" || e.key === "D") { setFade({ on: !R.fade.on }); syncFadeUI(); }
+  else if (e.key === "m" || e.key === "M") toggleChat();
   else if (e.key === "f" || e.key === "F") toggleFull();
   else if (e.key === "c" || e.key === "C") $("vzCleanClock").classList.toggle("off");
   else if (e.key === "Escape" && clean && !document.fullscreenElement) setClean(false);

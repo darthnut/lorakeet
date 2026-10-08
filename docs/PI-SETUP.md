@@ -57,8 +57,10 @@ With an antenna attached (never power a LoRa radio without one):
    sudo apt update && sudo apt full-upgrade -y
    sudo apt install -y git python3-venv
    ```
-3. **Tailscale:** `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up --ssh` and
-   approve it in the Tailscale admin page. From then on it's reachable as `ssh lorakeet@lorakeet-station`
+3. **Tailscale:** `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and
+   approve it in the Tailscale admin page. Leave Tailscale's own SSH server off (no `--ssh`): the Pi's normal
+   SSH server answers over Tailscale too, with the same host key and your SSH keys, so unattended updates
+   work. (If it's on: `sudo tailscale set --ssh=false`.) From then on it's reachable as `ssh lorakeet@lorakeet-station`
    from anywhere.
 4. **The code:** clone the repository to `/home/lorakeet/lorakeet`, then
    ```sh

@@ -50,7 +50,8 @@ function cell(col, row) {
   }
   if (col === "from_id" || col === "to_id") {
     const name = row[col.replace("_id", "_name")];
-    return v === "^all" ? "broadcast" : name && name !== v ? `${esc(name)} <span class="muted">${esc(v)}</span>` : esc(v);
+    const kf = col === "from_id" ? keyBadge(row.from_keyflag, { short: true }) : "";
+    return v === "^all" ? "broadcast" : name && name !== v ? `${esc(name)}${kf} <span class="muted">${esc(v)}</span>` : esc(v) + kf;
   }
   if (col === "relay" || col === "next_hop") return hex(v);
   if (col === "channel") return P.source === "packets" ? (v ?? "") : hex(v);

@@ -5,6 +5,7 @@ backing off when it crashes repeatedly. Exit code 3 from the server means the HT
 taken by another instance, so the supervisor stands down instead of looping.
 """
 import ctypes
+import os
 import subprocess
 import sys
 import time
@@ -69,6 +70,7 @@ def main():
             [str(PYTHON), "-u", str(HERE / "server.py")], cwd=HERE,
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            env={**os.environ, "LORAKEET_SUPERVISED": "1"},  # the server may exit to restart (setup page)
         )
         if proc.returncode == EXIT_PORT_IN_USE:
             log("port 5190 already in use by another instance; supervisor exiting")

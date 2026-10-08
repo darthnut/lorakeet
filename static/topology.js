@@ -18,6 +18,17 @@ const edgeTip = (e, byId) => {
 };
 
 async function renderTopology(range) {
+  // Visualizations' Coverage view (drive.js) is its own map: no topology needed
+  if ($("driveMap")) {
+    const drive = T.mode === "drive";
+    document.body.classList.toggle("vz-drive", drive);
+    $("driveMap").hidden = !drive;
+    if (drive) {
+      if (typeof stopReplay === "function") stopReplay();
+      $("topoReplayGraph").hidden = $("topoReplayMap").hidden = true;
+      return drawDrive(range);
+    }
+  }
   if (T.range !== range || !T.data) {
     T.range = range;
     try {
@@ -95,7 +106,7 @@ function drawGraph(d, el = $("topoGraph"), extra = { nodes: [], tethers: [] }, {
     const nb = neighbors.get(n.id);
     node.classed("dim", (m) => !nb.has(m.id));
     edge.classed("dim", (e) => e.a !== n.id && e.b !== n.id);
-    showTip(ev, `<b>${esc(n.name)}</b>${n.isBase ? " ☀" : ""}<br>${n.ghost ? `no observed RF link · reached us via ${esc(byId.get(n.via)?.name || "a relay")}, path unknown` : `${n.degree} link${n.degree === 1 ? "" : "s"}`} · ${nf.format(n.packets)} packets heard in range${n.role ? `<br><span class="t">${esc(prettyEnum(n.role))}${n.hw ? ` · ${esc(prettyHw(n.hw))}` : ""}</span>` : ""}`);
+    showTip(ev, `<b>${esc(n.name)}</b>${n.isBase ? " ☀" : ""}${n.keyFlag ? `<br><span class="t">⚠ ${esc(keyFlagText(n.keyFlag))}</span>` : ""}<br>${n.ghost ? `no observed RF link · reached us via ${esc(byId.get(n.via)?.name || "a relay")}, path unknown` : `${n.degree} link${n.degree === 1 ? "" : "s"}`} · ${nf.format(n.packets)} packets heard in range${n.role ? `<br><span class="t">${esc(prettyEnum(n.role))}${n.hw ? ` · ${esc(prettyHw(n.hw))}` : ""}</span>` : ""}`);
   }).on("pointerleave", () => { node.classed("dim", false); edge.classed("dim", false); hideTip(); })
     .on("click", (ev, n) => { location.href = nodeHref(n.id); });
 
@@ -320,7 +331,11 @@ function drawTable(d) {
 // Visualizations: Graph | Geographic, each with the replay player underneath (replay.js). The choice is
 // remembered. Analytics has no switch and shows only the table.
 if ($("topoMode")) {
-  try { if (localStorage.getItem("meshdash.topoView") === "geo") T.mode = "geo"; } catch { /* storage blocked */ }
+  // The Coverage view (drive.js) is held back until it has been checked on a real drive: ?coverage=1 shows it.
+  const coverageOn = new URLSearchParams(location.search).has("coverage");
+  const driveBtn = $("topoMode").querySelector('[data-mode="drive"]');
+  if (driveBtn && !coverageOn) driveBtn.hidden = true;
+  try { const v = localStorage.getItem("meshdash.topoView"); if (v === "geo" || (v === "drive" && $("driveMap") && coverageOn)) T.mode = v; } catch { /* storage blocked */ }
   for (const x of $("topoMode").children) x.classList.toggle("on", x.dataset.mode === T.mode);
   $("topoMode").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-mode]"); if (!b || b.dataset.mode === T.mode) return;

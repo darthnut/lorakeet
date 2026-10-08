@@ -25,10 +25,16 @@
 <main class="stage" id="topoReplay">
   <div id="topoReplayGraph" class="topo stage-view" aria-label="Network topology graph"></div>
   <div id="topoReplayMap" class="topo topomap stage-view" hidden></div>
+  <div id="driveMap" class="topomap stage-view" hidden aria-label="Drive coverage map"></div>
+  <svg id="chatLinks" class="chat-links" aria-hidden="true"></svg>
+  <section class="vz-panel vz-chat-panel" id="vzChat" aria-label="Text messages">
+    <div class="ch-title">Texts</div>
+    <ol class="chat-list" id="chatList" aria-live="polite"></ol>
+  </section>
 
   <div class="vz-toolbar vz-ui">
     <div class="seg vz-panel" id="topoMode" role="group" aria-label="View">
-      <button data-mode="graph" class="on">Graph</button><button data-mode="geo">Geographic</button>
+      <button data-mode="graph" class="on">Graph</button><button data-mode="geo">Geographic</button><button data-mode="drive" title="What a moving station heard along its route">Coverage</button>
     </div>
     <button type="button" class="btn vz-panel" id="vzGrow" aria-pressed="false" title="Radios appear only once the replay reaches their first packet, so the graph grows over time (G)">Grow</button>
     <button type="button" class="btn vz-panel" id="vzFade" aria-pressed="false" title="Radios dim when they go quiet and brighten when heard again (D)">Fade</button>
@@ -48,6 +54,7 @@
         <p class="hint">Auto learns how often each radio is usually heard (kept between 2 and 24 hours). Hours we weren't logging never count as silence.</p>
       </div>
     </details>
+    <button type="button" class="btn vz-panel" id="vzChatBtn" aria-pressed="false" title="Show text messages in a chat panel as the replay reaches them, each linked to its sender (M)">💬 Texts</button>
     <button type="button" class="btn vz-panel" id="vzHide" title="Hide the controls, e.g. to screen-record (H)">Hide UI</button>
     <button type="button" class="btn vz-panel" id="vzFull" title="Full screen (F)">⛶ Full screen</button>
   </div>
@@ -65,6 +72,26 @@
           <p class="muted" id="topoNote"></p>
         </details>
       </div>
+    </details>
+    <!-- Coverage view (drive.js): replaces the Key and Log while it's shown -->
+    <details class="vz-panel vz-box vz-drivebox" id="vzDrive" open>
+      <summary>Coverage</summary>
+      <div class="vz-box-body">
+        <label class="dv-row">Colour by
+          <select id="dvMetric">
+            <option value="radios">Radios heard</option>
+            <option value="perMin">Receptions per minute there</option>
+            <option value="bestSnr">Best signal (SNR)</option>
+            <option value="direct">Radios heard directly</option>
+          </select></label>
+        <label class="dv-row">Cell size <select id="dvBin"></select></label>
+        <div id="dvLegend" class="dv-legend"></div>
+        <p class="dv-note" id="dvNote"></p>
+      </div>
+    </details>
+    <details class="vz-panel vz-box vz-drivebox" id="vzCell" open>
+      <summary>Cell</summary>
+      <div class="vz-box-body" id="dvCell"><p class="muted">Click a square on the map.</p></div>
     </details>
     <details class="vz-panel vz-box vz-log" id="vzLog" open>
       <summary>Log</summary>
@@ -93,6 +120,7 @@
 <script src="insights.js"></script>
 <script src="topology.js"></script>
 <script src="replay.js"></script>
+<script src="drive.js"></script>
 <script src="viz.js"></script>
 <script src="alerts.js"></script>
 </body>

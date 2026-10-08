@@ -51,7 +51,45 @@ Everything below already works for any number of stations, not just two:
   de-duplication runs on every query: precompute it into a table as data grows.
 - The hub belongs on an always-on machine (the Raspberry Pi hub idea), not a desktop that sleeps.
 
+### 7. Cheap Wi-Fi stations over MQTT  *(planned 2026-10-07)*
+
+**Why:** a full station is a Raspberry Pi plus a USB radio. A Wi-Fi Meshtastic radio on its own (an ESP32
+board such as a Heltec V3/V4, ~$25, just a USB power supply) can publish everything it hears over MQTT
+(see below), so a new site becomes "plug it in, join the Wi-Fi". Use full Pi stations where detail and
+outage-proof logging matter, and cheap MQTT stations to add coverage.
+
+**What a cheap station gives, and doesn't** (checked 2026-10-07 on a V4 over Wi-Fi):
+- **Gives:** every packet the radio decodes, with its signal readings (SNR/RSSI), hop start/limit and relay
+  byte, the radio's own telemetry, and its identity. Enough for the live map, topology, analytics,
+  station comparisons and (for a radio with GPS) drive coverage.
+- **Doesn't:** the firmware debug log only goes over USB, so no duplicate copies, no `rx_hops`/`tx_log`, no
+  airtime by copy, no hop-by-hop replay detail. And no local buffering: while its internet is down,
+  what it hears is lost (an honest gap, drawn as one).
+
+**Design:**
+1. **A private broker both sides can reach.** The radio can't run Tailscale, so the broker has to be
+   reachable from the internet: a small cloud VM running Mosquitto, a managed broker's free tier, or a
+   port forward to the hub (least preferred: it exposes the home network). TLS on, one username/password
+   per station (the radio supports both), an ACL so each station can only publish to its own topic.
+2. **Radio settings** (`deploy/` gets a helper like `tools/radio_wifi.py`): MQTT module on, the broker's
+   address and the station's credentials, a private root topic, uplink on the channels to log, downlink
+   off (nothing comes back onto the air), "encryption enabled" (packets stay encrypted in transit; the hub
+   decrypts with the channel keys it already has), and the map-report option off.
+3. **Hub side** (`mqtt_ingest.py`, `[mqtt]` in lorakeet.toml): subscribe, unwrap each ServiceEnvelope
+   (packet + channel + gateway id), and store it like any station's reception: `station` = the gateway's
+   node id, `src_rowid` = a stable hash (gateway + sender + packet id) so redeliveries are no-ops,
+   `raw.transportMechanism` = MQTT so the source is never ambiguous. Coverage minutes come from the
+   station's own telemetry, as for other stations.
+4. **Everywhere it shows:** MQTT stations get a badge in the station picker and station table, and the
+   comparison grid notes that they can't count duplicate copies.
+
+**Effort:** the hub side is moderate (one new module, the paho-mqtt dependency, tests with a local
+Mosquitto); the broker is the main decision. **Not doing:** the public Meshtastic MQTT feed (that's the
+"whole mesh from the internet" idea below, a separate decision about what this log is for).
+
 ## Follow up: MQTT  *(not decided)*
+
+*The practical plan for cheap stations is item 7 above; this section is the background.*
 
 **What it is, in plain terms.** MQTT is a simple message-passing system: devices *publish* messages to
 a server (a "broker"), and anything *subscribed* to that broker receives them. Meshtastic radios that
@@ -104,6 +142,12 @@ signatures don't interoperate with 2.8.0. Release notes: github.com/meshtastic/f
   health chart), mesh beacons, ham regions (licensed nodes stop relaying unlicensed traffic), LoRa config
   applied without reboot, GPS clock sync every 30 min, and an official **MCP server** for driving devices.
 - Upgrade advice from the notes: export the config first; on a bootloop, full erase and flash.
+
+**Done ahead of the release (2026-10-07):** node-number linking across the upgrade (`nodeids.py`, analytics
+views), a "likely 2.8" tag and adoption card, the reception-logging alarm, and the one log-format change found
+by diffing `printPacket` in v2.7.26 against v2.8.1 (`Ch=` now decimal; it would have stored wrong channel hashes,
+not stopped). Already on the local mesh: 5 radios numbered the 2.8 way, 3 of them with their old number joined.
+Still to do at upgrade time: edit `[base] id` / `station_tokens` to the new numbers; check signing fields.
 
 **Order when 2.8 goes stable:** (1) id aliasing + log-format checks in the dashboard, tested on a copied DB;
 (2) upgrade one test station (with its config saved) and watch rx_hops, signing and ids for a day;
