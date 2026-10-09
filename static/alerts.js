@@ -71,11 +71,8 @@
     ST.settings = r.settings; $("sSaved").textContent = "Saved.";
   });
 
-  // live: new alerts arrive over the page's own event stream
-  try {
-    const es = new EventSource("/api/events");
-    es.addEventListener("alert", () => load());
-  } catch { /* old browser */ }
+  // live: new alerts arrive over the page's shared event stream (prov.js lkEvents)
+  window.lkEvents?.on("alert", () => load()).onReopen(() => load());
 
   window.meshWatch = {
     isWatched: (id) => !!ST.settings?.watched.includes(id),

@@ -15,6 +15,41 @@ function prov(kind, note) {
   const t = note ? `${p[1]} ${note}` : p[1];
   return `<span class="prov prov-${kind in PROV ? kind : "unknown"}" title="${t.replace(/"/g, "&quot;")}" aria-label="${p[1].split(":")[0]}">${p[0]}</span>`;
 }
+// Live updates: ONE event stream per page, and none while the tab is hidden. Browsers allow only 6 connections
+// to a site across all of its tabs, and an open stream holds one for good: with a few Lorakeet tabs open (the
+// map page used to hold two), every new request queued behind them and pages "stopped loading" until a tab
+// closed. Pages register listeners here instead of opening their own EventSource; onReopen callbacks run when
+// the stream comes back after the tab was hidden, so the page can catch up on what it missed.
+window.lkEvents = (() => {
+  const handlers = new Map(), reopen = [], errors = [];
+  let es = null, hideT = null, opened = document.hidden;  // a page that starts hidden catches up when first shown
+  function open() {
+    if (es) return;
+    es = new EventSource("/api/events");
+    for (const [type, fns] of handlers) for (const fn of fns) es.addEventListener(type, fn);
+    es.onerror = (e) => errors.forEach((f) => f(e));
+    if (opened) reopen.forEach((f) => f());
+    opened = true;
+  }
+  function close() { if (es) { es.close(); es = null; } }
+  document.addEventListener("visibilitychange", () => {
+    clearTimeout(hideT);
+    if (document.hidden) hideT = setTimeout(close, 15000); else open();
+  });
+  addEventListener("pagehide", close);
+  const api = {
+    on(type, fn) {
+      if (!handlers.has(type)) handlers.set(type, []);
+      handlers.get(type).push(fn);
+      if (es) es.addEventListener(type, fn); else if (!document.hidden) open();
+      return api;
+    },
+    onReopen(fn) { reopen.push(fn); return api; },
+    onError(fn) { errors.push(fn); return api; },
+  };
+  return api;
+})();
+
 // Key warning badge (keyflags.py): a radio whose public key is on Meshtastic's known-weak list, or shared with
 // other radios. flag = describe()/node_json's keyFlag ({kind, with}), or just the kind string.
 const KEY_FLAG = {

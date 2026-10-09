@@ -27,9 +27,18 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 - **Topology and replay.** The mesh as a graph of real RF links (measured and inferred), with a replay
   that animates every packet along the path your radio actually observed. *Grow* mode builds the graph as
   radios first appear; *Fade* mode dims radios that go quiet; *Texts* shows the readable text messages in a
-  chat panel as the replay reaches them, each linked to its sender. Names can be anonymized for sharing
-  (`?anon=1`, which also hides message text), and `tools/record-viz.mjs` renders the replay to a smooth
-  60 fps MP4.
+  chat panel as the replay reaches them, each linked to its sender. On the map, a moving station's dot
+  follows its GPS route. For sharing, `?anon=1` renames every radio, hides message text and moves the whole
+  map to a decoy place (same shape and distances, somewhere else); `tools/record-viz.mjs` renders the replay
+  to MP4, from short clips for a README to smooth 60 fps.
+- **Drive coverage.** Put a station in a car (a Pi with a GPS radio) and the Coverage view maps what it heard
+  along the route, square by square, and where the mesh heard *it*: each packet it sent, marked by whether
+  one of your other stations heard it, a relay repeated it, or there's no sign it got out. Optional drive
+  pings send a tiny message every kilometre to fill that in. Quiet spells only count as gaps once they're
+  long enough to mean something at the station's usual packet rate.
+- **Ask a station how it's doing, over the mesh.** For a station with no internet (in a car, at a remote
+  site): send its radio `lk status` or `lk gps` as a private direct message from a radio you've allowed,
+  and it answers. Read-only, off by default.
 - **Packet anatomy.** Any packet rebuilt byte by byte, layer by layer (radio, header, encryption,
   envelope, payload), each field labelled with where its value came from.
 - **Health and security checks.** Busy channels, misconfigured nodes, known weak keys, duplicate keys,
@@ -44,6 +53,8 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 ![The network graph](docs/screenshots/graph.png)
 
 ![Analytics summary and traffic over time](docs/screenshots/analytics.png)
+
+![Drive coverage, anonymized and moved to a decoy place: what the car heard along its route, and where the mesh heard it](docs/screenshots/coverage.png)
 
 ![The replay's texts panel, anonymized: each message linked to the radio that sent it](docs/screenshots/texts.png)
 
@@ -83,7 +94,8 @@ stops (start it from Task Scheduler at logon). On Linux, see `deploy/lorakeet.se
   traceroutes). By default it only answers on this computer; `[http] lan = "view"` adds read-only access
   from your local network.
 - **Listening doesn't transmit.** The only things that transmit are messages and traceroutes you send,
-  and scheduled traceroutes, which are off unless you turn them on.
+  plus three options that are off unless you turn them on: scheduled traceroutes, drive pings, and replies
+  to `lk` commands.
 - **What it records about others.** It logs what your radio hears on the shared airwaves, including
   the recipients of other people's addressed packets (on by default; `[logging] store_recipients` turns
   that off). Message contents are only readable on channels you have the key for. Think about this

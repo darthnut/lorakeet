@@ -267,6 +267,20 @@ function drawGraph(d, el = $("topoGraph"), extra = { nodes: [], tethers: [] }, {
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 
+// ?anon=1 on a map: the whole picture moves to a decoy place, so the shape, distances and timing stay true but the
+// tiles underneath show somewhere else. By default only east-west (DECOY_DLON degrees), which keeps every distance
+// exact (a north-south move would stretch it slightly); ?decoy=lat,lon picks the spot for the mesh's centre.
+// It hides WHERE, not the shape: someone who knows the local mesh could still recognise its layout.
+const DECOY_DLON = 14.5;
+function decoyShift(centre) {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("anon") || !centre) return null;
+  const d = (q.get("decoy") || "").split(",").map(Number);
+  const to = d.length === 2 && d.every(Number.isFinite) ? d : [centre[0], centre[1] + DECOY_DLON];
+  const dLat = to[0] - centre[0], dLon = to[1] - centre[1];
+  return (p) => [p[0] + dLat, p[1] + dLon];
+}
+
 // Leaflet map of the topology into el. extra = radios with no observed link (replay ghosts): drawn hollow
 // at their reported or estimated position. still() is re-checked after the async estimate fetch so a stale
 // draw is dropped. Returns { map, at(id) -> [lat, lon] | null, placed, drawn, estimated } or null.
@@ -278,10 +292,12 @@ async function buildGeoMap(d, el, still = () => true, extra = [], { trimOutliers
   el.replaceChildren();
   // our radio has no GPS; it sits in the house with the base station
   const base = all.find((n) => n.isBase && n.lat != null);
-  const at = (n) => (!n ? null : n.lat != null ? [n.lat, n.lon] : n.isLocal && base ? [base.lat, base.lon]
+  const real = (n) => (!n ? null : n.lat != null ? [n.lat, n.lon] : n.isLocal && base ? [base.lat, base.lon]
     : est.has(n.id) ? [est.get(n.id).lat, est.get(n.id).lon] : null);
   const estimated = (n) => n.lat == null && !n.isLocal && est.has(n.id);
-  const placed = all.filter(at);
+  const placed = all.filter(real);
+  const shift = placed.length ? decoyShift([median(placed.map((n) => real(n)[0])), median(placed.map((n) => real(n)[1]))]) : null;
+  const at = (n) => { const p = real(n); return p && shift ? shift(p) : p; };
   if (!placed.length) { el.innerHTML = '<p class="muted" style="padding:16px">None of these radios have shared a position yet.</p>'; return null; }
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const map = L.map(el, { scrollWheelZoom: true, zoomSnap: inset ? 0.25 : 1 });
@@ -295,11 +311,18 @@ async function buildGeoMap(d, el, still = () => true, extra = [], { trimOutliers
     L.polyline([a, b], { color: css("--text-muted"), weight: edgeWidth(e), opacity: viaEst ? 0.35 : e.measured ? 0.8 : 0.5, dashArray: e.measured && !viaEst ? null : "5 6" })
       .bindTooltip(edgeTip(e, byId), { sticky: true }).addTo(map);
   }
+  // moving stations (a car): their GPS route over the range, faint; the dot sits where they spent the most time
+  for (const [id, tr] of Object.entries(d.tracks || {})) {
+    if (tr.length > 1) L.polyline(tr.map((p) => (shift ? shift([p[1], p[2]]) : [p[1], p[2]])), { color: css("--accent"), weight: 2, opacity: 0.35, dashArray: "2 5", interactive: false }).addTo(map);
+  }
+  const markers = new Map();
   for (const n of placed) {
     const e = estimated(n) ? est.get(n.id) : null, fill = css(nodeFill(n).slice(4, -1));
     if (e) L.circle(at(n), { radius: e.radiusKm * 1000, color: fill, weight: 1, dashArray: "4 4", opacity: 0.6, fillOpacity: 0.04, interactive: false }).addTo(map);
     const hollow = e || n.ghost;
-    L.circleMarker(at(n), { radius: 5 + Math.sqrt(n.degree || 0) * 2.5, color: hollow ? fill : css("--surface-1"), weight: 2, dashArray: hollow ? "3 3" : null, fillColor: fill, fillOpacity: hollow ? 0.15 : 1 })
+    const mk = L.circleMarker(at(n), { radius: 5 + Math.sqrt(n.degree || 0) * 2.5, color: hollow ? fill : css("--surface-1"), weight: 2, dashArray: hollow ? "3 3" : null, fillColor: fill, fillOpacity: hollow ? 0.15 : 1 });
+    markers.set(n.id, mk);
+    mk
       .bindTooltip(`<b>${esc(n.name)}</b><br>${n.ghost ? `no observed RF link · reached us via ${esc(byId.get(n.via)?.name || "a relay")}` : `${n.degree} link${n.degree === 1 ? "" : "s"}`}${e ? `<br>estimated position ${prov("inferred")} ±${fmt(e.radiusKm, 1)} km<br><span class="t">${esc(e.method)}</span>` : ""}`)
       .on("click", () => { location.href = nodeHref(n.id); }).addTo(map);
   }
@@ -313,7 +336,7 @@ async function buildGeoMap(d, el, still = () => true, extra = [], { trimOutliers
   }
   map.fitBounds(L.latLngBounds(frame).pad(inset ? 0.1 : 0.3), { maxZoom: 12,
     ...(inset ? { paddingTopLeft: [inset.left + 20, inset.top + 20], paddingBottomRight: [inset.right + 20, inset.bottom + 20] } : {}) });
-  return { map, at: (id) => at(byId.get(id)), byId, placed: placed.length, drawn, estimated: placed.filter(estimated).length };
+  return { map, at: (id) => at(byId.get(id)), byId, markers, shift, placed: placed.length, drawn, estimated: placed.filter(estimated).length };
 }
 
 function drawTable(d) {
@@ -331,11 +354,7 @@ function drawTable(d) {
 // Visualizations: Graph | Geographic, each with the replay player underneath (replay.js). The choice is
 // remembered. Analytics has no switch and shows only the table.
 if ($("topoMode")) {
-  // The Coverage view (drive.js) is held back until it has been checked on a real drive: ?coverage=1 shows it.
-  const coverageOn = new URLSearchParams(location.search).has("coverage");
-  const driveBtn = $("topoMode").querySelector('[data-mode="drive"]');
-  if (driveBtn && !coverageOn) driveBtn.hidden = true;
-  try { const v = localStorage.getItem("meshdash.topoView"); if (v === "geo" || (v === "drive" && $("driveMap") && coverageOn)) T.mode = v; } catch { /* storage blocked */ }
+  try { const v = localStorage.getItem("meshdash.topoView"); if (v === "geo" || (v === "drive" && $("driveMap"))) T.mode = v; } catch { /* storage blocked */ }
   for (const x of $("topoMode").children) x.classList.toggle("on", x.dataset.mode === T.mode);
   $("topoMode").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-mode]"); if (!b || b.dataset.mode === T.mode) return;

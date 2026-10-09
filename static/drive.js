@@ -8,7 +8,8 @@
 
 const DV = { data: null, key: null, map: null, layer: null, sel: null, fitted: null,
   metric: (() => { try { return localStorage.getItem("meshdash.dvMetric") || "radios"; } catch { return "radios"; } })(),
-  bin: (() => { try { return Number(localStorage.getItem("meshdash.dvBin")) || 250; } catch { return 250; } })() };
+  bin: (() => { try { return Number(localStorage.getItem("meshdash.dvBin")) || 250; } catch { return 250; } })(),
+  sent: (() => { try { return localStorage.getItem("meshdash.dvSent") !== "0"; } catch { return true; } })() };
 const DV_METRICS = {
   radios: { label: "Radios heard", fmt: (v) => nf.format(v), get: (c) => c.radios },
   perMin: { label: "Receptions per minute there", fmt: (v) => fmt(v, 1), get: (c) => c.perMin },
@@ -24,6 +25,7 @@ async function drawDrive(range) {
     try {
       const d = await fetch(`/api/analytics/drive?range=${encodeURIComponent(range)}&bin=${DV.bin}${stationQS()}`).then((r) => r.json());
       if (d.error) throw new Error(d.error);
+      dvDecoy(d);
       DV.data = d; DV.key = key; DV.sel = null;
     } catch (e) { $("dvNote").textContent = `Couldn't load coverage: ${e.message}`; return; }
   }
@@ -46,8 +48,33 @@ function dvSteps(values) {
   const breaks = [...new Set([q(0.2), q(0.4), q(0.6), q(0.8)])];
   const ranges = [];
   let lo = v[0];
-  for (const b of [...breaks, v[v.length - 1]]) { if (b >= lo) { ranges.push([lo, b]); lo = b; } }
-  return ranges.filter((r, i, a) => i === 0 || r[1] > a[i - 1][1]);
+  for (const b of [...new Set([...breaks, v[v.length - 1]])]) {
+    if (lo === undefined || b < lo) continue;
+    ranges.push([lo, b]);
+    lo = v.find((x) => x > b);  // the next class starts at the next value present, so classes never overlap
+  }
+  return ranges;
+}
+
+// ?anon=1: move everything to a decoy place (topology.js decoyShift), centred on the routes
+function dvDecoy(d) {
+  const pts = (d.tracks || []).flatMap((t) => t.segments.flat());
+  const sh = pts.length ? decoyShift([median(pts.map((p) => p[0])), median(pts.map((p) => p[1]))]) : null;
+  if (!sh) return;
+  // names too (Station 1, Radio 4...), and never message text: a test message can carry real coordinates
+  const label = new Map(), n = { Station: 0, Radio: 0 }, stations = new Set(d.stations.map((s) => s.id));
+  const nm = (id) => { if (!label.has(id)) { const w = stations.has(id) ? "Station" : "Radio"; label.set(id, `${w} ${++n[w]}`); } return label.get(id); };
+  for (const s of d.stations) s.name = nm(s.id);
+  for (const c of d.cells) for (const k of ["topRadios", "directRadios", "relays"]) for (const r of c[k] || []) r[1] = String(r[0]).startsWith("!") ? nm(r[0]) : "an unresolved relay";
+  for (const s of d.sent || []) {
+    for (const h of s.heardBy) h.name = nm(h.station);
+    for (const r of s.relays) r[1] = String(r[0]).startsWith("!") ? nm(r[0]) : "an unresolved relay";
+    s.what = /^Lorakeet ping/.test(s.what || "") ? "ping" : /_APP$/.test(s.what || "") || s.what === "packet" ? s.what : "a text message";
+  }
+  const mv = (p) => { const [a, b] = sh([p[0], p[1]]); p[0] = a; p[1] = b; };
+  for (const t of d.tracks) for (const seg of t.segments) for (const p of seg) mv(p);
+  for (const c of d.cells) { [c.lat, c.lon] = sh([c.lat, c.lon]); c.bounds = c.bounds.map((b) => sh(b)); }
+  for (const s of d.sent || []) [s.lat, s.lon] = sh([s.lat, s.lon]);
 }
 
 function renderDrive() {
@@ -60,12 +87,20 @@ function renderDrive() {
     $("dvCell").innerHTML = '<p class="muted">Nothing to show yet.</p>';
     return;
   }
-  const heard = d.cells.filter((c) => c.receptions > 0), holes = d.cells.filter((c) => c.receptions === 0 && c.minutes >= 0.5);
+  // drive.py judges silence against each station's own reception rate: "hole" = inside a silence long enough to
+  // mean no coverage; "brief" = crossed between packets, too quickly to tell
+  const heard = d.cells.filter((c) => c.receptions > 0), holes = d.cells.filter((c) => c.status === "hole"),
+    brief = d.cells.filter((c) => c.status === "brief");
+  for (const c of brief) {
+    L.rectangle(c.bounds, { color: muted, weight: 0.8, dashArray: "2 4", opacity: 0.6, fill: false })
+      .bindTooltip(`<b>Nothing heard, too briefly to tell</b><br>${fmt(c.minutes * 60, 0)} s here, between packets`, { sticky: true })
+      .on("click", () => dvSelect(c)).addTo(L_);
+  }
   const steps = dvSteps(heard.map(m.get));
   const stepOf = (v) => { if (v == null) return 0; const i = steps.findIndex((r) => v <= r[1]); return i < 0 ? steps.length - 1 : i; };
   for (const c of holes) {
     L.rectangle(c.bounds, { color: warn, weight: 1.5, dashArray: "4 3", fill: true, fillOpacity: 0.04, fillColor: warn })
-      .bindTooltip(`<b>Nothing heard</b><br>${fmt(c.minutes, 1)} min here`, { sticky: true })
+      .bindTooltip(`<b>Nothing heard: a gap</b><br>${fmt(c.minutes, 1)} min here, inside a long silence`, { sticky: true })
       .on("click", () => dvSelect(c)).addTo(L_);
   }
   for (const c of heard) {
@@ -75,7 +110,7 @@ function renderDrive() {
       .bindTooltip(`<b>${esc(m.label)}: ${v == null ? "—" : esc(m.fmt(v))}</b><br>${nf.format(c.receptions)} receptions · ${c.radios} radios · ${fmt(c.minutes, 1)} min here`, { sticky: true })
       .on("click", () => dvSelect(c)).addTo(L_);
   }
-  // the route, dashed amber where nothing was heard within a minute
+  // the route, dashed amber inside silences long enough to mean a gap (drive.py silentAfterS)
   const all = [];
   for (const t of d.tracks) for (const seg of t.segments) {
     const pts = seg.map((p) => [p[0], p[1]]);
@@ -85,6 +120,17 @@ function renderDrive() {
     const flush = () => { if (run.length > 1) L.polyline(run, { color: warn, weight: 3, dashArray: "6 5", opacity: 0.95, interactive: false }).addTo(L_); run = []; };
     seg.forEach((p, i) => { if (p[3] === 0) { if (!run.length && i) run.push([seg[i - 1][0], seg[i - 1][1]]); run.push([p[0], p[1]]); } else { if (run.length) run.push([p[0], p[1]]); flush(); } });
     flush();
+  }
+  // the other direction: where the station TRANSMITTED, and whether that got out (drive.py _sent)
+  const sentCol = { station: css("--good"), mesh: accent, none: warn };
+  const sentLabel = { station: "heard by one of our stations", mesh: "repeated by the mesh (not heard by our stations)", none: "no sign it was heard" };
+  if (DV.sent) for (const s of d.sent || []) {
+    const col = sentCol[s.result];
+    L.circleMarker([s.lat, s.lon], { radius: 5, color: col, weight: 2, fillColor: col, fillOpacity: s.result === "none" ? 0 : 0.85 })
+      .bindTooltip(`<b>${esc(s.what)}</b> · ${esc(when(s.ts))}<br>${esc(sentLabel[s.result])}` +
+        (s.heardBy.length ? `<br>${s.heardBy.map((h) => `${esc(h.name)}: ${h.hops == null ? "?" : h.hops} hop${h.hops === 1 ? "" : "s"}${h.snr != null ? `, SNR ${fmt(h.snr, 1)}` : ""}`).join("<br>")}` : "") +
+        (s.relays.length ? `<br><span class="t">repeated by ${s.relays.map((r) => esc(r[1])).join(", ")}</span>` : ""), { sticky: true })
+      .addTo(L_);
   }
   for (const t of d.tracks) {  // start and end of each station's route
     const segs = t.segments.filter((s) => s.length), first = segs[0]?.[0], last = segs.at(-1)?.at(-1);
@@ -99,12 +145,17 @@ function renderDrive() {
   }
   // legend + note
   $("dvLegend").innerHTML = steps.map((r, i) => `<span><i style="background:${accent};opacity:${DV_STEPS[Math.round(i * (DV_STEPS.length - 1) / Math.max(1, steps.length - 1))]}"></i>${esc(m.fmt(r[0]))}${r[1] !== r[0] ? `–${esc(m.fmt(r[1]))}` : ""}</span>`).join("") +
-    `<span><i class="hole"></i>nothing heard</span><span><i style="background:${warn};height:3px"></i>silent stretch</span>`;
+    (DV.sent && (d.sent || []).length ? `<span><i class="dot" style="background:${css("--good")}"></i>sent: reached our station</span><span><i class="dot" style="background:${accent}"></i>sent: repeated by mesh</span><span><i class="dot hollow" style="border-color:${warn}"></i>sent: no sign</span>` : "") +
+    `<span><i class="hole"></i>gap: nothing heard</span><span><i class="brief"></i>too brief to tell</span><span><i style="background:${warn};height:3px"></i>silent stretch</span>`;
   const s = d.stats, names = d.stations.map((x) => x.name).join(", ");
-  const km = d.tracks.reduce((t, tr) => t + tr.segments.reduce((u, seg) => u + seg.slice(1).reduce((w, p, i) => w + dvKm(seg[i], p), 0), 0), 0);
+  // distance moved: steps under 25 m (the logger's "moved" threshold) are GPS jitter while parked, not travel
+  const km = d.tracks.reduce((t, tr) => t + tr.segments.reduce((u, seg) => u + seg.slice(1).reduce((w, p, i) => { const s = dvKm(seg[i], p); return w + (s >= 0.025 ? s : 0); }, 0), 0), 0);
   $("dvNote").textContent = `${names}: ${nf.format(s.receptions)} receptions from ${s.radios} radios along ${fmt(km, 1)} km of route (${fmt(s.minutes / 60, 1)} h logged). ` +
     `Each reception is placed at the station's latest GPS fix (within 12 min), never interpolated. Squares: ${DV.bin < 1000 ? `${DV.bin} m` : `${DV.bin / 1000} km`}.` +
-    (d.stations.some((x) => x.source === "packets") ? " Some stations have no debug log, so only first copies of packets count there." : "");
+    (d.stations.some((x) => x.source === "packets") ? " Some stations have no debug log, so only first copies of packets count there." : "") +
+    ((d.sent || []).length ? (() => { const c = (k) => d.sent.filter((x) => x.result === k).length;
+      return ` Sent from the route: ${d.sent.length} packets, ${c("station")} heard by one of our stations, ${c("mesh")} only repeated by the mesh, ${c("none")} with no sign of being heard.`; })() : "") +
+    d.tracks.filter((t) => t.silentAfterS).map((t) => ` A gap means nothing heard for over ${fmt(t.silentAfterS / 60, 1)} min: at ${d.stations.find((x) => x.id === t.station)?.name || t.station}'s usual ${fmt(t.ratePerMin, 1)} receptions/min, it would have heard something 9 times out of 10. Shorter quiet spells are drawn faintly ("too brief to tell").`).join("");
   if (DV.sel) dvSelect(d.cells.find((c) => c.lat === DV.sel.lat && c.lon === DV.sel.lon) || null, true);
 }
 
@@ -117,7 +168,7 @@ function dvKm(a, b) {
 function dvSelect(c, quiet = false) {
   DV.sel = c;
   if (!c) { $("dvCell").innerHTML = '<p class="muted">Click a square on the map.</p>'; return; }
-  const link = (id, name) => (id.startsWith("!") ? `<a href="${esc(nodeHref(id))}">${esc(name)}</a>` : esc(name));
+  const link = (id, name) => (id.startsWith("!") && !ANON ? `<a href="${esc(nodeHref(id))}">${esc(name)}</a>` : esc(name));  // anon: no real ids in links
   const list = (rows, val) => rows.length ? `<ul class="dv-list">${rows.map((r) => `<li>${link(r[0], r[1])}${val ? `<span class="muted">${esc(val(r))}</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted">none</p>';
   $("dvCell").innerHTML = c.receptions === 0
     ? `<dl class="dv-kv"><dt>Time here</dt><dd>${fmt(c.minutes, 1)} min</dd></dl><p>Nothing heard in this square: a gap in coverage (or the radio was busy elsewhere). Worth another pass to confirm.</p>`
@@ -143,4 +194,10 @@ $("dvBin").addEventListener("change", (e) => {
   DV.bin = Number(e.target.value);
   try { localStorage.setItem("meshdash.dvBin", String(DV.bin)); } catch { /* storage blocked */ }
   drawDrive(A.range);
+});
+$("dvSent").checked = DV.sent;
+$("dvSent").addEventListener("change", (e) => {
+  DV.sent = e.target.checked;
+  try { localStorage.setItem("meshdash.dvSent", DV.sent ? "1" : "0"); } catch { /* storage blocked */ }
+  renderDrive();
 });

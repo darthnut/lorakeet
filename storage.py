@@ -219,8 +219,13 @@ class Storage:
                     dest.mkdir(parents=True, exist_ok=True)
                     part = dest / (name + ".partial")
                     shutil.copyfile(gz, part)
-                    if part.stat().st_size != gz.stat().st_size:
-                        raise OSError("copied size mismatch")
+                    # cloud drives (Google Drive for Desktop's H:) can report a just-written file's size late:
+                    # give it a few seconds to settle before calling the copy short
+                    want, deadline = gz.stat().st_size, time.time() + 15
+                    while part.stat().st_size != want and time.time() < deadline:
+                        time.sleep(0.5)
+                    if part.stat().st_size != want:
+                        raise OSError(f"copied size mismatch ({part.stat().st_size} of {want} bytes)")
                     os.replace(part, dest / name)
                     entry["ok"] = True
                     entry["pruned"] = self._prune(dest)

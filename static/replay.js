@@ -90,7 +90,38 @@ async function drawReplay(d, range) {
     // flights draw in an SVG laid over the map; positions are re-projected every frame, so pan and zoom just work
     const svg = d3.select(m.map.getContainer()).append("svg").attr("class", "flightsvg");
     R.layer = svg.append("g").attr("class", "flights").node();
-    R.graph = { byId: m.byId, r: () => 7, pos: (id) => { const ll = m.at(id); if (!ll) return null; const p = m.map.latLngToContainerPoint(ll); return { x: p.x, y: p.y }; } };
+    // A moving station (its own GPS track, topology.station_tracks) is wherever it was at the playhead: its
+    // latest fix at or before R.t, if under 12 min old (the Coverage view's rule), else its usual spot. tick()
+    // moves its dot and draws the route so far; receptions then fly to where it actually was.
+    const tracks = rd.tracks || {}, idx = {};
+    const trackIdx = (id) => {
+      const tr = tracks[id]; if (!tr) return -1;
+      let lo = 0, hi = tr.length;
+      while (lo < hi) { const k = (lo + hi) >> 1; if (tr[k][0] <= R.t) lo = k + 1; else hi = k; }
+      const i = lo - 1;
+      return i >= 0 && R.t - tr[i][0] <= 720 ? i : -1;
+    };
+    const routes = {};
+    for (const id of Object.keys(tracks)) {
+      if (m.markers.has(id)) routes[id] = L.polyline([], { color: css("--accent"), weight: 3, opacity: 0.7, interactive: false }).addTo(m.map);
+    }
+    const sh = (p) => (m.shift ? m.shift(p) : p);  // ?anon=1: the decoy place (topology.js decoyShift)
+    const llOf = (id) => { if (routes[id]) { const i = trackIdx(id); if (i >= 0) return sh([tracks[id][i][1], tracks[id][i][2]]); } return m.at(id); };
+    R.graph = {
+      byId: m.byId, r: () => 7,
+      pos: (id) => { const ll = llOf(id); if (!ll) return null; const p = m.map.latLngToContainerPoint(ll); return { x: p.x, y: p.y }; },
+      tick: () => {
+        for (const id of Object.keys(routes)) {
+          const i = trackIdx(id);
+          if (idx[id] === i) continue;
+          idx[id] = i;
+          m.markers.get(id).setLatLng(i >= 0 ? sh([tracks[id][i][1], tracks[id][i][2]]) : m.at(id));
+          const tr = tracks[id], pts = [];  // the route so far within the range
+          for (let k = i; k >= 0 && tr[k][0] >= rd.since; k--) pts.push(sh([tr[k][1], tr[k][2]]));
+          routes[id].setLatLngs(pts.reverse());
+        }
+      },
+    };
     const ids = new Set([...d.nodes, ...extra.nodes].map((n) => n.id));
     R.unplaced = [...ids].filter((id) => !m.at(id)).length;
   } else {
@@ -179,6 +210,7 @@ function seek(t) {
   if (R.layer) R.layer.replaceChildren();
   $("replayTicker").replaceChildren();
   resetChat();
+  R.graph?.tick?.();
   R.visKey = null;
   applyVisibility();
 }
@@ -508,6 +540,7 @@ function frame(now) {
     if (R.t >= rd.until) { R.t = rd.until; R.playing = false; }
   }
   R.last = now;
+  R.graph?.tick?.();
   applyGrow(R.playing ? now : null);
   R.graph?.fade?.(now);
   animate(now);

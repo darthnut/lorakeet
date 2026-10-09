@@ -58,7 +58,7 @@ def classify(latest, first_heard, last_heard):
 
 
 def compute(db_path):
-    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
     try:
         latest = {}
         for n, k in db.execute("SELECT node, public_key FROM node_info WHERE public_key IS NOT NULL "

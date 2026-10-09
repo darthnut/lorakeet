@@ -42,6 +42,20 @@ if ! tailscale ip -4 >/dev/null 2>&1; then
   sudo tailscale up --hostname "$(hostname)"
 fi
 
+echo "== logs kept across reboots, and the Wi-Fi watchdog"
+# the system log survives reboots (capped), so a station that went offline can say why afterwards
+sudo mkdir -p /var/log/journal /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/lorakeet.conf >/dev/null
+sudo systemd-tmpfiles --create --prefix /var/log/journal   # the folder needs journald's ownership
+sudo systemctl restart systemd-journald
+sudo journalctl --flush                                     # and what's in memory so far goes to disk
+# a Pi's Wi-Fi can wedge after hours of failed scans and never rejoin until power-cycled: deploy/wifi-watchdog.sh
+chmod +x deploy/wifi-watchdog.sh
+sed "s#/home/lorakeet/lorakeet#$here#g" deploy/lorakeet-wifi-watchdog.service | sudo tee /etc/systemd/system/lorakeet-wifi-watchdog.service >/dev/null
+sudo cp deploy/lorakeet-wifi-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lorakeet-wifi-watchdog.timer >/dev/null
+
 echo "== service"
 sed "s#/home/lorakeet/lorakeet#$here#g; s#^User=lorakeet#User=$USER#" deploy/lorakeet.service | sudo tee /etc/systemd/system/lorakeet.service >/dev/null
 sudo systemctl daemon-reload

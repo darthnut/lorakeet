@@ -1,0 +1,7 @@
+[Unit]
+Description=Lorakeet station Wi-Fi watchdog (deploy/wifi-watchdog.sh)
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/lorakeet/lorakeet/deploy/wifi-watchdog.sh

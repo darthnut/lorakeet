@@ -67,6 +67,14 @@ DEFAULTS = {
         "note": "",               # e.g. "attic window, facing north"
         "mobile": False,          # true = this station moves (a car): its location comes from its radio's GPS
                                   # fixes, logged over time, never from station.location
+        "drive_pings": False,     # mobile only, TRANSMITS: a short ping on a private channel every
+        "drive_ping_m": 1000,     #   drive_ping_m metres moved (never while parked), at most once per
+        "drive_ping_min_s": 60,   #   drive_ping_min_s, so the Coverage view can map where the mesh heard us
+        "drive_ping_channel": "Lorakeet",  # by name; a channel with a public key is refused
+    },
+    "remote": {
+        "enabled": False,         # answer "lk ..." commands sent to this station's radio by direct message (remote.py)
+        "allow": [],              # radios that may send them, e.g. ["!1234abcd"]: PKI direct messages only
     },
     "sync": {
         "mode": "off",            # "off"; "collector" = send what this station logs to a hub; "hub" = accept them
@@ -121,6 +129,11 @@ def _validate(c):
     if loc and (len(loc) not in (2, 3) or not all(isinstance(x, (int, float)) for x in loc)
                 or not (-90 <= loc[0] <= 90 and -180 <= loc[1] <= 180)):
         raise ValueError("lorakeet.toml: station.location must be [lat, lon] or [lat, lon, altitude_m]")
+    st = c["station"]
+    if st["drive_pings"] and not st["mobile"]:
+        raise ValueError("lorakeet.toml: station.drive_pings needs station.mobile = true")
+    if st["drive_ping_m"] < 200 or st["drive_ping_min_s"] < 30:
+        raise ValueError("lorakeet.toml: drive pings at least 200 m and 30 s apart (the channel is shared airtime)")
     if c["station"]["mobile"] and loc:
         raise ValueError("lorakeet.toml: a mobile station takes its location from GPS; remove station.location")
     s = c["sync"]
@@ -145,6 +158,11 @@ def _validate(c):
                 ipaddress.ip_network(n)
             except ValueError:
                 raise ValueError(f"lorakeet.toml: sync.allow: {n!r} is not a network") from None
+    for nid in c["remote"]["allow"]:
+        if not (isinstance(nid, str) and len(nid) == 9 and nid.startswith("!")):
+            raise ValueError('lorakeet.toml: remote.allow entries look like "!1234abcd"')
+    if c["remote"]["enabled"] and not c["remote"]["allow"]:
+        raise ValueError("lorakeet.toml: remote.enabled needs at least one radio in remote.allow")
     bid = c["base"]["id"]
     if bid and not (len(bid) == 9 and bid.startswith("!")):
         raise ValueError('lorakeet.toml: base.id must look like "!1234abcd"')

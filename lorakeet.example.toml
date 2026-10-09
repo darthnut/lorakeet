@@ -60,6 +60,15 @@ name = ""
 # on later from the 🔔 panel; after the first run the setting is stored and this default no longer applies.
 auto_traceroute = false
 
+[remote]
+# Ask this station how it's doing over the mesh, for when it has no internet: send its radio a DIRECT
+# message "lk status" (uptime, network, sync backlog, temperature/power, GPS) or "lk gps" (exact position);
+# "lk help" lists them. It answers by direct message (that transmits). Read-only: nothing restarts or changes.
+# Only PKI-encrypted direct messages (firmware 2.5+) from the radios below count, and only if sent with the
+# key this station first recorded for them. Channel messages are never commands.
+enabled = false
+allow = []              # e.g. ["!1234abcd"]: your own radios
+
 [sync]
 # Several listening stations, one database. A "collector" logs what its own radio hears (keeping a local
 # copy, so nothing is lost while offline) and sends it to a "hub", which stores every station's data with
@@ -91,3 +100,10 @@ note = ""             # e.g. "attic window, facing north"
 # mobile = true: a station that moves (a car). Leave location empty: it comes from the radio's own GPS
 # fixes, logged as it goes, so every reception can be placed where the station was at the time.
 mobile = false
+# Drive mode (with mobile = true), TRANSMITS: ping a private channel every drive_ping_m metres moved (never while
+# parked), at most once per drive_ping_min_s, so Visualizations -> Coverage can show where the mesh heard you.
+# Each ping is ~0.6 s of shared airtime (plus relays repeating it): keep it for test drives.
+drive_pings = false
+drive_ping_m = 1000
+drive_ping_min_s = 60
+drive_ping_channel = "Lorakeet"   # by name; refused if the channel uses a public key

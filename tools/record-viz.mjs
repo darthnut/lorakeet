@@ -3,6 +3,11 @@
 //
 //   node tools/record-viz.mjs [out.mp4] [--range 7d] [--station *] [--fps 60] [--no-anon] [--seconds N]
 //        [--ramp-hours 3] [--fade auto|<hours>] [--fade-misses 3] [--fade-remove] [--texts] [--url ...]
+//        [--view graph|geo] [--zoom +1] [--size 1920x1080] [--crf 18] [--slow 600] [--fast 3600]
+// --view geo records the map (it shows where radios are: consider --station so no moving station's route is drawn);
+// --size / --crf trade quality for file size (GitHub plays README videos up to 10 MB: 1280x720, --crf 26, --fps 30);
+// --zoom (geo) zooms the map in from its fitted framing by that many levels, around the mesh's centre;
+// --slow / --fast are the replay speeds (simulated seconds per second) before and after the ramp.
 // --texts shows the texts panel (lines to each sender; "a text message" in place of the words when anonymized).
 //
 // Chrome (headless, 1920x1080, dark theme) is driven over the DevTools protocol with Node's built-in WebSocket:
@@ -27,7 +32,8 @@ const ANON = !args.includes("--no-anon"), MAX_S = Number(opt("seconds", 600)), R
 // fade mode (off unless --fade): radios dim when they go quiet; see the Fade menu on the page
 const FADE = { on: args.includes("--fade"), after: (() => { const v = opt("fade", "auto"); return !v || v.startsWith("--") ? "auto" : v; })(),
   misses: Number(opt("fade-misses", 3)), remove: args.includes("--fade-remove") };
-const W = 1920, H = 1080, BASE = opt("url", "http://127.0.0.1:5190").replace(/\/$/, ""), PORT = 9333;
+const [W, H] = String(opt("size", "1920x1080")).split("x").map(Number), CRF = String(opt("crf", 18));
+const VIEW = opt("view", "graph") === "geo" ? "geo" : "graph", BASE = opt("url", "http://127.0.0.1:5190").replace(/\/$/, ""), PORT = 9333;
 // Chrome/Edge/Chromium and ffmpeg: $CHROME / $FFMPEG, else the usual install locations, else ffmpeg on PATH.
 const CHROME = [process.env.CHROME,
   "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -36,7 +42,7 @@ const CHROME = [process.env.CHROME,
   "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser",
   "/snap/bin/chromium"].find((p) => p && existsSync(p));
 const FFMPEG = [process.env.FFMPEG, join(process.env.USERPROFILE || "", "ffmpeg/bin/ffmpeg.exe")].find((p) => p && existsSync(p)) || "ffmpeg";
-const INTRO_S = 4.5, INTRO_FADE_S = 0.6, OUTRO_S = 2, RAMP_S = 2.5, SLOW = 600, FAST = 3600;
+const INTRO_S = 4.5, INTRO_FADE_S = 0.6, OUTRO_S = 2, RAMP_S = 2.5, SLOW = Number(opt("slow", 600)), FAST = Number(opt("fast", 3600));
 
 // Runs in the page before any of its scripts: a simulated clock the recorder advances one frame at a time.
 const FAKE_CLOCK = `(() => {
@@ -75,6 +81,7 @@ const FAKE_CLOCK = `(() => {
       localStorage.setItem("meshdash.station", ${JSON.stringify(STATION)});
       localStorage.setItem("meshdash.fade", ${JSON.stringify(JSON.stringify(FADE))});
       localStorage.setItem("meshdash.chat", ${JSON.stringify(args.includes("--texts") ? "1" : "0")});
+      localStorage.setItem("meshdash.topoView", ${JSON.stringify(VIEW)});
     }
   } catch {}
 })();`;
@@ -146,12 +153,17 @@ async function main() {
     await js("setClean(true); document.getElementById('vzCleanClock')?.classList.remove('off'); R.gen");
     const gen = await js("R.gen");
     await ready(`R.gen > ${gen} && !!R.graph`, "the full-window redraw");
-    await js("seek(R.data.since); R.speed = 600; __film.fakeTimers(); 1");
+    const ZOOM = Number(opt("zoom", 0));
+    if (VIEW === "geo" && ZOOM) {
+      await js(`R.map.setZoom(R.map.getZoom() + ${ZOOM}, { animate: false }); 1`);
+      for (let i = 0; i < 90; i++) { await js("__film.step(16.667)"); await sleep(30); }  // tiles for the new zoom
+    }
+    await js(`seek(R.data.since); R.speed = ${SLOW}; __film.fakeTimers(); 1`);
     const info = await js(DIRECTOR);
     console.log(`range ${new Date(info.since * 1000).toLocaleString()} to ${new Date(info.until * 1000).toLocaleString()}, ${info.radios} radios; ramp at ${new Date(info.rampAt * 1000).toLocaleString()}`);
 
     const ff = spawn(FFMPEG, ["-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "mjpeg", "-i", "-",
-      "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", OUT], { stdio: ["pipe", "inherit", "inherit"] });
+      "-c:v", "libx264", "-preset", "slow", "-crf", CRF, "-pix_fmt", "yuv420p", "-movflags", "+faststart", OUT], { stdio: ["pipe", "inherit", "inherit"] });
     const done = new Promise((res, rej) => ff.on("close", (c) => (c ? rej(new Error(`ffmpeg exited ${c}`)) : res())));
     const dt = 1000 / FPS;
     let frames = 0;

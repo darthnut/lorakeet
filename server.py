@@ -34,6 +34,7 @@ import drive
 import insights
 import keyflags
 import nodeids
+import remote as remote_mod
 import node_analytics
 import packetsearch
 import topology
@@ -52,6 +53,18 @@ def key_flag(nid):
     return keyflags.flags(DATA_DIR / "mesh.db").get(nid)
 
 
+def ping_due(last_pos, last_ts, pos, now, every_m, min_s):
+    """A drive ping is due once we've moved every_m metres from the last one and min_s has passed."""
+    return now - last_ts >= min_s and analytics.dist_m(*last_pos, *pos) >= every_m
+
+
+def first_public_key(store, nid):
+    """The first public key this database recorded for a radio: what remote commands are checked against."""
+    r = store.query("SELECT public_key FROM node_info WHERE node = ? AND public_key IS NOT NULL AND public_key != '' "
+                    "ORDER BY ts LIMIT 1", nid)
+    return r[0]["public_key"] if r else None
+
+
 def likely_28(nid):
     """Numbered the firmware 2.8 way (crc32 of its key; nodeids.py)."""
     return nid in nodeids.info(DATA_DIR / "mesh.db")["v28"]
@@ -65,8 +78,10 @@ TRACK_MIN_MOVE_M = 25        # own GPS fixes: log one when the station has moved
 TRACK_HEARTBEAT_S = 10 * 60  # ...or this long after the last one (a parked car is still somewhere)
 # A mobile station asks its radio for the node list this often: the only way the client gets the radio's
 # own position at full precision (its broadcast copy is rounded to the channel's precision). Firmware 2.7+
-# answers want_config_id ONLY_NODES with just node infos; the library updates them in place.
-OWN_FIX_REFRESH_S = 30
+# answers want_config_id ONLY_NODES with just node infos; the library updates them in place. 10 s: at 60 mph
+# that's ~270 m between looks (USB traffic only, nothing on air). Pair it with the radio's own
+# position.gps_update_interval, which defaults to 120 s and caps how fresh the fix can be.
+OWN_FIX_REFRESH_S = 10
 ONLY_NODES_CONFIG_ID = 69421
 CLOCK_MAX_SKEW_S = 60  # a mobile Pi with no network sets its clock from the radio's GPS time past this
 WATCHDOG_S = 10 * 60       # the radio reports its own telemetry every ~60 s; silence this long means it's wedged
@@ -327,6 +342,8 @@ MIGRATIONS = [
 ]
 BROADCAST = "^all"
 MAX_TEXT_BYTES = 200
+DB_WAIT_S = 30        # how long a write or read waits for the database before giving up
+SLOW_REQUEST_S = 5    # requests slower than this are logged (with the path), to find what holds the database
 TRACEROUTE_COOLDOWN_S = 30  # firmware rate-limits traceroutes too; be a good neighbour on a shared channel
 UNKNOWN_HOP = 0xFFFFFFFF
 UNK_SNR = -128
@@ -335,8 +352,17 @@ UNK_SNR = -128
 class Store:
     def __init__(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=DB_WAIT_S)
         self.db.row_factory = sqlite3.Row
+        # WAL: readers (analytics, every page) and the writer (the radio, sync) never block each other. In the
+        # default rollback mode a slow analytics read made writes wait, and a write left waiting blocked new
+        # reads: "database is locked". The setting is stored in the file, so this converts an existing database.
+        try:
+            mode = self.db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            if mode != "wal":
+                log.warning("mesh.db journal mode is %s, not WAL (another program has it open?)", mode)
+        except sqlite3.OperationalError as e:
+            log.warning("couldn't switch mesh.db to WAL: %s", e)
         self.db.executescript(SCHEMA)
         for sql in MIGRATIONS:
             try:
@@ -841,6 +867,7 @@ class Mesh:
         # firmware debug-log records received / RX-TX header lines mined from them (alerts.py watches the
         # pair: lines still arriving but nothing mined means the firmware's log format changed)
         self.log_counts = {"lines": 0, "mined": 0}
+        self.remote = None  # remote.Remote when [remote] is enabled: "lk ..." commands by direct message
         self.rx_remote = {}  # node id -> newest reception at ANOTHER listening station (sync hub): {station, ts, snr, rssi, hops}
         self.station_ids = set()  # every listening station seen (ours + collectors)
         r = store.query("SELECT MAX(ts) AS ts FROM packets WHERE relay=? AND hops>0", BASE_BYTE) if BASE_ID else None
@@ -853,6 +880,7 @@ class Mesh:
         self.last_traceroute = 0
         self._own_fix = None  # our radio's last logged GPS fix (_track_self); None = not looked up yet
         self._own_refresh = 0  # last node-list request for our exact position (_refresh_own_fix)
+        self._ping = {"n": 0, "pos": None, "ts": 0}  # drive pings: count, where and when the last one went
         self._clock_checked = False
         self.last_connect_error = None
         self.known = {r["node"]: r for r in store.query(
@@ -896,6 +924,8 @@ class Mesh:
                     if CFG["station"]["mobile"] and time.time() - self._own_refresh > OWN_FIX_REFRESH_S:
                         self._refresh_own_fix()
                     self._track_self()
+                    if CFG["station"]["drive_pings"]:
+                        self._drive_ping()
                 if time.time() - last_snapshot > 86400:
                     self._snapshot_nodedb()
                     last_snapshot = time.time()
@@ -1123,6 +1153,42 @@ class Mesh:
         self.pos[sid] = {k: row[k] for k in ("node", "ts", "lat", "lon", "alt", "precision_bits")}
         self.broadcast("node", self.node_json(sid))
 
+    def _drive_ping(self):
+        """Drive mode: a short ping on a private channel every drive_ping_m metres moved, at most once per
+        drive_ping_min_s, never while parked. drive.py then maps where each one was heard (or not)."""
+        st = CFG["station"]
+        fix = self.own_fix_now()
+        if not fix or time.time() - fix["time"] > 60:
+            return  # no fresh exact position: we wouldn't know where the ping was sent from
+        here, now = (fix["lat"], fix["lon"]), time.time()
+        if self._ping["pos"] is None:
+            self._ping.update(pos=here, ts=now)  # start counting from here
+            return
+        if not ping_due(self._ping["pos"], self._ping["ts"], here, now, st["drive_ping_m"], st["drive_ping_min_s"]):
+            return
+        chan = next((c for c in radio_channels(self.iface) if c["name"].lower() == st["drive_ping_channel"].lower()), None)
+        if not chan or chan["publicKey"] or not chan["encrypted"]:
+            if self._ping.get("warned") != st["drive_ping_channel"]:
+                log.warning("drive pings: no private channel named %r on this radio; not sending", st["drive_ping_channel"])
+                self._ping["warned"] = st["drive_ping_channel"]
+            return
+        self._ping["n"] += 1
+        try:
+            self.send_text(f"Lorakeet ping #{self._ping['n']}", channel=chan["index"])
+        except Exception as e:  # noqa: BLE001 - a missed ping must never disturb logging
+            log.warning("drive ping failed: %s", e)
+        self._ping.update(pos=here, ts=now)
+
+    def own_fix_now(self):
+        """Our radio's current exact GPS fix from its node list: {lat, lon, alt, time} or None."""
+        me = next((n for n in self._nodes().values() if (n.get("user") or {}).get("id") == self.local_id), None)             if self.local_id else None
+        p = (me or {}).get("position") or {}
+        if p.get("latitude") is None or not p.get("time") or (p.get("precisionBits") or 32) < 32:
+            last = self._own_fix or {}
+            return ({"lat": last["lat"], "lon": last["lon"], "alt": last.get("alt"), "time": last.get("fix_time") or last["ts"]}
+                    if last.get("lat") is not None else None)
+        return {"lat": p["latitude"], "lon": p["longitude"], "alt": p.get("altitude"), "time": p["time"]}
+
     def _refresh_own_fix(self):
         """Ask the radio for its node list (only that), so our own entry carries the exact GPS position.
         Then, once, make sure the system clock is right (set_clock_from_gps)."""
@@ -1242,6 +1308,8 @@ class Mesh:
                        pkt_id=packet.get("id"), outgoing=0, status=None)
             self.store.insert("messages", **msg)
             self.broadcast("message", {**msg, "name": self.name(frm)})
+            if self.remote:
+                self.remote.handle(packet, text)
         elif port == "POSITION_APP":
             p = d.get("position") or {}
             if frm == self.local_id:  # our own radio's position handed to us: a track point, not a reception
@@ -1694,6 +1762,15 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                 return self._json({"error": f"ingest failed: {e}"}, 500)
 
         def do_GET(self):  # noqa: N802
+            t0 = time.time()
+            try:
+                return self._get()
+            finally:
+                dt = time.time() - t0
+                if dt > SLOW_REQUEST_S and not self.path.startswith("/api/events"):
+                    log.warning("slow request: %s took %.1f s", self.path[:200], dt)
+
+        def _get(self):
             url = urlparse(self.path)
             qs = {k: v[0] for k, v in parse_qs(url.query).items()}
             # which listening station the analytics are about: ?station=!xxxxxxxx, default the radio this
@@ -2115,6 +2192,16 @@ def main():
         log.error("port %d unavailable (%s); another instance is probably running", args.http, e)
         sys.exit(EXIT_PORT_IN_USE)
     srv.daemon_threads = True
+    if CFG["remote"]["enabled"]:
+        mesh.remote = remote_mod.Remote(
+            mesh, CFG["remote"]["allow"], pinned_key=lambda n: first_public_key(store, n), key_flag=key_flag,
+            status=lambda: remote_mod.status_text(
+                CFG["station"]["name"] or mesh.name(mesh.local_id), _uptime_s(), remote_mod.network(),
+                # the backlog counted now: the sync status keeps the last SUCCESSFUL pass's (0 while offline)
+                {**syncer.status, "backlog": syncer.backlog()} if isinstance(syncer, sync_mod.Collector) else None,
+                _pi_health(), mesh.own_fix_now()),
+            fix=mesh.own_fix_now)
+        log.info("remote commands: on, from %s", ", ".join(CFG["remote"]["allow"]))
     threading.Thread(target=mesh.run, daemon=True, name="radio").start()
     storage.start()
     alert_engine.start()

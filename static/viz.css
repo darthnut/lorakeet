@@ -101,6 +101,7 @@ body.vz-drive .stage { --bottom-h: 0px; }
 .dv-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 8px; font-size: 12px; }
 .dv-legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .dv-legend i.hole { background: transparent; border: 1.5px dashed var(--warning); }
+.dv-legend i.brief { background: transparent; border: 1px dashed var(--text-muted); opacity: .7; }
 .dv-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
 .dv-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0 0 8px; }
 .dv-kv dt { color: var(--text-muted); } .dv-kv dd { margin: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
@@ -132,3 +133,7 @@ body.vz-drive .vz-chat-panel, body.vz-drive .chat-links { display: none !importa
 .chat-links circle { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chat-links circle.end { fill: var(--accent); stroke: none; }
 @media (max-width: 760px) { .vz-chat-panel { width: auto; left: var(--pad); top: auto; bottom: calc(var(--bottom-h) + 2 * var(--pad)); max-height: 34%; } }
+
+/* Coverage: the station's own transmissions (drive.js) */
+.dv-legend i.dot { width: 10px; height: 10px; border-radius: 50%; } .dv-legend i.dot.hollow { background: transparent; border: 2px solid; box-sizing: border-box; }
+.dv-check { cursor: pointer; } .dv-check input { width: 16px; height: 16px; accent-color: var(--accent); }

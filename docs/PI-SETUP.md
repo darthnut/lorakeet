@@ -123,3 +123,19 @@ From the hub: `bash deploy/update-station.sh lorakeet@<station>`. Database migra
 - **A Pi has no battery-backed clock.** Booted without network, it stamps rows with the last shutdown time
   until it syncs. A mobile station (`[station] mobile = true`) sets its clock from the radio's GPS when NTP
   isn't available.
+
+## A station in a car
+
+- **Settings:** `[station] mobile = true` (location then comes from the radio's GPS) and, for test drives,
+  `drive_pings = true` (a tiny message on a private channel every kilometre; it transmits). On the radio, a
+  short `position.gps_update_interval` (15 s rather than the default 120 s) keeps positions current at speed;
+  put it back afterwards if the radio runs on its own battery.
+- **Internet on the road:** a phone hotspot. A Pi 3 only does 2.4 GHz Wi-Fi, and a phone that is itself on a
+  5 GHz Wi-Fi network shares its hotspot on 5 GHz only: turn the phone's Wi-Fi off near the car. Without any
+  internet nothing is lost; the station uploads when it's back on a known network.
+- **The Wi-Fi watchdog** (installed by the setup script) rejoins saved networks by itself if the Wi-Fi wedges,
+  which a Pi 3 did twice in one day after hours of searching for a hotspot that wasn't there.
+  `journalctl -t lorakeet-wifi` shows what it did; the system log is kept across reboots.
+- **Checking on it from the road:** with `[remote] enabled = true` and your handheld radio in `allow`, send the
+  station's radio a direct message `lk status` (network, upload backlog, power, GPS) or `lk gps`.
+- **Placement:** the radio on the dashboard or roof. Inside a cab it hears much less, and the GPS wanders.

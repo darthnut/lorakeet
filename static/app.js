@@ -851,7 +851,8 @@ async function load() {
 }
 
 function connectEvents() {
-  const es = new EventSource("/api/events");
+  const es = { addEventListener: (type, fn) => lkEvents.on(type, fn) };  // the page's shared stream (prov.js)
+  lkEvents.onReopen(load);  // back from a hidden tab: catch up on what arrived meanwhile
   es.addEventListener("status", (e) => { const was = S.status.connected; S.status = JSON.parse(e.data); renderConn(); updateCount(); if (!was && S.status.connected) load(); });
   es.addEventListener("node", (e) => {
     const n = JSON.parse(e.data); S.nodes.set(n.id, n);
@@ -900,7 +901,7 @@ function connectEvents() {
     if (S.selected === tr.target) renderRoute(tr);
     refreshLinks();
   });
-  es.onerror = () => { S.status = { ...S.status, connected: false, serverDown: true }; renderConn(); updateCount(); };
+  lkEvents.onError(() => { S.status = { ...S.status, connected: false, serverDown: true }; renderConn(); updateCount(); });
 }
 
 let renderPending = false;

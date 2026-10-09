@@ -94,6 +94,33 @@ def dist_m(lat1, lon1, lat2, lon2):
 TRACK_MAX_AGE_S = 10 * 60  # an older fix doesn't say where a moving station is now
 
 
+STAY_M = 100         # stay points: fixes all within this of the run's centre (a GPS in a cab jumps 100 m+)
+STAY_S = 3 * 60      # ...for at least this long were one parked spot, whatever the GPS jitter says
+
+
+def smooth_track(fixes, stay_m=STAY_M, stay_s=STAY_S):
+    """Snap parked stretches of a track to one spot (stay-point detection), for analysis only: the stored fixes
+    stay exactly as received. A GPS parked in a vehicle wanders tens of metres (multipath from the cab and
+    nearby buildings, which the radio's PDOP / satellite count don't reveal), and every wander past the logger's
+    25 m threshold looked like travel. A run of fixes each within stay_m of the run's running centre (not its
+    first fix, which may sit at the edge of the jitter), lasting stay_s or more, becomes that centre.
+    fixes: [(ts, lat, lon, ...)], sorted; returns the same shape."""
+    out, n, i = [list(f) for f in fixes], len(fixes), 0
+    while i < n:
+        j, lat, lon = i + 1, fixes[i][1], fixes[i][2]
+        while j < n and dist_m(lat, lon, fixes[j][1], fixes[j][2]) <= stay_m:
+            j += 1
+            lat += (fixes[j - 1][1] - lat) / (j - i)  # running mean of the run so far
+            lon += (fixes[j - 1][2] - lon) / (j - i)
+        if j - i > 1 and fixes[j - 1][0] - fixes[i][0] >= stay_s:
+            for k in range(i, j):
+                out[k][1], out[k][2] = lat, lon
+            i = j
+        else:
+            i += 1
+    return [tuple(f) for f in out]
+
+
 def station_track(db, station, since, until):
     """A station's own GPS fixes in [since, until], oldest first: [(ts, lat, lon, alt), ...]."""
     return [tuple(r) for r in db.execute(
@@ -202,7 +229,7 @@ def _connect(path, station=None):
     links use it) and the (station, ts) indexes keep the views fast."""
     if station and station != ALL_STATIONS and not STATION_RE.match(station):
         raise ValueError(f"not a station id: {station!r}")
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
     db.row_factory = sqlite3.Row
     aliases = _alias_views(db, path)
     src = (lambda t: (f"_a_{t}", "*")) if aliases else (lambda t: (f"main.{t}", "rowid AS rowid, *"))

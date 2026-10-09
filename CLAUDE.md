@@ -63,6 +63,10 @@ nonexistent radio.port).
 - Only one program can hold the radio's serial port: stop the server before using the `meshtastic` CLI.
 - Single instance: the server binds its port exclusively (SO_EXCLUSIVEADDRUSE on Windows); a second copy
   exits with code 3 and the supervisor stands down.
+- **Stations (Linux):** `deploy/setup-station.sh` also makes the journal persistent (200 MB) and installs
+  `deploy/wifi-watchdog.sh` (systemd timer, every minute; only while there's no network: rejoin any saved Wi-Fi in
+  range after 2 min, toggle the radio after 10, reload the Wi-Fi driver after 20; never reboots; `journalctl -t
+  lorakeet-wifi`). A Pi 3 lost a phone hotspot and never rejoined until power-cycled, twice in one day.
 - **Network access:** loopback = full; private/link-local LAN addresses = view-only when `[http] lan =
   "view"` (every POST refused); anything else = 403. POSTs must be `application/json` from the same
   origin (the CSRF guard; keep it). There is no login: never expose the port to the internet.
@@ -104,6 +108,10 @@ nonexistent radio.port).
   `fixed_pin`, the Wi-Fi `wifi_psk`, the MQTT `password` and channel PSKs (`redacted_config`,
   `redacted_module_config`, `redacted_channels`); `scrub_logged_secrets` removes any from older snapshots at start.
   Channel keys are used in memory only (on-air hashes, packet anatomy) and never stored or returned.
+- **WAL mode** (set by `Store` on start; stored in the file): analytics reads and the logger's writes never block
+  each other. Before 2026-10-08 mesh.db ran in rollback mode, where a slow read made writes wait and a waiting
+  write blocked new reads ("database is locked"). Waits are 30 s (`DB_WAIT_S`); requests over 5 s are logged with
+  their path (`SLOW_REQUEST_S`). Read-only connections work whether or not the server has the database open.
 - **Phone exports:** `import_datalog.py` loads the Android app's packet CSV and node-database JSON as a
   station's data (no packet ids, so the combined view leaves them out).
 
@@ -167,10 +175,28 @@ nonexistent radio.port).
 - **Coverage view** (`drive.py`, `/api/analytics/drive?range=&bin=&station=`, `static/drive.js`): what a moving
   station heard along its route. Receptions (rx_hops, else packets) are placed at the station's latest exact
   own fix within 12 min (never interpolated; precision-rounded fixes are ignored) and binned into squares
-  (100 m-1 km): minutes there, receptions/min, radios, heard directly, best/median SNR, relays. Squares passed
-  through with nothing heard are holes; route stretches with nothing within 60 s are dashed. With no station
+  (100 m-1 km): minutes there, receptions/min, radios, heard directly, best/median SNR, relays. Silence is judged
+  against the station's own reception rate (`ratePerMin`): it counts as a gap only after `silentAfterS` = ln(10) /
+  rate (a covered station would have heard something 90% of the time). Cells: `status` heard / hole (most of its
+  time inside such a silence) / brief (crossed between packets, too quickly to tell; drawn faintly); the route is
+  dashed inside the silences. (The first version called every square crossed without a packet a hole: at ~1
+  packet/min that was most squares on a highway drive.) Squares are a FIXED worldwide grid (latitude rows from the
+  equator, columns sized per row), so a place is in the same square on every drive and range.
+- **Stay points** (`analytics.smooth_track`, used by drive.py and the moving map; analysis only, stored fixes
+  untouched): a run of fixes within 100 m of its running centre for 3 min+ is one parked spot. A GPS in a vehicle
+  cab jumps tens of metres to 100 m+ (multipath) while the radio's PDOP/satellite count look fine, and the exact
+  own fixes from the node list carry no quality fields anyway (only the rounded broadcasts do). With no station
   picked (or combined), only stations whose track spans 200 m+ count.
-- `?anon=1` renames every radio by role and order of appearance for sharing.
+- **Moving stations on the map** (`topology.station_tracks`, `_positions`): a station with its own exact GPS fixes in
+  range comes with `tracks` (its route, starting at the last fix before the range) and is drawn at its "dwell" spot
+  (fixes weighted by time until the next, in ~200 m squares: where it spent the range). The map draws the route
+  faintly; the replay moves the dot along it (latest fix at or before the playhead, under 12 min old, else the
+  dwell spot), draws the route so far, and flies receptions to where the station was. Other stations use their
+  newest EXACT position: a channel-rounded copy of their broadcast never places a station.
+- `?anon=1` renames every radio by role and order of appearance for sharing. On maps (Geographic, its replay,
+  Coverage) it also moves everything by one offset to a decoy place (`decoyShift` in topology.js: default
+  14.5 degrees east at the same latitude, which keeps distances exact; `?decoy=lat,lon`), and Coverage renames
+  stations/radios, drops links with real ids and never shows message text (test messages carry coordinates).
 - **Texts panel** (toolbar "💬 Texts" / M, `localStorage meshdash.chat`, off by default): a chat log on the right
   that fills as the replay reaches each readable text, with a line from each entry to its sender (new lines
   bright for 6 s, then faint; hover an entry to light its line; lines redrawn every frame by their own rAF loop
@@ -191,12 +217,30 @@ nonexistent radio.port).
   onResponseAckPermitted=True)`, because `sendText()` drops that flag and ACKs never arrive. Late ACKs
   (after the library gave up) are caught from ROUTING packets.
 
+## Drive mode (`[station] drive_pings`, mobile only, off by default, TRANSMITS)
+
+`Mesh._drive_ping`: "Lorakeet ping #n" on a private channel (by name; public-key channels refused) every
+`drive_ping_m` metres moved from the last ping, at most once per `drive_ping_min_s` (floors 200 m / 30 s: shared
+airtime), only with a GPS fix under 60 s old, never while parked. Coverage's "Where the mesh heard it" layer
+(`drive._sent`) then places each of the station's own transmissions (tx_log + outgoing messages) on its route:
+`station` (another of our stations heard it), `mesh` (the station heard it repeated) or `none`.
+
+## Remote commands (`remote.py`, `[remote]`, off by default)
+
+"lk status" / "lk gps" / "lk help" sent to a station's radio as a direct message get a direct-message reply
+(status: uptime, network, sync backlog, temperature + Pi power flags, GPS age). Accepted only when PKI-encrypted
+(proves the sender), to this radio, from `[remote] allow`, with the sender key equal to the FIRST key this
+database recorded for it (`first_public_key`), and not compromised/shared (keyflags). Channel messages never
+count. One reply per sender per 10 s; repeated copies answered once; every command, accepted or not, is an
+`events` row (`remote_command`). Read-only by design so far: restart/reboot would need a confirm step.
+
 ## Mobile stations
 
 `[station] mobile = true`: the station logs its radio's own GPS fixes (`positions.source = 'own'`) and
 `analytics.station_position(db, station, ts)` places it at any moment. The radio hands the client its own
 position rounded to the channel's precision; exact fixes come from asking for the node list
-(`want_config_id = 69421`, firmware 2.7+) every 30 s. A Pi with no network sets its clock from the radio's
+(`want_config_id = 69421`, firmware 2.7+) every 10 s; set the radio's `position.gps_update_interval` low too
+(default 120 s), or the fix itself is stale at speed. A Pi with no network sets its clock from the radio's
 GPS time once (`set_clock_from_gps`).
 
 ## Gotchas

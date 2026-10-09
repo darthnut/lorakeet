@@ -15,7 +15,7 @@ import json
 import sqlite3
 from collections import defaultdict
 
-from analytics import (_connect, alias_map, _coverage, _window, is_combined, measured_neighbors, port_group, resolve_relay, scope_local,
+from analytics import (_connect, alias_map, smooth_track, _coverage, _window, is_combined, measured_neighbors, port_group, resolve_relay, scope_local,
                        station_ids, station_location)
 
 MEASURED = ("direct", "traceroute", "neighborinfo")
@@ -126,11 +126,8 @@ def _compute(db, range_key, local, describe):
 
     # nodes: every endpoint, with identity, latest position and activity in range
     ids = {i for e in edges.values() for i in (e["a"], e["b"])}
-    pos = {r["node"]: (r["lat"], r["lon"]) for r in q(
-        "SELECT node, lat, lon, MAX(ts) FROM positions GROUP BY node")}
-    for i in ids:  # a listening station without its own GPS fix: its configured antenna location
-        if i not in pos and station_location(i):
-            pos[i] = station_location(i)[:2]
+    tracks = station_tracks(db, since, until)
+    pos = _positions(db, ids, tracks)
     pkts = {r[0]: r[1] for r in q("SELECT from_id, COUNT(*) FROM packets WHERE ts >= ? GROUP BY 1", since)}
     degree = defaultdict(int)
     for e in edges.values():
@@ -149,13 +146,76 @@ def _compute(db, range_key, local, describe):
         })
     out_edges.sort(key=lambda e: -e["count"])
     return {"range": range_key, "since": since, "until": until, "local": local, "stations": station_ids(db, local),
-            "nodes": nodes, "edges": out_edges,
+            "nodes": nodes, "edges": out_edges, "tracks": {k: v["track"] for k, v in tracks.items() if k in ids},
             "stats": {"nodes": len(nodes), "edges": len(out_edges),
                       "measured": sum(e["measured"] for e in out_edges),
                       "inferred": sum(not e["measured"] for e in out_edges),
                       "ambiguousRelayPackets": ambiguous, "unknownRelayPackets": unknown,
                       "relayResolvedByLink": by_link, "receptionsMined": rx_rows,
                       "miningSince": rx_start}}
+
+
+# ---------------------------------------------------------------- moving stations
+
+TRACK_POINTS_MAX = 4000      # per station per response: longer tracks are thinned evenly
+TRACK_FIX_MAX_AGE_S = 12 * 60  # same rule as drive.py: an older fix doesn't say where the station is
+
+
+def station_tracks(db, since, until):
+    """Listening stations with their own exact GPS fixes in range (a moving station, e.g. a car):
+    {station: {"track": [[ts, lat, lon], ...], "dwell": (lat, lon)}}. The track starts with the last fix
+    before the range, so the station has a place from the start. "dwell" is where it spent the most time
+    (fixes weighted by how long until the next one, capped at TRACK_FIX_MAX_AGE_S, in ~200 m squares):
+    the one spot to draw it at when a single place is needed."""
+    exact = "source = 'own' AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
+    out = {}
+    for (sid,) in db.execute(f"SELECT DISTINCT node FROM positions WHERE {exact} AND ts BETWEEN ? AND ?", (since, until)).fetchall():
+        before = db.execute(f"SELECT ts, lat, lon FROM positions WHERE {exact} AND node = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+                            (sid, since)).fetchall()
+        pts = [list(r) for r in smooth_track([tuple(r) for r in before] + [tuple(r) for r in db.execute(
+            f"SELECT ts, lat, lon FROM positions WHERE {exact} AND node = ? AND ts BETWEEN ? AND ? ORDER BY ts", (sid, since, until))])]
+        weight = defaultdict(float)
+        cells = defaultdict(list)
+        for i, (ts, lat, lon) in enumerate(pts):
+            nxt = pts[i + 1][0] if i + 1 < len(pts) else until
+            w = max(0.0, min(nxt, until) - max(ts, since))
+            w = min(w, TRACK_FIX_MAX_AGE_S)
+            key = (round(lat / 0.002), round(lon / 0.003))  # ~200 m at these latitudes
+            weight[key] += w
+            cells[key].append((lat, lon, w))
+        best = max(weight, key=weight.get)
+        c = cells[best]
+        tot = sum(w for *_, w in c)
+        dwell = ((sum(la * w for la, _, w in c) / tot, sum(lo * w for _, lo, w in c) / tot) if tot
+                 else (sum(la for la, _, _ in c) / len(c), sum(lo for _, lo, _ in c) / len(c)))
+        if len(pts) > TRACK_POINTS_MAX:
+            step = len(pts) / TRACK_POINTS_MAX
+            pts = [pts[int(i * step)] for i in range(TRACK_POINTS_MAX)] + [pts[-1]]
+        out[sid] = {"track": [[round(t, 1), round(la, 6), round(lo, 6)] for t, la, lo in pts], "dwell": dwell}
+    return out
+
+
+def _positions(db, ids, tracks):
+    """Where to draw each radio: a moving station at its dwell spot; another station at its newest EXACT
+    position (never a channel-rounded copy of its broadcast) or its configured location; any other radio at
+    its newest reported position."""
+    pos = {r[0]: (r[1], r[2]) for r in db.execute("SELECT node, lat, lon, MAX(ts) FROM positions GROUP BY node")}
+    stations = {r[0] for r in db.execute("SELECT DISTINCT station FROM positions WHERE station IS NOT NULL")}
+    for i in ids:
+        if i in tracks:
+            pos[i] = tracks[i]["dwell"]
+        elif i in stations:
+            r = db.execute("SELECT lat, lon FROM positions WHERE node = ? AND (precision_bits IS NULL OR precision_bits >= 32) "
+                           "ORDER BY ts DESC LIMIT 1", (i,)).fetchone()
+            if r:
+                pos[i] = (r[0], r[1])
+            elif station_location(i):
+                pos[i] = station_location(i)[:2]
+            else:
+                pos.pop(i, None)  # only a rounded position: a box kilometres wide, not where the station is
+        elif i not in pos and station_location(i):
+            pos[i] = station_location(i)[:2]
+    return pos
 
 
 # ---------------------------------------------------------------- traffic replay
@@ -169,10 +229,10 @@ def replay(db_path, range_key, local_id, describe):
         out = _replay(db, range_key, scope_local(local_id) or "")
         ids = ({e["from"] for e in out["events"]} | {e["relay"] for e in out["events"] if e.get("relay")}
                | {i for e in out["events"] for i in e.get("path", []) + e.get("back", []) if i})
-        pos = {r[0]: (r[1], r[2]) for r in db.execute("SELECT node, lat, lon, MAX(ts) FROM positions GROUP BY node")}
-        for i in ids:  # stations without a GPS fix: their configured antenna location
-            if i not in pos and station_location(i):
-                pos[i] = station_location(i)[:2]
+        ids |= {e["at"] for e in out["events"] if e.get("at")}
+        tracks = station_tracks(db, out["since"], out["until"])
+        pos = _positions(db, ids, tracks)
+        out["tracks"] = {k: v["track"] for k, v in tracks.items()}
         out["nodes"] = {i: {**describe(i), "lat": pos.get(i, (None, None))[0], "lon": pos.get(i, (None, None))[1]}
                         for i in sorted(i for i in ids if i)}
         return out
