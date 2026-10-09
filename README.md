@@ -1,4 +1,4 @@
-# Lorakeet
+# <img src="static/favicon.svg" width="44" height="44" alt="" align="top"> Lorakeet
 
 [![tests](https://github.com/darthnut/lorakeet/actions/workflows/tests.yml/badge.svg)](https://github.com/darthnut/lorakeet/actions/workflows/tests.yml)
 

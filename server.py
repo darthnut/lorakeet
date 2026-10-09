@@ -1657,7 +1657,8 @@ class Mesh:
 # ---------------------------------------------------------------- http
 
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json"}
+        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json",
+        ".png": "image/png", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json"}
 
 
 def client_access(ip):

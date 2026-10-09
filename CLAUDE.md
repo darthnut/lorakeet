@@ -40,6 +40,13 @@ untracked `CLAUDE.local.md`.
 - CI also compiles every .py, `node --check`s every page script and tool, `bash -n`s the deploy scripts
   and runs `tools/release_check.py`.
 
+## Logo and icons
+
+The mesh-bird head (`static/favicon.svg`, the master: a lorikeet head as a low-poly mesh, white links and nodes,
+on a #13294b rounded square) is the header mark on every page and the favicon. Derived files, rendered from it:
+`favicon.ico` (16/32/48 PNG entries), `apple-touch-icon.png` (180, square corners: iOS rounds them),
+`icon-192.png` / `icon-512.png` (in `site.webmanifest`). Re-render all of them if the SVG changes.
+
 ## Configuration
 
 **First run:** with no `lorakeet.toml`, `/` redirects the dashboard PC to `static/setup.html` (`?skipsetup=1`
