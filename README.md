@@ -12,7 +12,23 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 > **v0.2 preview.** It works and runs every day, but it's young: expect rough edges. Feedback and bug
 > reports are welcome.
 
+The screenshots and videos here come from a real mesh, anonymized the way Lorakeet does it for sharing
+(`?anon=1`): every radio is renamed by role (Station 1, Node 14...), message text is hidden, and on maps the
+whole picture is moved onto substitute map tiles of a different place, keeping its shape and distances.
+
+https://github.com/user-attachments/assets/df3ec998-7dcd-4a28-b3d8-80e750c8be72
+
+*Traffic replay, Graph view, one day in 30 seconds. Radios appear as they're first heard (Grow mode) and each
+packet travels the path a listening station observed. Names anonymized.*
+
+https://github.com/user-attachments/assets/6cded12b-1df9-49ba-8af9-5b6baf3b39ff
+
+*The same day in the Geographic view, including a station driving around in a truck (its dot follows its GPS
+route). Anonymized: names replaced, and the real map swapped for substitute tiles of another place.*
+
 ![Traffic replay on the network graph](docs/screenshots/replay.png)
+
+*Traffic replay with the Key and the packet log, mid-playback. Names anonymized.*
 
 ## What it does
 
@@ -52,13 +68,30 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 
 ![The network graph](docs/screenshots/graph.png)
 
+*Topology: the mesh as a graph of real RF links, measured (solid) and inferred from relays (dashed), with
+the controls hidden for recording. Names anonymized.*
+
 ![Analytics summary and traffic over time](docs/screenshots/analytics.png)
+
+*Analytics: the summary tiles and traffic by type over time. Hatched hours are when nothing was logging (a
+gap, never a zero).*
 
 ![Drive coverage, anonymized and moved to a decoy place: what the car heard along its route, and where the mesh heard it](docs/screenshots/coverage.png)
 
+*Drive coverage: what a station in a truck heard along the day's routes (blue squares, amber outlines for
+real gaps) and where the mesh heard it (dots: green reached another of our stations, blue was repeated by a
+relay, hollow amber no sign). Anonymized: stations renamed, and the route shown on substitute tiles of a
+different place.*
+
 ![The replay's texts panel, anonymized: each message linked to the radio that sent it](docs/screenshots/texts.png)
 
+*The replay's Texts panel: readable messages scroll by as the replay reaches them, each linked to its sender.
+Anonymized: names replaced and every message shown only as "a text message".*
+
 ![Packet anatomy: one of our own messages, layer by layer from radio signal to text](docs/screenshots/anatomy.png)
+
+*Packet anatomy: one packet rebuilt layer by layer, from the radio signal and the on-air header through the
+encryption to the decoded text. Not anonymized, so it's one of our own test messages, between our own radios.*
 
 ## Quick start
 
