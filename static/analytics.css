@@ -265,3 +265,7 @@ table.cmp tr.only-a td, table.cmp tr.only-b td { background: color-mix(in srgb, 
 .fw28-sum { margin: 0 0 6px; font-size: 13px; } .fw28-list { margin: 0 0 10px; font-size: 13px; line-height: 1.6; }
 .fw28-bar { position: relative; height: 10px; } .fw28-bar i { position: absolute; left: 0; top: 0; height: 100%; border-radius: 0 4px 4px 0; background: var(--border); min-width: 2px; }
 .fw28-bar i.v { background: var(--accent); }
+
+/* station timeline (power and network changes) */
+.mx-tl { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; font-size: 13px; margin: 6px 0; }
+.mx-tl b { min-width: 110px; } .mx-ev { white-space: nowrap; } .mx-tl .bad { color: var(--critical); } .mx-tl .warn { color: var(--warning); }

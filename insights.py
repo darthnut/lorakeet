@@ -49,6 +49,61 @@ SINGLE_ANCHOR_KM = 5.0   # one anchor can only say "somewhere within radio range
 MIN_RADIUS_KM = 1.0
 RECENCY_DAYS = 7.0
 
+# From drives (the way wardriving tools place Wi-Fi access points): a moving station's DIRECT receptions of a
+# radio, each placed at the station's GPS fix (within DRIVE_FIX_S), grouped into ~200 m spots so a long stop is
+# one vantage point, not hundreds. Strict, or the answer is a confident-looking point between two parking spots:
+DRIVE_FIX_S = 60          # a reception counts only with an exact own fix this close in time
+DRIVE_MIN_SPOTS = 3       # heard directly from at least this many different spots...
+DRIVE_MIN_SPREAD_KM = 1.0  # ...spread over at least this distance
+DRIVE_MIN_RADIUS_KM = 0.5
+
+
+def drive_estimates(db_path, exclude=()):
+    """Positions for radios heard directly from enough places along moving stations' routes:
+    {node: {"lat", "lon", "radiusKm", "spots", "receptions", "spreadKm"}}. Signal-weighted centroid of the spots
+    (stronger = closer: weight 10^(median SNR / 20)); radius = weighted spread / sqrt(effective spot count),
+    at least DRIVE_MIN_RADIUS_KM. It leans toward the roads driven: a car only listens from where it drove."""
+    import bisect
+    from collections import defaultdict as dd
+    from analytics import ALL_STATIONS, smooth_track
+    db = _connect(db_path, ALL_STATIONS)
+    try:
+        exact = "source = 'own' AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
+        movers = [r[0] for r in db.execute(f"SELECT DISTINCT node FROM positions WHERE {exact}")]
+        stations = set(movers) | {r[0] for r in db.execute("SELECT id FROM _stations")} | set(exclude)
+        spots = dd(lambda: dd(list))  # node -> spot -> [(lat, lon, snr)]
+        for st in movers:
+            fx = smooth_track([tuple(r) for r in db.execute(f"SELECT ts, lat, lon FROM positions WHERE {exact} AND node = ? ORDER BY ts", (st,))])
+            fts = [f[0] for f in fx]
+            for ts, frm, snr in db.execute("SELECT ts, from_id, snr FROM rx_hops WHERE station = ? AND hops = 0 AND snr IS NOT NULL", (st,)):
+                if frm in stations:
+                    continue
+                i = bisect.bisect_right(fts, ts) - 1
+                if i < 0 or ts - fts[i] > DRIVE_FIX_S:
+                    continue
+                lat, lon = fx[i][1], fx[i][2]
+                spots[frm][(round(lat / 0.002), round(lon / 0.003))].append((lat, lon, snr))
+    finally:
+        db.close()
+    out = {}
+    for nid, by_spot in spots.items():
+        pts = []
+        for obs in by_spot.values():
+            lat = sum(o[0] for o in obs) / len(obs); lon = sum(o[1] for o in obs) / len(obs)
+            pts.append((lat, lon, 10 ** (statistics.median(o[2] for o in obs) / 20), len(obs)))
+        if len(pts) < DRIVE_MIN_SPOTS:
+            continue
+        spread = max(_haversine_km(a[:2], b[:2]) for a in pts for b in pts)
+        if spread < DRIVE_MIN_SPREAD_KM:
+            continue
+        tw = sum(p[2] for p in pts)
+        lat = sum(p[0] * p[2] for p in pts) / tw; lon = sum(p[1] * p[2] for p in pts) / tw
+        rms = math.sqrt(sum(p[2] * _haversine_km((lat, lon), p[:2]) ** 2 for p in pts) / tw)
+        n_eff = tw ** 2 / sum(p[2] ** 2 for p in pts)
+        out[nid] = {"lat": lat, "lon": lon, "radiusKm": max(DRIVE_MIN_RADIUS_KM, rms / math.sqrt(n_eff)),
+                    "spots": len(pts), "receptions": sum(p[3] for p in pts), "spreadKm": round(spread, 2)}
+    return out
+
 
 def estimate_positions(db_path, local, base_id, describe):
     """Best-guess positions for nodes that never reported one, from observed RF links to positioned nodes.
@@ -81,7 +136,17 @@ def estimate_positions(db_path, local, base_id, describe):
             w_age = math.exp(-max(0, now - (e["last"] or now)) / (RECENCY_DAYS * 86400))
             obs[me].append((other, w_snr * w_cnt * w_age, snr, e["measured"]))
     out = []
+    drives = drive_estimates(db_path)
+    for nid, e in drives.items():  # heard directly from enough places along drives: better than link partners
+        if nid in positions:
+            continue
+        out.append({"id": nid, **describe(nid), "lat": e["lat"], "lon": e["lon"], "radiusKm": e["radiusKm"], "anchors": [],
+                    "provenance": "inferred", "fromDrives": e,
+                    "method": f"heard directly from {e['spots']} spots along drives ({e['receptions']} receptions, "
+                              f"{e['spreadKm']:.1f} km apart), signal-weighted; leans toward the roads driven"})
     for nid, items in obs.items():
+        if nid in drives:
+            continue
         tw = sum(w for _, w, _, _ in items)
         if tw <= 0:
             continue
@@ -120,6 +185,8 @@ CHATTY_FACTOR = 0.33          # flag when the median interval is under a third o
 AIRTIME_WARN = 10.0           # % TX airtime per node
 CHANNEL_UTIL_WARN = 25.0      # % our radio measures; firmware starts deferring traffic around here
 SNR_DROP_DB = 5.0             # degrading link threshold
+EDGE_SHARE = 0.5              # "no hops to spare": at least this share of a radio's packets arrived on their last hop
+EDGE_MIN_PACKETS = 5
 ROUTER_ROLES = {"ROUTER", "ROUTER_LATE", "REPEATER", "ROUTER_CLIENT"}
 
 
@@ -195,6 +262,27 @@ def _health(db, range_key, local, describe):
                                      "and uses more of everyone's airtime.", r["from_id"],
                                      [{"label": "max hop_start", "value": r["hs"], "prov": "reported"},
                                       {"label": "packets", "value": r["n"], "prov": "observed"}], describe))
+
+    # 4b. at the edge of reach: packets that only just made it (their best copy arrived with no hops left). The ones
+    # that needed one more hop never arrived at all, so this radio's delivery to us is hit-or-miss.
+    edge = defaultdict(lambda: [0, 0, 0])  # node -> [packets, arrived with 0 hops left, highest hop_start]
+    for r in q("""SELECT from_id, MAX(hop_limit) AS left, MAX(hop_start) AS hs FROM rx_hops
+                  WHERE ts>=? AND from_id != ? AND hop_start > 0 AND hop_limit IS NOT NULL
+                  GROUP BY from_id, pkt_id""", since, local):
+        e = edge[r["from_id"]]
+        e[0] += 1
+        e[1] += r["left"] == 0
+        e[2] = max(e[2], r["hs"] or 0)
+    for nid, (n, at_edge, hs) in edge.items():
+        if n >= EDGE_MIN_PACKETS and at_edge / n >= EDGE_SHARE:
+            fix = ("It already starts at the maximum of 7, so only a better-placed relay would help." if hs >= 7 else
+                   f"Raising its hop limit from {hs} to {hs + 1}, or a relay closer to it, would make it reliable.")
+            findings.append(_finding("info", "hops-edge", "Reaches us with no hops to spare",
+                                     f"{at_edge} of its {n} packets arrived on their very last hop, so the ones that "
+                                     f"needed one more hop never arrived: delivery from it to here is hit-or-miss. {fix}",
+                                     nid, [{"label": "on their last hop", "value": f"{round(100 * at_edge / n)} %", "prov": "observed"},
+                                           {"label": "packets", "value": n, "prov": "observed"},
+                                           {"label": "hop limit", "value": hs, "prov": "reported"}], describe))
 
     # 5. router-role nodes we never see relaying
     relay_bytes = Counter(r[0] for r in q("SELECT relay FROM rx_hops WHERE ts>=? AND hops>=1 AND relay IS NOT NULL", since))

@@ -81,3 +81,19 @@ def test_arrival_tag():
     assert server.arrival_of({"transportMechanism": "TRANSPORT_LORA"}) == "lora"
     assert server.arrival_of({"transportMechanism": "TRANSPORT_MQTT"}) == "mqtt"
     assert server.arrival_of({}) == "local"
+
+
+def test_pi_power_flags_in_words():
+    f = server.power_flags("0x50000")   # what the Pi reported after the bowling-night trip
+    assert f["underVoltageSinceBoot"] and f["throttledSinceBoot"] and not f["underVoltageNow"]
+    assert server.power_flags("0x50005")["underVoltageNow"] and server.power_flags("garbage") == {}
+
+
+def test_health_events_only_when_something_changes():
+    events, power, net = [], iter(["0x0", "0x0", "0x50005", "0x50000"]), iter(["LaserCats", "no network"])
+    h = server.HealthWatch(lambda kind, **d: events.append((kind, d)), power=lambda: next(power), network=lambda: next(net))
+    for t in (0, 10, 20, 30):  # every 10 s; the network every 30 s
+        h.step(t)
+    assert [(k, d.get("throttled") or d.get("network")) for k, d in events] == [
+        ("power", "0x0"), ("network", "LaserCats"), ("power", "0x50005"), ("power", "0x50000"), ("network", "no network")]
+    assert events[2][1]["underVoltageNow"] and events[2][1]["prev"] == "0x0"

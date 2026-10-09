@@ -137,6 +137,13 @@ nonexistent radio.port).
   as the firmware does (xor(name) ^ xor(expanded key); a secondary channel with no key uses the primary's).
 - **Station comparison** (`compare.py`): only minutes when the compared stations were all logging count.
   SNR/RSSI across different radio models aren't directly comparable.
+- **Placing radios from drives** (`insights.drive_estimates`, feeds `estimate_positions` for radios that share no
+  position): a moving station's DIRECT receptions, each at its GPS fix (within 60 s, stay-point smoothed), grouped
+  into ~200 m spots; only with 3+ spots spread 1 km+; signal-weighted centroid (10^(median SNR/20)), radius =
+  weighted spread / sqrt(effective spots), at least 0.5 km. Leans toward the roads driven. The first two days of
+  drives placed nothing (6 radios heard directly, nearly all while parked): the radio was inside the cab.
+- **No hops to spare** (`health`, kind `hops-edge`): a radio whose packets' best copies mostly (50%+, 5+
+  packets) arrived with hop_limit 0: the ones that needed one more hop never arrived. Suggests hop limit + 1.
 - **Insights** (`insights.py`, all passive): position estimates, health and security findings (weak keys
   from `weak_keys.py`, generated from the firmware's `LOW_ENTROPY_HASHES`; duplicate keys; impersonation).
 - **Firmware 2.8 renumbering** (`nodeids.py`): 2.8 renumbers a radio to crc32(its public key). Same key under
@@ -147,8 +154,10 @@ nonexistent radio.port).
   with. Relay bytes logged before an upgrade end in the OLD number: `resolve_relay(..., aliases)` maps them.
   Only built when an alias exists (a lookup per row and column). Radios numbered the 2.8 way get `v28` in
   `describe`/`node_json` (a "2.8" tag; `fw:2.8` in the node filter) and the Analytics "Firmware 2.8 adoption"
-  card counts them per day. Config ids (`[base] id`, `station_tokens`) still need editing by hand after an
-  upgrade.
+  card counts them per day. Settings that name radios by number follow it too (`nodeids.follow`): the `[remote]
+  allow` list (the radio must still send with its recorded key, which 2.8 keeps), `[base] id` and its relay byte
+  (`follow_base`, at start and every 5 min), watched radios (`Alerts._watched`), and per-station sync tokens
+  (`sync.follow_tokens`). Needs the new number's NodeInfo to have been heard (that's what links the two).
 - **Reception logging alarm** (`alerts._check_mining`): debug-log lines arriving and LoRa packets arriving for
   30 min with no RX/TX line recognised (`Mesh.log_counts`) raises "Reception logging has stopped" (a firmware
   log-format change); resolved when lines parse again. 2.8.1 already changed one thing: `Ch=` is decimal

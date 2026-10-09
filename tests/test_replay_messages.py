@@ -39,3 +39,18 @@ def test_messages_once_each_with_the_logging_radios_channel_names(tmp_path):
     assert msgs[0]["channelName"] == "LongFast" and not msgs[0]["direct"]
     assert msgs[1]["channelName"] == "Private"          # named from station B's own channel list
     assert msgs[2]["direct"] and msgs[2]["channelName"] is None
+
+
+def test_messages_tab_numbers_channels_as_this_radio_does_and_skips_phone_log_copies(tmp_path):
+    store = server.Store(tmp_path / "mesh.db")
+    connected(store, A, {1: "Private", 2: "Community"})   # this radio
+    connected(store, B, {1: "Community", 2: "Private"})   # another station: the same channels, other numbers
+    store.insert("messages", ts=10, from_id=SENDER, to_id="^all", channel=2, text="on private", pkt_id=1, outgoing=0, station=B)
+    store.insert("messages", ts=11, from_id=SENDER, to_id="^all", channel=1, text="on community", pkt_id=2, outgoing=0, station=B)
+    # a phone-log import of the same message: no packet id, no channel; it must not show as a LongFast duplicate
+    store.insert("messages", ts=10, from_id=SENDER, to_id="^all", channel=None, text="on private", pkt_id=None, outgoing=0, station=B)
+    # ...nor its own sends from the same export (no recipient, no channel: they looked like LongFast broadcasts)
+    store.insert("messages", ts=12, from_id=B, to_id=None, channel=None, text="lk status", pkt_id=None, outgoing=1, station=B)
+    rows = {m["text"]: m for m in server.messages_for_this_radio(store, A)}
+    assert len(server.messages_for_this_radio(store, A)) == 2
+    assert rows["on private"]["channel"] == 1 and rows["on community"]["channel"] == 2

@@ -12,6 +12,7 @@ import time
 from collections import deque
 
 import insights
+import nodeids
 from config import CFG
 from storage import notify
 
@@ -151,6 +152,11 @@ class Alerts:
                 log.exception("alerts loop error")
             time.sleep(60)
 
+    def _watched(self, s):
+        """Watched radios as they are numbered now: a radio renumbered by firmware 2.8 is watched under its new
+        number, so its old, silent one can't raise a "gone quiet" alert (nodeids.py)."""
+        return nodeids.follow(s["watched"], nodeids.info(self.db_path)["aliases"])
+
     def _last_heard(self, nid):
         r = self.store.query("SELECT MAX(t) AS t FROM (SELECT MAX(ts) AS t FROM packets WHERE from_id = ? "
                              "UNION ALL SELECT MAX(ts) FROM rx_hops WHERE from_id = ?)", nid, nid)
@@ -159,7 +165,7 @@ class Alerts:
     def _check_silence(self, s):
         limit = s["silenceHours"] * 3600
         open_ = self.state.setdefault("silent", {})
-        for nid in s["watched"]:
+        for nid in self._watched(s):
             heard = self._last_heard(nid) or 0
             name = self.mesh.describe(nid)["name"]
             listening_since = max(heard, self.connected_since or time.time())
@@ -229,7 +235,7 @@ class Alerts:
 
     def _check_battery(self, s):
         latch = self.state.setdefault("lowbatt", set())
-        for nid in s["watched"]:
+        for nid in self._watched(s):
             r = self.store.query("SELECT battery, voltage, ts FROM telemetry WHERE node = ? AND battery IS NOT NULL "
                                  "ORDER BY ts DESC LIMIT 1", nid)
             if not r or r[0]["battery"] > 100:

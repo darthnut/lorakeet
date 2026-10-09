@@ -193,6 +193,12 @@ def station_tokens(entries):
     return out
 
 
+def follow_tokens(per_station, aliases):
+    """Per-station tokens keyed by radio number: after a 2.8 renumbering the station's token also answers to its
+    new number (aliases: old -> new)."""
+    return {**per_station, **{aliases[sid]: tok for sid, tok in per_station.items() if sid in aliases}}
+
+
 def authorize(header, station, shared_token, per_station, require_own):
     """Which token a request must carry. A station with its own token must use it (the shared one is no
     longer enough for it, so one stolen station can be cut off alone); others may use the shared token

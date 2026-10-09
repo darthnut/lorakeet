@@ -58,11 +58,48 @@ def ping_due(last_pos, last_ts, pos, now, every_m, min_s):
     return now - last_ts >= min_s and analytics.dist_m(*last_pos, *pos) >= every_m
 
 
+def messages_for_this_radio(store, local, limit=200):
+    """The Messages tab: every message once (this radio's copy first), with channel numbers as THIS radio numbers
+    them. Channel indexes differ between radios (the Pi's 2 is the desk's 1, both "Lorakeet"), so another
+    station's copy is renumbered by channel name; one on a channel this radio doesn't have gets channel None
+    (shown in no channel view). Phone-log imports (no packet id, no channel recorded) are left out: they can't be
+    matched with the stations' copies and only ever showed up as unlabelled duplicates."""
+    rows = store.query(
+        "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
+        "ELSE from_id || ':' || pkt_id END ORDER BY (station IS ?) DESC, outgoing DESC, ts) AS _copy "
+        "FROM messages WHERE NOT (pkt_id IS NULL AND station IS NOT ?)) WHERE _copy = 1 "
+        "ORDER BY ts DESC LIMIT ?", local, local, limit)
+    with store.lock:
+        names = topology._channel_names(store.db)
+    if not local or local not in names:
+        return rows  # radio not connected yet (we don't know whose numbering to use): leave channels as logged
+    mine = {name: idx for idx, name in names.get(local, {}).items()}
+    for m in rows:
+        st = m.get("station")
+        if st and st != local and m.get("to_id") in ("^all", "!ffffffff"):
+            name = names.get(st, {}).get(m.get("channel") or 0)
+            m["channelName"] = name
+            m["channel"] = mine.get(name) if name else None
+    return rows
+
+
 def first_public_key(store, nid):
     """The first public key this database recorded for a radio: what remote commands are checked against."""
     r = store.query("SELECT public_key FROM node_info WHERE node = ? AND public_key IS NOT NULL AND public_key != '' "
                     "ORDER BY ts LIMIT 1", nid)
     return r[0]["public_key"] if r else None
+
+
+def follow_base():
+    """[base] id follows a 2.8 renumbering of the base station (nodeids.py): its new number, and the 1-byte relay
+    ID it now stamps on what it relays. Run at start and from the radio loop."""
+    global BASE_ID, BASE_BYTE, BASE_NAME
+    new = nodeids.info(DATA_DIR / "mesh.db")["aliases"].get(BASE_ID) if BASE_ID else None
+    if new and new != BASE_ID:
+        log.info("base station %s was renumbered by firmware 2.8: following it as %s", BASE_ID, new)
+        if BASE_NAME == BASE_ID:
+            BASE_NAME = new
+        BASE_ID, BASE_BYTE = new, int(new[-2:], 16)
 
 
 def likely_28(nid):
@@ -716,6 +753,52 @@ def _pi_health():
     return out
 
 
+def power_flags(throttled):
+    """A Raspberry Pi's vcgencmd get_throttled bits in words (None when unreadable)."""
+    try:
+        v = int(throttled, 16)
+    except (TypeError, ValueError):
+        return {}
+    return {"underVoltageNow": bool(v & 0x1), "throttledNow": bool(v & 0x6), "tooHotNow": bool(v & 0x8),
+            "underVoltageSinceBoot": bool(v & 0x10000), "throttledSinceBoot": bool(v & 0x60000)}
+
+
+class HealthWatch:
+    """A station's own power and network as events, written when they change: "power" (a Pi's throttled flags:
+    under-voltage now / since boot) every POWER_S, "network" (the active connection, or "no network") every NET_S.
+    Recorded on the station itself, so the timeline is exact even while it's offline, and syncs like any row.
+    Its own thread: the radio thread can sit in a 45 s connect attempt. Linux stations only (vcgencmd, nmcli)."""
+    POWER_S, NET_S = 10, 30
+
+    def __init__(self, event, power=lambda: _pi_health().get("throttled"), network=lambda: remote_mod.network()):
+        self.event, self.power, self.network = event, power, network
+        self.last_p = self.last_n = None
+        self.next_net = 0
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True, name="health").start()
+
+    def step(self, now):
+        p = self.power()
+        if p is not None and p != self.last_p:
+            self.event("power", throttled=p, prev=self.last_p, **power_flags(p))
+            self.last_p = p
+        if now >= self.next_net:
+            self.next_net = now + self.NET_S
+            n = self.network()
+            if n is not None and n != self.last_n:
+                self.event("network", network=n, prev=self.last_n)
+                self.last_n = n
+
+    def _run(self):
+        while True:
+            try:
+                self.step(time.time())
+            except Exception:  # noqa: BLE001 - a health probe must never stop
+                log.exception("health watch error")
+            time.sleep(self.POWER_S)
+
+
 def station_report(mesh):
     import platform
     import shutil
@@ -911,7 +994,7 @@ class Mesh:
         else:
             from meshtastic.serial_interface import SerialInterface
 
-        last_snapshot = 0
+        last_snapshot = last_follow = 0
         while True:
             try:
                 if self.connected and time.time() - self.last_rx > WATCHDOG_S:
@@ -929,6 +1012,9 @@ class Mesh:
                 if time.time() - last_snapshot > 86400:
                     self._snapshot_nodedb()
                     last_snapshot = time.time()
+                if time.time() - last_follow > 300:
+                    follow_base()
+                    last_follow = time.time()
             except Exception:  # noqa: BLE001 - this loop must never die
                 log.exception("connection loop error")
             time.sleep(5)
@@ -1737,8 +1823,9 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             claimed = self.headers.get("X-Lorakeet-Station") or ""
             if claimed and not analytics.STATION_RE.match(claimed):
                 return self._json({"error": "bad station header"}, 400)
-            bound = sync_mod.authorize(self.headers.get("Authorization"), claimed or None, CFG["sync"]["token"],
-                                       sync_mod.station_tokens(CFG["sync"]["station_tokens"]),
+            tokens = sync_mod.follow_tokens(sync_mod.station_tokens(CFG["sync"]["station_tokens"]),
+                                            nodeids.info(DATA_DIR / "mesh.db")["aliases"])
+            bound = sync_mod.authorize(self.headers.get("Authorization"), claimed or None, CFG["sync"]["token"], tokens,
                                        CFG["sync"]["require_station_tokens"])
             if bound is None and claimed:
                 log.warning("ingest refused from %s (%s): bad token", ip, claimed)
@@ -1786,6 +1873,13 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             if path == "/api/keyflags":  # radios with a compromised or shared public key (keyflags.py)
                 f = keyflags.flags(DATA_DIR / "mesh.db")
                 return self._json({nid: dict(v, name=mesh.name(nid), text=keyflags.text(v, mesh.name)) for nid, v in f.items()})
+            if path == "/api/stations/timeline":  # power and network changes each station recorded (HealthWatch)
+                hours = min(24 * 31, max(1, float(qs.get("hours", 24))))
+                out = {}
+                for r in store.query("SELECT ts, kind, detail, station FROM events WHERE kind IN ('power', 'network') "
+                                     "AND ts >= ? ORDER BY ts", time.time() - hours * 3600):
+                    out.setdefault(r["station"] or "", []).append({"ts": r["ts"], "kind": r["kind"], **json.loads(r["detail"] or "{}")})
+                return self._json({"hours": hours, "stations": out})
             if path == "/api/whoami":
                 return self._json({"access": access, "readOnly": access != "full"})
             if path == "/api/setup":  # paths and ports: this PC only
@@ -1833,10 +1927,7 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             if path == "/api/messages":
                 # every station logs its own copy of a message: show each once, preferring this radio's copy
                 # (our own sends keep their delivery status; another station's sends show as received here)
-                return self._json(store.query(
-                    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
-                    "ELSE from_id || ':' || pkt_id END ORDER BY (station IS ?) DESC, outgoing DESC, ts) AS _copy "
-                    "FROM messages) WHERE _copy = 1 ORDER BY ts DESC LIMIT 200", mesh.local_id))
+                return self._json(messages_for_this_radio(store, mesh.local_id))
             if path == "/api/links":
                 since = time.time() - float(qs.get("hours", 24)) * 3600
                 return self._json(store.query(
@@ -2161,6 +2252,7 @@ def main():
     store = Store(DATA_DIR / "mesh.db")
     scrub_logged_secrets(store)
     debug_log = DebugLog(DATA_DIR / "debug.db")
+    follow_base()  # [base] id: the base station's current number if firmware 2.8 renumbered it
     mesh = Mesh(store, args.port, debug_log, host=args.host, tcp_port=CFG["radio"]["tcp_port"])
     debug_log.on_batch = lambda rows: mesh.broadcast("debug", rows)
     # Bind before touching the radio: a second instance must exit here, not fight over the COM port.
@@ -2201,9 +2293,11 @@ def main():
                 # the backlog counted now: the sync status keeps the last SUCCESSFUL pass's (0 while offline)
                 {**syncer.status, "backlog": syncer.backlog()} if isinstance(syncer, sync_mod.Collector) else None,
                 _pi_health(), mesh.own_fix_now()),
-            fix=mesh.own_fix_now)
+            fix=mesh.own_fix_now, aliases=lambda: nodeids.info(DATA_DIR / "mesh.db")["aliases"])
         log.info("remote commands: on, from %s", ", ".join(CFG["remote"]["allow"]))
     threading.Thread(target=mesh.run, daemon=True, name="radio").start()
+    if sys.platform.startswith("linux"):
+        HealthWatch(mesh.event).start()
     storage.start()
     alert_engine.start()
     if isinstance(syncer, sync_mod.Collector):

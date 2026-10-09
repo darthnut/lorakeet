@@ -137,3 +137,4 @@ body.vz-drive .vz-chat-panel, body.vz-drive .chat-links { display: none !importa
 /* Coverage: the station's own transmissions (drive.js) */
 .dv-legend i.dot { width: 10px; height: 10px; border-radius: 50%; } .dv-legend i.dot.hollow { background: transparent; border: 2px solid; box-sizing: border-box; }
 .dv-check { cursor: pointer; } .dv-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.dv-legend i.unexplored { background: var(--surface-2); opacity: .8; border: 1px solid var(--border); }

@@ -9,7 +9,8 @@
 const DV = { data: null, key: null, map: null, layer: null, sel: null, fitted: null,
   metric: (() => { try { return localStorage.getItem("meshdash.dvMetric") || "radios"; } catch { return "radios"; } })(),
   bin: (() => { try { return Number(localStorage.getItem("meshdash.dvBin")) || 250; } catch { return 250; } })(),
-  sent: (() => { try { return localStorage.getItem("meshdash.dvSent") !== "0"; } catch { return true; } })() };
+  sent: (() => { try { return localStorage.getItem("meshdash.dvSent") !== "0"; } catch { return true; } })(),
+  dim: (() => { try { return localStorage.getItem("meshdash.dvDim") !== "0"; } catch { return true; } })() };
 const DV_METRICS = {
   radios: { label: "Radios heard", fmt: (v) => nf.format(v), get: (c) => c.radios },
   perMin: { label: "Receptions per minute there", fmt: (v) => fmt(v, 1), get: (c) => c.perMin },
@@ -89,6 +90,15 @@ function renderDrive() {
   }
   // drive.py judges silence against each station's own reception rate: "hole" = inside a silence long enough to
   // mean no coverage; "brief" = crossed between packets, too quickly to tell
+  // Explored vs unknown: dim everything outside the squares a station actually passed through. Blank map means
+  // nobody has been there, not "no coverage" (what Helium's mappers warn about unshaded hexes).
+  if (DV.dim && d.cells.length) {
+    const lat = d.cells.map((c) => c.lat), lon = d.cells.map((c) => c.lon);
+    const pad = 3, outer = [[Math.min(...lat) - pad, Math.min(...lon) - pad], [Math.min(...lat) - pad, Math.max(...lon) + pad],
+      [Math.max(...lat) + pad, Math.max(...lon) + pad], [Math.max(...lat) + pad, Math.min(...lon) - pad]];
+    const holesRings = d.cells.map((c) => [c.bounds[0], [c.bounds[0][0], c.bounds[1][1]], c.bounds[1], [c.bounds[1][0], c.bounds[0][1]]]);
+    L.polygon([outer, ...holesRings], { stroke: false, fillColor: css("--surface-2"), fillOpacity: 0.55, fillRule: "evenodd", interactive: false }).addTo(L_);
+  }
   const heard = d.cells.filter((c) => c.receptions > 0), holes = d.cells.filter((c) => c.status === "hole"),
     brief = d.cells.filter((c) => c.status === "brief");
   for (const c of brief) {
@@ -146,6 +156,7 @@ function renderDrive() {
   // legend + note
   $("dvLegend").innerHTML = steps.map((r, i) => `<span><i style="background:${accent};opacity:${DV_STEPS[Math.round(i * (DV_STEPS.length - 1) / Math.max(1, steps.length - 1))]}"></i>${esc(m.fmt(r[0]))}${r[1] !== r[0] ? `–${esc(m.fmt(r[1]))}` : ""}</span>`).join("") +
     (DV.sent && (d.sent || []).length ? `<span><i class="dot" style="background:${css("--good")}"></i>sent: reached our station</span><span><i class="dot" style="background:${accent}"></i>sent: repeated by mesh</span><span><i class="dot hollow" style="border-color:${warn}"></i>sent: no sign</span>` : "") +
+    (DV.dim ? '<span><i class="unexplored"></i>dimmed: not explored (unknown)</span>' : "") +
     `<span><i class="hole"></i>gap: nothing heard</span><span><i class="brief"></i>too brief to tell</span><span><i style="background:${warn};height:3px"></i>silent stretch</span>`;
   const s = d.stats, names = d.stations.map((x) => x.name).join(", ");
   // distance moved: steps under 25 m (the logger's "moved" threshold) are GPS jitter while parked, not travel
@@ -199,5 +210,11 @@ $("dvSent").checked = DV.sent;
 $("dvSent").addEventListener("change", (e) => {
   DV.sent = e.target.checked;
   try { localStorage.setItem("meshdash.dvSent", DV.sent ? "1" : "0"); } catch { /* storage blocked */ }
+  renderDrive();
+});
+$("dvDim").checked = DV.dim;
+$("dvDim").addEventListener("change", (e) => {
+  DV.dim = e.target.checked;
+  try { localStorage.setItem("meshdash.dvDim", DV.dim ? "1" : "0"); } catch { /* storage blocked */ }
   renderDrive();
 });

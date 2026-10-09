@@ -51,17 +51,21 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
   along the route, square by square, and where the mesh heard *it*: each packet it sent, marked by whether
   one of your other stations heard it, a relay repeated it, or there's no sign it got out. Optional drive
   pings send a tiny message every kilometre to fill that in. Quiet spells only count as gaps once they're
-  long enough to mean something at the station's usual packet rate.
+  long enough to mean something at the station's usual packet rate. Areas the drive never explored can be
+  dimmed, and a radio that never shares its position but was heard directly from several spots along the
+  drives gets an estimated location.
 - **Ask a station how it's doing, over the mesh.** For a station with no internet (in a car, at a remote
   site): send its radio `lk status` or `lk gps` as a private direct message from a radio you've allowed,
   and it answers. Read-only, off by default.
 - **Packet anatomy.** Any packet rebuilt byte by byte, layer by layer (radio, header, encryption,
   envelope, payload), each field labelled with where its value came from.
 - **Health and security checks.** Busy channels, misconfigured nodes, known weak keys, duplicate keys,
-  possible impersonation. All passive. Radios whose key is on Meshtastic's compromised list, or shared with
+  possible impersonation, radios whose packets arrive with no hops to spare (a hop limit one short). All
+  passive. Radios whose key is on Meshtastic's compromised list, or shared with
   other radios, carry a warning badge wherever they appear (map, node pages, packet browser, replay).
 - **Several listening stations.** Small collectors (a Raspberry Pi and a radio) log locally and sync to
-  one hub over a private network, so you can compare what different places hear. See
+  one hub over a private network, so you can compare what different places hear. A per-station timeline
+  shows power dips and network drop-outs. See
   [docs/PI-SETUP.md](docs/PI-SETUP.md).
 - **Alerts and backups.** Watched nodes going silent or low on battery, new nodes, nightly
   integrity-checked database backups to folders you choose.
@@ -138,7 +142,8 @@ stops (start it from Task Scheduler at logon). On Linux, see `deploy/lorakeet.se
 - **Firmware versions.** Per-reception logging parses the firmware's debug log, whose format can change
   between versions. Tested on 2.7.26. **Firmware 2.8** (in alpha) is prepared for but not yet tested on a real
   2.8 radio: it renumbers radios (Lorakeet joins a radio's old and new numbers into one history), radios on
-  2.8 get a "2.8" tag with an adoption count on Analytics, and the known 2.8.1 log change is handled. If an
+  2.8 get a "2.8" tag with an adoption count on Analytics, settings that name a radio by number follow it to
+  its new number, and the known 2.8.1 log change is handled. If an
   update ever stops per-reception logging, Lorakeet raises an alert rather than failing silently.
 
 ## How this was built

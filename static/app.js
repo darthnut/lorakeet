@@ -321,7 +321,7 @@ const convName = (k) => (k === BROADCAST ? "Channels" : nodeName(k));
 S.channels = [];
 S.chan = (() => { try { return Number(localStorage.getItem("meshdash.chan") || 0); } catch { return 0; } })();
 S.chanUnread = new Map();
-const msgChan = (m) => m.channel ?? 0;
+const msgChan = (m) => (m.channel === null && m.channelName ? -1 : m.channel ?? 0);  // -1: a channel this radio lacks
 const chanName = (i) => S.channels.find((c) => c.index === i)?.name || (i ? `Channel ${i}` : "LongFast");
 function chanPrivacy(c) {
   if (!c) return ["", ""];

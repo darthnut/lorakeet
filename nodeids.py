@@ -57,6 +57,17 @@ def classify(latest, first_heard, last_heard):
     return {"aliases": aliases, "v28": v28, "keyed": set(latest)}
 
 
+def follow(ids, aliases):
+    """Radio numbers from settings (an allow list, watched radios, [base] id) as they are now: an old number of a
+    radio renumbered by 2.8 becomes its new one. Order kept, duplicates dropped."""
+    out = []
+    for i in ids:
+        j = aliases.get(i, i)
+        if j not in out:
+            out.append(j)
+    return out
+
+
 def compute(db_path):
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
     try:

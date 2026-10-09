@@ -112,9 +112,11 @@ HELP = "Commands (direct message): lk status · lk gps · lk help"
 class Remote:
     """Watches incoming text messages for commands; answers in a thread so the radio callback never waits."""
 
-    def __init__(self, mesh, allow, pinned_key, key_flag, status, fix):
-        # pinned_key(node) / key_flag(node) / status() -> str / fix() -> dict or None, supplied by server.py
-        self.mesh, self.allow = mesh, set(allow)
+    def __init__(self, mesh, allow, pinned_key, key_flag, status, fix, aliases=dict):
+        # pinned_key(node) / key_flag(node) / status() -> str / fix() -> dict or None, supplied by server.py;
+        # aliases() -> {old: new} radio numbers (firmware 2.8 renumbering): an allowed radio stays allowed after
+        # its upgrade. It still has to send with the key on record for it, which 2.8 keeps.
+        self.mesh, self.allow, self.aliases = mesh, set(allow), aliases
         self.pinned_key, self.key_flag, self.status, self.fix = pinned_key, key_flag, status, fix
         self.seen = set()       # (sender, packet id): a repeated copy is answered once
         self.last_reply = {}    # sender -> time of our last reply
@@ -127,7 +129,9 @@ class Remote:
         if (frm, pid) in self.seen:
             return
         self.seen.add((frm, pid))
-        ok, why = authorize(packet, self.mesh.local_id, self.allow, self.pinned_key(frm), self.key_flag(frm))
+        aliases = self.aliases()
+        allow = self.allow | {aliases[a] for a in self.allow if a in aliases}
+        ok, why = authorize(packet, self.mesh.local_id, allow, self.pinned_key(frm), self.key_flag(frm))
         if ok and time.time() - self.last_reply.get(frm, 0) < MIN_GAP_S:
             ok, why = False, "rate limited"
         self.mesh.event("remote_command", sender=frm, command=cmd, accepted=ok, reason=why or None)

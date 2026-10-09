@@ -473,6 +473,7 @@ async function renderMatrix(range) {
   const d = MX.data, st = d.stations;
   if (st.length < 2) return;
   try { MX.meta = await fetch("/api/stations").then((r) => r.json()); } catch { MX.meta = null; }
+  renderStationTimeline();
   renderStationHealth();
   if (!d.coMinutes) {
     $("mxScope").textContent = "No two stations have been logging at the same time in this range yet.";
@@ -507,6 +508,22 @@ function renderStationHealth() {
       <td class="${pwc}">${esc(pw)}</td><td class="num">${r.tempC == null ? "—" : `${fmt(r.tempC, 0)} °C`}</td><td class="num">${upText(r.uptimeS)}</td>
       <td class="mono">${esc(r.radioFirmware || "—")}</td><td>${sw}</td></tr>`;
   }).join("")}</tbody></table>`;
+}
+
+// Each station's own power and network changes, last 24 h (server.py HealthWatch)
+async function renderStationTimeline() {
+  let d; try { d = await fetch("/api/stations/timeline?hours=24").then((r) => r.json()); } catch { return; }
+  const names = new Map((MX.meta?.stations || []).map((s) => [s.id, s.name]));
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const line = (e) => e.kind === "network"
+    ? `<span class="${e.network === "no network" ? "bad" : ""}">network: ${e.prev ? `${esc(e.prev)} → ` : ""}${esc(e.network)}</span>`
+    : e.underVoltageNow ? '<span class="bad">⚠ under-voltage now</span>'
+    : e.throttledNow ? '<span class="warn">slowed down (throttled) now</span>'
+    : e.prev == null ? `power: ${e.underVoltageSinceBoot ? '<span class="warn">under-voltage earlier since boot</span>' : "OK"}`
+    : `power OK again${e.underVoltageSinceBoot ? " (dipped since boot)" : ""}`;
+  const rows = Object.entries(d.stations || {}).filter(([, ev]) => ev.length);
+  $("mxTimeline").innerHTML = rows.length ? `<h3 class="minor" style="margin-top:14px">Station timeline (24 h)</h3>` + rows.map(([sid, ev]) =>
+    `<div class="mx-tl"><b>${esc(names.get(sid) || sid)}</b>${ev.slice(-40).map((e) => `<span class="mx-ev"><span class="muted">${clock(e.ts)}</span> ${line(e)}</span>`).join("")}</div>`).join("") : "";
 }
 
 /* ---------------------------------------------------------------- station comparison */
