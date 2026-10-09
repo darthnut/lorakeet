@@ -139,14 +139,38 @@ function fallbackView() {
   return m.center && m.center.length === 2 ? [m.center, m.zoom || 10] : [[20, 0], 2];
 }
 
-// View-only mode for devices other than the dashboard PC: hide controls the server would refuse.
+// View-only mode for devices other than the dashboard PC: hide controls the server would refuse. With a
+// password set, the tag is a link to log in; a device that logged in gets a log-out link instead.
 (async () => {
   try {
     const w = await fetch("/api/whoami").then((r) => r.json());
+    const bar = document.querySelector(".topbar");
+    const brand = bar?.querySelector(".brand");
+    if (brand && w.version) brand.title = `Lorakeet ${w.version}`;
+    // the Radio page (settings, channels, backups) is for the dashboard computer only
+    if (w.demo) {  // server.py --demo: a made-up mesh, never anyone's real data
+      document.documentElement.classList.add("demo");
+      bar?.insertAdjacentHTML("beforeend", '<span class="rotag demo" title="A made-up mesh around Portland, Oregon: every radio, name, message and position is invented. Nothing here is logged from a radio.">demo data</span>');
+    }
+    if (w.access === "full" && !w.login?.loggedIn && !w.demo) bar?.querySelector(".pagenav")?.insertAdjacentHTML("beforeend", '<a href="/radio.html">Radio</a><a href="/stations.html">Stations</a>');
+    if (w.paused) {  // logging paused from the tray icon (or here): say so on every page
+      bar?.insertAdjacentHTML("beforeend", `<span class="rotag paused" title="Lorakeet has let go of the radio: nothing is being logged.">logging paused${w.readOnly ? "" : ' · <button class="linkbtn" id="lkResume">resume</button>'}</span>`);
+      document.getElementById("lkResume")?.addEventListener("click", async () => {
+        await fetch("/api/logging", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused: false }) }).catch(() => {});
+        location.reload();
+      });
+    }
     if (w.readOnly) {
       document.documentElement.classList.add("readonly");
-      const bar = document.querySelector(".topbar");
-      bar?.insertAdjacentHTML("beforeend", '<span class="rotag" title="Viewing from another device: sending, traceroutes and settings only work on the dashboard PC.">view only</span>');
+      bar?.insertAdjacentHTML("beforeend", w.login?.enabled
+        ? '<a class="rotag" href="/login.html" title="Viewing from another device. Log in to send, run traceroutes and change settings.">view only · log in</a>'
+        : '<span class="rotag" title="Viewing from another device: sending, traceroutes and settings only work on the dashboard PC.">view only</span>');
+    } else if (w.login?.loggedIn) {
+      bar?.insertAdjacentHTML("beforeend", '<button class="rotag linkbtn" id="lkLogout" title="Logged in from this device: full access">log out</button>');
+      document.getElementById("lkLogout").onclick = async () => {
+        await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+        location.replace(w.login.lan === "login" ? "/login.html" : location.href);
+      };
     }
   } catch { /* server restarting */ }
 })();

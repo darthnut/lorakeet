@@ -627,7 +627,7 @@ function describeEvent(e) {
   const type = e.group === "Unknown" ? "type not logged" : e.group;
   let path;
   if (e.kind === "trace") {
-    const hop = (route, snrs) => route.map((id, i) => `${id ? esc(nameOf(id)) : "unknown hop"}${i && snrs[i] != null ? ` <span class="muted">${snrs[i]} dB</span>` : ""}`).join(" → ");
+    const hop = (route, snrs) => route.map((id, i) => `${id ? esc(nameOf(id)) : "unknown hop"}${i && snrs[i] != null ? ` <span class="muted">${esc(snrs[i])} dB</span>` : ""}`).join(" → ");
     return `<li class="trace-log"><span class="t">${esc(t)}</span><i style="background:${rcol(e.group)}"></i><b>Traceroute${e.origin ? ` (${esc(e.origin)})` : ""}</b> to ${esc(nameOf(e.to))}<br>out: ${hop(e.path || [], e.snr || [])}${(e.back || []).length ? `<br>back: ${hop(e.back, e.snrBack || [])}` : ""}</li>`;
   }
   if (e.kind === "tx") path = `our radio transmitted${e.to && e.to !== "^all" ? ` to ${esc(nameOf(e.to))}` : " a broadcast"}`;

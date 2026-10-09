@@ -1,0 +1,22 @@
+name: Feedback or an idea
+description: How testing went, what was confusing, or what you'd like Lorakeet to do.
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Short is fine. Issues are **public**, so leave out anything private (see
+        [TESTING.md](https://github.com/darthnut/lorakeet/blob/main/TESTING.md#what-to-keep-to-yourself)).
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+      description: What worked, what didn't, what confused you, what you'd want next.
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Your setup (optional)
+      description: Lorakeet version, computer, radio and firmware.
+      placeholder: "0.3.0, Windows 11, Heltec Mesh Node T1 on 2.7.26"

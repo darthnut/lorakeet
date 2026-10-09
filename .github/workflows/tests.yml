@@ -38,6 +38,48 @@ jobs:
       - name: Every page script and tool parses
         run: for f in static/*.js tools/*.mjs; do node --check "$f"; done
       - name: Shell scripts parse
-        run: for f in deploy/*.sh; do bash -n "$f"; done
+        run: for f in deploy/*.sh install.sh; do bash -n "$f"; done
       - name: Nothing personal in the repository
         run: python tools/release_check.py
+
+  install:
+    # The install scripts, end to end on fresh machines, autostart included (these runners are thrown away).
+    name: Install script on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install.sh --autostart, the launcher, then --uninstall
+        if: runner.os == 'Linux'
+        run: |
+          ./install.sh --autostart
+          ./install.sh                                  # running it again (an update) is harmless
+          for i in $(seq 30); do curl -sf http://127.0.0.1:5190/api/version && break; sleep 2; done
+          systemctl is-active lorakeet
+          venv/bin/python lorakeet.pyw --no-browser     # already running: returns at once
+          ./install.sh --uninstall
+          ! systemctl is-active lorakeet
+          test ! -d venv
+      - name: install.ps1 (shortcuts, autostart), the launcher, then -Uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Yes -Autostart -NoOpen
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ScheduledTask -TaskName Lorakeet | Format-List TaskName, State
+          $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Lorakeet.lnk"
+          if (-not (Test-Path $lnk)) { throw "no desktop shortcut" }
+          venv\Scripts\python lorakeet.pyw --no-browser   # starts it in the background, waits until it answers
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          (Invoke-WebRequest http://127.0.0.1:5190/api/version -UseBasicParsing).Content
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Uninstall -Yes
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (Test-Path $lnk) { throw "shortcut left behind" }
+          if (Get-ScheduledTask -TaskName Lorakeet -ErrorAction SilentlyContinue) { throw "autostart task left behind" }
+          if (Test-Path venv) { throw "venv left behind" }

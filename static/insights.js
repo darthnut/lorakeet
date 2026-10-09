@@ -80,8 +80,8 @@ async function renderCoverage(range) {
     if (p.precisionKm > 0) L.circle([p.lat, p.lon], { radius: p.precisionKm * 1000, color: css("--text-muted"), weight: 1, opacity: 0.25, fillOpacity: 0.03, interactive: false }).addTo(INS.covMap);
     L.circleMarker([p.lat, p.lon], { radius: 6, color: p.hops === 0 ? css("--surface-1") : snrColor(p.snr), weight: p.hops === 0 ? 1.5 : 2, fillColor: snrColor(p.snr), fillOpacity: p.hops === 0 ? 1 : 0 })
       .bindTooltip(`<b>${esc((A.data?.nodes.find((n) => n.id === p.from_id) || {}).name || p.from_id)}</b> · ${esc(when(p.ts))}<br>
-        SNR ${p.snr == null ? "—" : `${fmt(p.snr, 1)} dB`} ${prov("observed", "Measured by our radio on this packet.")} · RSSI ${p.rssi ?? "—"} ${prov("observed")}<br>
-        ${p.hops === 0 ? "heard directly" : `relayed, ${p.hops} hop${p.hops === 1 ? "" : "s"}: shows delivery, not our radio's range`}<br>
+        SNR ${p.snr == null ? "—" : `${fmt(p.snr, 1)} dB`} ${prov("observed", "Measured by our radio on this packet.")} · RSSI ${esc(p.rssi ?? "—")} ${prov("observed")}<br>
+        ${p.hops === 0 ? "heard directly" : `relayed, ${esc(p.hops)} hop${p.hops === 1 ? "" : "s"}: shows delivery, not our radio's range`}<br>
         position ${prov("reported", "The location the node said it was at.")}${p.precisionKm ? ` shared at ±${fmt(p.precisionKm, 1)} km precision` : " (full precision)"}`).addTo(INS.covMap);
   }
   const all = pts.map((p) => [p.lat, p.lon]);

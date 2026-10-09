@@ -188,7 +188,7 @@ function renderNodes(data) {
   const head = `<thead><tr>${NODE_COLS.map((c) => `<th class="${c.num ? "num" : ""}" data-k="${c.key}" ${NT.sort === c.key ? `aria-sort="${NT.dir > 0 ? "ascending" : "descending"}"` : ""}>${c.label}</th>`).join("")}</tr></thead>`;
   const body = rows.map((n) => {
     const mix = data.groups.filter((g) => n.byGroup[g]).map((g) => `<i style="width:${((n.byGroup[g] / n.packets) * 100).toFixed(1)}%;background:${gcol(g)}"></i>`).join("");
-    const hops = n.minHops == null ? "—" : n.minHops === n.maxHops ? `${n.minHops}` : `${n.minHops}–${n.maxHops}`;
+    const hops = n.minHops == null ? "—" : n.minHops === n.maxHops ? `${esc(n.minHops)}` : `${esc(n.minHops)}–${esc(n.maxHops)}`;
     const tag = n.isBase ? " ☀" : "";
     return `<tr data-id="${esc(n.id)}">
       <td><div class="nm" title="${esc(n.name)}">${esc(n.name)}${tag}${keyBadge(n.keyFlag, { short: true })}${n.v28 ? " " + v28Tag(true) : ""}<small>${esc([n.short, (n.hw || "").replace(/_/g, " ").toLowerCase(), n.role && n.role !== "CLIENT" ? n.role.replace(/_/g, " ").toLowerCase() : ""].filter(Boolean).join(" · "))}</small></div></td>
@@ -365,7 +365,7 @@ function renderConvs(data) {
 }
 function transcript(c) {
   return c.messages.map((m) => `<div class="msg ${m.outgoing ? "out" : ""} ${m.encrypted ? "enc" : ""} ${m.emoji ? "emoji" : ""}">
-    <div class="h"><b>${esc(m.outgoing ? "You" : m.name)}</b> · ${esc(when(m.ts))}${m.hops != null ? ` · ${m.hops} hop${m.hops === 1 ? "" : "s"}` : ""}${m.snr != null && m.hops === 0 ? ` · SNR ${fmt(m.snr, 1)}` : ""}${m.emoji ? " · reaction" : ""}</div>
+    <div class="h"><b>${esc(m.outgoing ? "You" : m.name)}</b> · ${esc(when(m.ts))}${m.hops != null ? ` · ${esc(m.hops)} hop${m.hops === 1 ? "" : "s"}` : ""}${m.snr != null && m.hops === 0 ? ` · SNR ${fmt(m.snr, 1)}` : ""}${m.emoji ? " · reaction" : ""}</div>
     ${m.replyTo ? `<div class="rp">↩ ${esc(m.replyTo.name)}: ${esc(m.replyTo.text)}</div>` : ""}
     <div class="b">${m.encrypted ? "🔒 Direct message our radio couldn't decrypt (missing key)" : esc(m.text)}</div></div>`).join("");
 }
@@ -502,7 +502,8 @@ function renderStationHealth() {
     const loc = s.location ? `<span title="${esc(r.note || "")}">${fmt(s.location[0], 5)}, ${fmt(s.location[1], 5)}</span>` : '<span class="muted" title="Set [station] location in this station\'s lorakeet.toml">not set</span>';
     const ago_ = s.lastContact ? ago(s.lastContact) : "—";
     const stale = s.lastContact && Date.now() / 1000 - s.lastContact > 600;
-    const sw = r.software ? `<span class="mono ${r.software !== hubSw ? "warn" : ""}" title="${r.software !== hubSw ? "Different code from this hub (" + hubSw + ")" : "Same code as this hub"}">${esc(r.software)}</span>` : "—";
+    const ver = r.version || (s.current ? m.version : null);
+    const sw = r.software ? `${ver ? `${esc(ver)} ` : ""}<span class="mono ${r.software !== hubSw ? "warn" : ""}" title="${r.software !== hubSw ? "Different code from this hub (" + hubSw + ")" : "Same code as this hub"}">${esc(r.software)}</span>` : ver ? esc(ver) : "—";
     return `<tr><td>${esc(s.name)}${s.current ? ' <span class="muted">(this PC)</span>' : ""}</td><td>${loc}</td>
       <td class="num ${stale ? "bad" : ""}">${s.current ? "connected" : esc(ago_)}</td><td class="num">${r.backlog == null ? "—" : nf.format(r.backlog)}</td>
       <td class="${pwc}">${esc(pw)}</td><td class="num">${r.tempC == null ? "—" : `${fmt(r.tempC, 0)} °C`}</td><td class="num">${upText(r.uptimeS)}</td>

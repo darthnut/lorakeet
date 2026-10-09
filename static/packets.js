@@ -33,7 +33,7 @@ async function load() {
     P.facets = { source: P.source, ...r.facets };
     const port = $("filters").portnum, ch = $("filters").channel;
     port.innerHTML = '<option value="">Any</option>' + (r.facets.portnum || []).map((p) => `<option>${esc(p)}</option>`).join("");
-    ch.innerHTML = '<option value="">Any</option>' + (r.facets.channel || []).map((c) => `<option value="${c}">${P.source === "packets" ? c : hex(c)}</option>`).join("");
+    ch.innerHTML = '<option value="">Any</option>' + (r.facets.channel || []).map((c) => `<option value="${esc(c)}">${esc(P.source === "packets" ? c : hex(c))}</option>`).join("");
   }
   render();
   $("csv").href = `/api/packets/search.csv?${new URLSearchParams({ source: P.source, ...filters(), ...(window.LK_STATION ? { station: window.LK_STATION } : {}) })}`;
@@ -54,7 +54,7 @@ function cell(col, row) {
     return v === "^all" ? "broadcast" : name && name !== v ? `${esc(name)}${kf} <span class="muted">${esc(v)}</span>` : esc(v) + kf;
   }
   if (col === "relay" || col === "next_hop") return hex(v);
-  if (col === "channel") return P.source === "packets" ? (v ?? "") : hex(v);
+  if (col === "channel") return esc(P.source === "packets" ? (v ?? "") : hex(v));
   if (col === "pkt_id") return v == null ? "" : hex(v, 8);
   if (col === "snr") return v == null ? "" : Number(v).toFixed(2);
   return esc(v);

@@ -17,7 +17,8 @@ tcp_port = 4403
 [storage]
 # Where the database and logs live. Empty = per-OS default:
 #   Windows %LOCALAPPDATA%\Lorakeet, macOS ~/Library/Application Support/Lorakeet, Linux ~/.local/share/lorakeet
-# Use a disk that can take constant writes (an SSD, not a Raspberry Pi's SD card).
+# Lorakeet writes a little all the time (a few MB a day). A Raspberry Pi's SD card is fine for a station;
+# for years of logging on a hub, a disk or SSD lasts longer.
 data_dir = ""
 # Warn (dashboard banner + notification) when the database reaches this size. Nothing is ever deleted.
 db_warn_gb = 1.0
@@ -40,14 +41,25 @@ port = 5190
 # "off"  = the dashboard is reachable from this computer only.
 # "view" = other devices on your local network get a read-only view (sending and settings stay
 #          on this computer). You may also need to allow the port through your firewall.
+# "login" = other devices on your local network see nothing until they log in.
+# With a password set (python server.py --set-password), a device that logs in gets full access:
+# sending, traceroutes, settings (the Radio, Stations and setup pages stay on this computer only).
+# Forgot it? python server.py --clear-password. The password is stored only as a salted hash, in login.json in the
+# data folder. It's plain HTTP, so anyone able to watch your network could read it: fine for keeping
+# guests on your Wi-Fi from sending on your radio, not a way to put the dashboard on the internet.
 lan = "off"
+# Names the dashboard may be opened by, besides IP addresses and localhost (e.g. "desk-pc" or
+# "lorakeet-station.local"). Any other name is refused: that blocks "DNS rebinding", where a web page you visit points its own
+# name at this computer to reach the dashboard through your browser.
+hostnames = []
 
 [map]
 # [lat, lon] to show before any node has shared a position. Empty = world view.
 center = []
 zoom = 10
-# Map tiles. "osm" (default): OpenStreetMap data, CARTO's light/dark styles and OpenTopoMap terrain, free with
-# attribution for light personal use. "esri": Esri's maps plus satellite imagery; check Esri's terms first.
+# Map tiles. "osm" (default): OpenStreetMap's standard tiles (dark mode shows the same tiles darkened) and
+# OpenTopoMap terrain, free with attribution for light personal use (OpenStreetMap's tile usage policy applies).
+# "esri": Esri's maps plus satellite imagery; check Esri's terms first.
 tiles = "osm"
 
 [base]
@@ -69,19 +81,32 @@ auto_traceroute = false
 enabled = false
 allow = []              # e.g. ["!1234abcd"]: your own radios
 
+[mcp]
+# mcp_server.py lets an LLM app (Claude Desktop, Claude Code, any MCP client) use Lorakeet without reading the
+# screen: see docs/API.md. It can always READ everything the dashboard shows. These let it do more; each is off
+# until you turn it on here (the LLM has no way to turn them on itself):
+allow_changes = false   # watch radios, pause/resume logging, change alert settings, mark alerts read, back up, restart
+allow_transmit = false  # send text messages and run traceroutes: they go out on the mesh under your radio's name
+# Radio settings, channels and keys, pairing and peering are never offered to an LLM: use the Radio and Stations pages.
+
 [sync]
-# Several listening stations, one database. A "collector" logs what its own radio hears (keeping a local
-# copy, so nothing is lost while offline) and sends it to a "hub", which stores every station's data with
-# a `station` column. Set up a private network between them first (Tailscale), so nothing is exposed to
-# the internet. See docs/PI-SETUP.md.
+# Several listening stations, one database. A "collector" (a station) logs what its own radio hears (keeping a
+# local copy, so nothing is lost while offline) and sends it to a "hub", which stores every station's data with a
+# `station` column. See docs/PI-SETUP.md.
+# Usually you don't edit this by hand: on the hub, the Stations page writes mode and allow; on a station, a
+# pairing code (setup page, Stations page, or `python server.py --join -`) writes mode, hub_url and token. Stations
+# connect over your local network or Tailscale, never the open internet. Peering with other people's hubs is set
+# up on the Stations page too (kept in peers.json in the data folder, not here).
+# The settings below are also the older, by-hand way: one shared token typed into both ends.
 mode = "off"            # "off", "collector" or "hub"
-# collector: the hub's address on the private network, e.g. "http://home-pc:5190"
+# collector: the hub's address on your local network or Tailscale, e.g. "http://home-pc:5190"
 hub_url = ""
 # the same secret on both ends, 16+ characters. Generate one with:
 #   python -c "import secrets; print(secrets.token_urlsafe(24))"
 token = ""
 interval_s = 60         # collector: seconds between sync passes
-# hub: networks collectors may send from. Default = Tailscale's address ranges. A hub listens on all
+# hub: networks collectors may send from. Default = Tailscale's address ranges; the Stations page adds your local
+# network's ranges when you pick it. A hub listens on all
 # interfaces even with http.lan = "off", but only /api/ingest (with the token) answers those networks.
 allow = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
 # hub: one secret per station (recommended once there are several). A station listed here must use its own

@@ -30,6 +30,17 @@ ARRIVAL_SQL = """CASE
   ELSE 'unknown' END"""
 
 
+def csv_cell(v):
+    """A value as a CSV cell that a spreadsheet won't run: text starting with = + - @ or a tab/CR (and not a plain
+    number) gets a leading apostrophe. Radio names and messages arrive over the air, from anyone in range."""
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        try:
+            float(v)
+        except ValueError:
+            return "'" + v
+    return v
+
+
 def _where(source, f):
     cols = SOURCES[source]
     sql, args = ["1=1"], []
@@ -111,5 +122,5 @@ def search_csv(db_path, source, f, station=None):
     extra = ["arrival"] if source == "packets" else []
     w.writerow(["time_local"] + cols + extra)
     for r in rows:
-        w.writerow([datetime.fromtimestamp(r["ts"]).isoformat(sep=" ", timespec="seconds")] + [r[c] for c in cols + extra])
+        w.writerow([datetime.fromtimestamp(r["ts"]).isoformat(sep=" ", timespec="seconds")] + [csv_cell(r[c]) for c in cols + extra])
     return buf.getvalue()

@@ -228,7 +228,11 @@ def _aes_key(psk):
 
 
 def _ctr(key, nonce, data):
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError:
+        raise RuntimeError("rebuilding the encryption needs the 'cryptography' package: re-run the installer "
+                           "(or pip install -r requirements.txt)") from None
     e = Cipher(algorithms.AES(key), modes.CTR(nonce)).encryptor()
     return e.update(data) + e.finalize()
 

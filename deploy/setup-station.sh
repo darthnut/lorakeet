@@ -2,8 +2,9 @@
 # Turn a fresh Raspberry Pi OS Lite (64-bit) install into a listening station. Run ON the Pi, as the station
 # user, from the code folder:   cd ~/lorakeet && bash deploy/setup-station.sh
 # Safe to re-run: every step checks what's already done. See docs/PI-SETUP.md for the whole procedure.
-# Two steps stay with a person: passwordless sudo (needs the user's password once, below) and approving
-# the Tailscale sign-in link this prints.
+# It asks for two things: the pairing code from the hub (Stations -> Add a station; Enter skips, pair later with
+# `venv/bin/python server.py --join -`) and whether to install Tailscale (only needed when the hub is at another
+# place, or to reach this station from anywhere). Passwordless sudo stays with a person (it needs your password).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 here="$PWD"
@@ -21,7 +22,7 @@ dpkg -s git python3-venv >/dev/null 2>&1 || { sudo apt-get update -q && sudo apt
 echo "== Python environment"
 [ -x venv/bin/python ] || python3 -m venv venv
 venv/bin/pip install -q --upgrade pip
-venv/bin/pip install -q -r requirements.txt
+venv/bin/pip install -q --prefer-binary -r requirements.txt
 
 echo "== serial access"
 id -nG | grep -qw dialout || sudo usermod -aG dialout "$USER"
@@ -29,17 +30,34 @@ id -nG | grep -qw dialout || sudo usermod -aG dialout "$USER"
 echo "== config"
 if [ ! -f lorakeet.toml ]; then
   cp deploy/station.example.toml lorakeet.toml && chmod 600 lorakeet.toml
-  echo "   created lorakeet.toml: fill in [station] and [sync] (hub_url, token) before the station can sync"
+  echo "   created lorakeet.toml (name it and place its antenna later: [station], or from the hub's Stations page)"
 fi
 
-echo "== Tailscale (remote access + the link home)"
-command -v tailscale >/dev/null || { curl -fsSL https://tailscale.com/install.sh -o /tmp/ts-install.sh && sudo sh /tmp/ts-install.sh; }
-if ! tailscale ip -4 >/dev/null 2>&1; then
+echo "== Tailscale (only if the hub is somewhere else, or to reach this station from anywhere)"
+if ! command -v tailscale >/dev/null; then
+  a=n
+  [ -t 0 ] && { read -r -p "   Install Tailscale? [y/N] " a || a=n; }
+  case "$a" in [yY]*) curl -fsSL https://tailscale.com/install.sh -o /tmp/ts-install.sh && sudo sh /tmp/ts-install.sh ;;
+               *) echo "   skipped (the hub must then be on this station's local network)" ;; esac
+fi
+if command -v tailscale >/dev/null && ! tailscale ip -4 >/dev/null 2>&1; then
   echo "   open the link below to approve this station in your Tailscale account:"
   # no --ssh: the Pi's normal SSH server (your keys, one host key) answers over Tailscale too. Tailscale's own
   # SSH server presents a different host key and its default policy asks for browser re-approval, which
   # breaks unattended updates (update-station.sh).
   sudo tailscale up --hostname "$(hostname)"
+fi
+
+echo "== pairing with the hub"
+if grep -q '^mode = "collector"' lorakeet.toml; then
+  echo "   already paired: $(grep '^hub_url' lorakeet.toml)"
+elif [ -t 0 ]; then
+  echo "   On the hub: Stations -> Add a station -> Make a pairing code. Paste it here (Enter to skip and pair later):"
+  read -r code || code=
+  if [ -n "$code" ]; then
+    printf '%s\n' "$code" | venv/bin/python server.py --join - \
+      || echo "   not paired yet: fix that, then run  venv/bin/python server.py --join -  and  sudo systemctl restart lorakeet"
+  fi
 fi
 
 echo "== logs kept across reboots, and the Wi-Fi watchdog"
@@ -64,4 +82,4 @@ sleep 20
 echo "   service: $(systemctl is-active lorakeet)"
 echo "   power: $(vcgencmd get_throttled 2>/dev/null || echo n/a)   (0x0 = good; anything else: a better power supply)"
 journalctl -u lorakeet --no-pager -n 30 | grep -E "connected:|sync:|failed" | tail -3 || true
-echo "Done. Check the hub's Analytics page: the station should appear under Listening stations."
+echo "Done. On the hub's Stations page the station should appear within a minute (last contact, version, backlog)."

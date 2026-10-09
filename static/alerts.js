@@ -26,7 +26,7 @@
     $("bellCount").hidden = !ST.unread; $("bellCount").textContent = ST.unread;
     if ($("alertpop").hidden) return;
     const s = ST.settings, at = ST.status?.autoTraceroute || {};
-    const tabs = `<nav class="atabs"><button data-t="alerts" class="${ST.tab === "alerts" ? "on" : ""}">Alerts</button><button data-t="settings" class="${ST.tab === "settings" ? "on" : ""}">Settings</button></nav>`;
+    const tabs = `<nav class="atabs"><button data-t="alerts" class="${ST.tab === "alerts" ? "on" : ""}">Alerts</button><button data-t="settings" class="${ST.tab === "settings" ? "on" : ""}">Settings</button>${ST.tab === "alerts" && ST.unread ? '<button class="amark" id="aRead">Mark all read</button>' : ""}</nav>`;
     let body;
     if (ST.tab === "alerts") {
       body = ST.alerts.length ? `<ul class="alist">${ST.alerts.map((a) => `<li class="${a.read ? "" : "unread"} sev-${esc(a.severity)}">
@@ -48,9 +48,11 @@
         ${chk("autoTraceroute", "Enabled")}${num("autoTracerouteMin", "At most one every (min)")}${num("autoTracerouteMaxChUtil", "Skip when channel busier than (%)")}
         ${num("autoTracerouteRefreshHours", "Re-trace a node after (hours)")}${num("autoTracerouteRetryHours", "Retry a non-answering node after (hours)")}
         <p class="muted">Last: ${at.ts ? `${esc(ago(at.ts))}: ${at.target ? `<a href="${nodeLink(at.target)}">${esc(at.target)}</a> · ` : ""}${esc(at.reason || "")}` : "not run yet this session"}</p>
-        <p class="muted" id="sSaved"></p></div>`;
+        <p class="muted" id="sSaved"></p>
+        <h4>Lorakeet</h4>
+        <p class="srow"><span class="muted">Reconnects the radio and rereads its settings; logging pauses for a few seconds.</span><button class="btn" id="sRestart">Restart Lorakeet</button></p></div>`;
     }
-    $("alertpop").innerHTML = tabs + body + (ST.tab === "alerts" && ST.unread ? '<div class="afoot"><button class="btn" id="aRead">Mark all read</button></div>' : "");
+    $("alertpop").innerHTML = tabs + body;
   }
 
   $("bell").addEventListener("click", (e) => {
@@ -62,6 +64,17 @@
   $("alertpop").addEventListener("click", async (e) => {
     const t = e.target.closest("[data-t]"); if (t) { ST.tab = t.dataset.t; render(); return; }
     if (e.target.id === "aRead") { await post("/api/alerts/read", {}); load(); }
+    if (e.target.id === "sRestart") {
+      const b = e.target; b.disabled = true; b.textContent = "Restarting…";
+      const r = await post("/api/restart", {}).catch(() => ({}));
+      if (r.error) { b.disabled = false; b.textContent = "Restart Lorakeet"; $("sSaved").textContent = r.error; return; }
+      await new Promise((res) => setTimeout(res, 3000));
+      for (let i = 0; i < 60; i++) {  // straight back under its runner; reload once it answers
+        try { if ((await fetch("/api/version")).ok) { location.reload(); return; } } catch { /* not up yet */ }
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      b.textContent = "Still starting: reload in a minute";
+    }
   });
   $("alertpop").addEventListener("change", async (e) => {
     const k = e.target.dataset.k; if (!k) return;

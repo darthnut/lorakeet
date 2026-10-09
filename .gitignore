@@ -16,6 +16,8 @@ storage_state.json
 
 # per-install configuration (personal); lorakeet.example.toml documents every option
 lorakeet.toml
+# (and the previous copy the Radio / Stations pages keep when they edit it)
+lorakeet.toml.bak*
 
 # shareable videos made by tools/record-viz.mjs
 recordings/

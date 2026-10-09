@@ -6,10 +6,11 @@ location = []         # [lat, lon] of the ANTENNA, e.g. [47.60620, -122.33210]
 note = ""             # e.g. "attic window, facing north"
 
 [sync]
-mode = "collector"
-hub_url = "http://HUB-TAILSCALE-NAME-OR-IP:5190"
-token = ""            # this station's own token (or the shared one), from the hub's lorakeet.toml
+# Filled in by pairing: on the hub, Stations -> Add a station gives a code; here, `venv/bin/python server.py --join -`
+# (setup-station.sh asks for it) tests the hub and writes mode = "collector", hub_url and token below.
+mode = "off"
 interval_s = 15
 
 [http]
 lan = "off"           # "view" = a read-only dashboard on this station's own Wi-Fi
+# hostnames = ["lorakeet-station.local"]   # to open that dashboard by name rather than by IP address

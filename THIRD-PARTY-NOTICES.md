@@ -8,6 +8,10 @@ components, which keep their own licenses.
 | Component | License | Source |
 |---|---|---|
 | Meshtastic Python library (`meshtastic`) and its dependencies (protobuf, pyserial, pypubsub, bleak, …) | GPL-3.0 (meshtastic); see each package | https://github.com/meshtastic/python |
+| cryptography (AES for packet anatomy) | Apache-2.0 or BSD-3-Clause | https://github.com/pyca/cryptography |
+| pystray (the Windows tray icon) | LGPL-3.0 | https://github.com/moses-palmer/pystray |
+| Pillow (the tray icon's image) | MIT-CMU (HPND) | https://python-pillow.org |
+| Segno (QR codes for sharing a channel with the Meshtastic app) | BSD-3-Clause, © Lars Heuer | https://github.com/heuer/segno |
 
 ## Loaded by the web pages from cdnjs.cloudflare.com
 

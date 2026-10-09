@@ -315,7 +315,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 
 /* page nav (shared with analytics.html) */
-.pagenav { display: flex; gap: 4px; }
+.pagenav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.pagenav a { flex: none; }
 .pagenav a { color: var(--text-secondary); text-decoration: none; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
 .pagenav a:hover { background: var(--surface-2); color: var(--text-primary); }
 .pagenav a[aria-current="page"] { color: var(--text-primary); font-weight: 600; background: var(--surface-2); }
@@ -323,6 +324,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 /* view-only mode for other devices on the LAN (prov.js sets .readonly) */
 .readonly .compose, .readonly #dMsg, .readonly #dTrace, .readonly .star, .readonly [data-backup],
 .readonly #aRead, .readonly [data-t="settings"], .readonly #nvStar { display: none !important; }
+.rotag.paused { color: var(--warning, #c98a00); border-color: var(--warning, #c98a00); }
+.rotag.demo { color: var(--accent, #2a7fd4); border-color: var(--accent, #2a7fd4); font-weight: 600; }
 .rotag { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
 
 /* provenance badges (prov.js) */
@@ -347,7 +350,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 .alist .ah span { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .alist .ad { color: var(--text-secondary); margin: 2px 0; }
 .alist a, .sform a { color: var(--accent); text-decoration: none; font-size: 12px; }
-.afoot { padding: 8px 14px; text-align: right; }
+.atabs button.amark { margin-left: auto; color: var(--accent); border-bottom-color: transparent; font-size: 12px; }
+.atabs button.amark:hover { text-decoration: underline; }
 .sform { padding: 8px 14px 14px; }
 .sform h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
 .srow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 3px 0; }

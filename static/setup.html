@@ -21,12 +21,18 @@
   <h1 id="title">Welcome to Lorakeet</h1>
   <p class="lead" id="lead">A few choices and it's ready. Everything here is saved to <code id="cfgPath">lorakeet.toml</code>, which you can edit later.</p>
 
+  <section class="card demo-card">
+    <h2>Just looking?</h2>
+    <p class="note">Explore a made-up mesh around Portland, Oregon first: three days of invented radios, messages and a drive, in every view. It opens in a new tab and stays apart from your own log.</p>
+    <p class="actions"><button type="button" class="btn" id="demoBtn">Explore a demo</button> <span class="muted" id="demoMsg"></span></p>
+  </section>
+
   <div id="configured" hidden>
     <section class="card">
       <h2>Already set up</h2>
       <p>This install has its settings in <code id="cfgPath2"></code>. To change them, edit that file (every option is explained in <code>lorakeet.example.toml</code>) and restart Lorakeet.</p>
       <dl class="summary" id="summary"></dl>
-      <p><a class="btn" href="/">Open the dashboard</a></p>
+      <p><a class="btn" href="/">Open the dashboard</a> <a class="btn" href="/radio.html">Check your radio</a></p>
     </section>
   </div>
 
@@ -44,7 +50,7 @@
           <p class="note">Over the network you get every decoded packet, but not the per-reception detail (duplicate copies, relays, airtime): radios send their debug log only over USB.</p>
         </div>
       </fieldset>
-      <p class="note">For full detail, turn on the radio's debug log once (with Lorakeet stopped): <code>meshtastic --set security.debug_log_api_enabled true</code></p>
+      <p class="note">After saving, the Radio page checks your radio's settings (region, per-reception detail and more), sets up channels and confirms logging.</p>
     </section>
 
     <section class="card">
@@ -52,15 +58,17 @@
       <label class="row">Name <input id="stationName" placeholder="e.g. Home" maxlength="60"></label>
       <label class="row">Antenna location
         <span><input id="lat" placeholder="latitude" size="11" inputmode="decimal"> <input id="lon" placeholder="longitude" size="11" inputmode="decimal">
+        <button type="button" class="btn" id="radioGps" hidden>Use the radio's GPS position</button>
         <button type="button" class="btn" id="geo">Use this computer's location</button></span></label>
-      <p class="note">Places this station on the maps and helps estimate where radios without a position are. A computer's location can be off by a few hundred metres; correct it to where the antenna is if you can. Stays on this computer.</p>
+      <p class="locwarn" id="locWarn" hidden></p>
+      <p class="note">Places this station on the maps and helps estimate where radios without a position are. Best: the antenna's own coordinates (from a map app, or the radio's GPS). A computer's location can be off by a few hundred metres, or by a whole country on a computer with no Wi-Fi. Stays with your own Lorakeets (a peer hub gets it rounded to about 3 km).</p>
     </section>
 
     <section class="card">
       <h2>3. Privacy and access</h2>
       <label class="opt"><input type="checkbox" id="storeRecipients" checked> <span><b>Record who other people's addressed packets were for</b><br><span class="muted">Your radio hears them on the shared airwaves anyway (contents stay encrypted unless you have the key). Turn this off to keep only the sender.</span></span></label>
       <label class="opt"><input type="checkbox" id="lanView"> <span><b>Let other devices on my local network view the dashboard</b><br><span class="muted">Read-only: sending and settings stay on this computer. Off = only this computer can open it. Never expose Lorakeet to the internet.</span></span></label>
-      <label class="opt"><input type="checkbox" id="autoTraceroute"> <span><b>Scheduled traceroutes</b><br><span class="muted">Maps routes through the mesh, but <b>transmits</b> (about one a hour). Off unless you want it.</span></span></label>
+      <label class="opt"><input type="checkbox" id="autoTraceroute"> <span><b>Scheduled traceroutes</b><br><span class="muted">Maps routes through the mesh, but <b>transmits</b> (about one an hour). Off unless you want it.</span></span></label>
     </section>
 
     <section class="card">
@@ -72,6 +80,16 @@
         <label class="opt"><input type="radio" name="tiles" value="osm" checked> <span>OpenStreetMap <span class="muted">(free for personal use)</span></span></label>
         <label class="opt"><input type="radio" name="tiles" value="esri"> <span>Esri, with satellite imagery <span class="muted">(check Esri's terms)</span></span></label>
       </fieldset>
+    </section>
+
+    <section class="card">
+      <h2>5. Other stations <span class="muted">(optional)</span></h2>
+      <label class="opt"><input type="checkbox" id="joinHub"> <span><b>This station sends what it logs to a hub</b><br><span class="muted">Another computer running Lorakeet collects what several stations hear. On it, open Stations → Add a station for a pairing code. (To make <i>this</i> computer a hub, use its Stations page after setup.)</span></span></label>
+      <div class="sub" id="joinBox" hidden>
+        <textarea id="joinCode" rows="3" placeholder="lk1-…" spellcheck="false" aria-label="Pairing code"></textarea>
+        <p><button type="button" class="btn" id="joinTest">Test</button> <span id="joinResult"></span></p>
+        <label class="opt" id="joinAnywayRow" hidden><input type="checkbox" id="joinAnyway"> <span>Save anyway: keep trying to reach the hub in the background</span></label>
+      </div>
     </section>
 
     <div class="actions">

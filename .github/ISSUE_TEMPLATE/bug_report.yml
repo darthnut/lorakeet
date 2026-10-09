@@ -1,0 +1,54 @@
+name: Something went wrong
+description: A bug, an error, or something that didn't work the way you expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Issues are **public**: please don't paste `lorakeet.toml`, tokens, radio backups, channel
+        links, your database or your exact location. See [TESTING.md](https://github.com/darthnut/lorakeet/blob/main/TESTING.md#what-to-keep-to-yourself).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+      placeholder: "I opened the Radio page with my radio plugged in, and it kept saying 'Looking for a radio…'."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lorakeet version
+      description: Hover over the logo in the dashboard, or see the VERSION file.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Computer
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Raspberry Pi
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: radio
+    attributes:
+      label: Radio and firmware
+      description: The model, its firmware version, and whether it's on USB or the network. "No radio (demo)" is fine.
+      placeholder: "Heltec V4, 2.7.26, USB"
+  - type: textarea
+    id: log
+    attributes:
+      label: The end of server.log (if something failed)
+      description: In Lorakeet's data folder. Check it for your user name, radio names and ids before pasting.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots help (an anonymized view with ?anon=1 is best).

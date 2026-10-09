@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#13294b">
+<title>Log in · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  .login { max-width: 360px; margin: 12vh auto 0; padding: 0 16px; }
+  .login form { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .login h1 { font-size: 20px; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .login p { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
+  .login label { display: block; font-size: 13px; margin-bottom: 6px; }
+  .login input { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 15px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text-primary); }
+  .login button { margin-top: 12px; width: 100%; padding: 9px; font-size: 15px; border-radius: 6px; border: 0;
+    background: var(--accent); color: #fff; cursor: pointer; }
+  .login button:disabled { opacity: .6; cursor: default; }
+  .login .err { color: var(--bad, #d03b3b); min-height: 1.4em; margin: 10px 0 0; font-size: 13px; }
+  .login .alt { margin-top: 14px; font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<main class="login">
+  <form id="f">
+    <h1><img src="favicon.svg" alt="" width="26" height="26">Lorakeet</h1>
+    <p id="why">Log in to send messages, run traceroutes and change settings from this device.</p>
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required autofocus>
+    <button id="go" type="submit">Log in</button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+  <div class="alt" id="alt"></div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  fetch("/api/whoami").then((r) => r.json()).then((w) => {
+    if (w.access === "full") { $("why").textContent = "You already have full access on this device."; }
+    else if (w.access === "login") $("why").textContent = "This dashboard asks devices on the network to log in.";
+    if (w.access === "view") $("alt").innerHTML = '<a href="/">Continue without logging in (view only)</a>';
+    if (!w.login?.enabled) {
+      $("why").textContent = "No password is set, so logging in isn't possible. On the dashboard computer, run: python server.py --set-password";
+      $("pw").disabled = $("go").disabled = true;
+    }
+  }).catch(() => {});
+  $("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("go").disabled = true; $("err").textContent = "";
+    try {
+      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: $("pw").value }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { location.replace("/"); return; }
+      $("err").textContent = d.error || `Couldn't log in (${r.status}).`;
+      $("pw").select();
+    } catch { $("err").textContent = "Couldn't reach the dashboard."; }
+    $("go").disabled = false;
+  });
+</script>
+</body>
+</html>

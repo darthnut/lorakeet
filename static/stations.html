@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#13294b">
+<title>Stations · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body class="setup-page">
+<header class="topbar">
+  <div class="brand"><img class="logo" src="favicon.svg" alt="" width="22" height="22">Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a><a href="/radio.html">Radio</a><a href="/stations.html" aria-current="page">Stations</a></nav>
+</header>
+
+<main class="setup radio stations">
+  <h1>Stations</h1>
+  <p class="lead">Several Lorakeets can log into one database: a <b>hub</b> collects what its <b>stations</b> hear (a Raspberry Pi in the garage, a car, a friend's house). Each station keeps logging on its own when it can't reach the hub, and catches up when it can.</p>
+  <p class="note">Just one radio on this computer? You don't need anything on this page. Two words used here: a <b>station</b> is one of <i>your</i> Lorakeets sending everything it logs to your hub; a <b>peer</b> is <i>someone else's</i> hub that you trade data with, each of you choosing what the other sees.</p>
+  <p class="err" id="err" role="alert"></p>
+  <p class="locwarn" id="restartBanner" hidden></p>
+
+  <!-- not a hub or a station yet -->
+  <section class="card" id="offHub" hidden>
+    <h2>Make this computer the hub</h2>
+    <p class="note">Other Lorakeets send what they log here. Pick where they'll connect from:</p>
+    <label class="opt"><input type="checkbox" id="allowLan" checked> <span><b>This computer's local network</b> <span class="muted">(stations at home, and virtual machines on this computer)</span></span></label>
+    <label class="opt"><input type="checkbox" id="allowTs"> <span><b>Tailscale</b> <span class="muted">(stations elsewhere: Tailscale is a free private network between your own devices, so a station at another house reaches this computer without opening anything to the internet; install it on both)</span></span></label>
+    <p class="actions"><button class="btn primary" id="beHub">Make this the hub</button></p>
+  </section>
+  <section class="card" id="offJoin" hidden>
+    <h2>Or: send this station's log to a hub</h2>
+    <p class="note">On the hub, open Stations → Add a station, and paste its pairing code here.</p>
+    <textarea id="joinCode" rows="3" aria-label="Pairing code" placeholder="lk1-…" spellcheck="false"></textarea>
+    <p class="actions"><button class="btn" id="joinTest">Test</button> <button class="btn primary" id="joinBtn">Join the hub</button></p>
+    <div id="joinResult"></div>
+  </section>
+
+  <!-- hub -->
+  <section class="card" id="hubCard" hidden>
+    <h2>This computer is the hub</h2>
+    <div id="hubAddrs"></div>
+    <label class="opt"><input type="checkbox" id="hubLan"> <span><b>Accept stations from this computer's local network</b></span></label>
+    <label class="opt"><input type="checkbox" id="hubTs"> <span><b>Accept stations over Tailscale</b></span></label>
+    <p class="note" id="fwNote" hidden>If a station can't connect, Windows Firewall may be blocking it: allow Python (or TCP port <span class="port"></span>) on Private networks, in Windows Security → Firewall → Allow an app.</p>
+    <p class="actions"><button class="btn" id="hubSave">Save</button> <button class="linkbtn" id="hubOff">Stop being a hub</button></p>
+  </section>
+  <section class="card" id="stationsCard" hidden>
+    <h2>Stations</h2>
+    <p class="note"><b>Last contact</b>: when the station last sent anything (red after 10 minutes). <b>Backlog</b>: rows it has logged but not sent yet; it grows while the station is offline and drains when it's back. <b>Connected by</b>: its pairing code, the older shared token, or the peer it arrived from.</p>
+    <div id="stationList"></div>
+  </section>
+  <section class="card" id="pairCard" hidden>
+    <h2>Add a station</h2>
+    <p class="note">Install Lorakeet on the station, then give it a pairing code from here. Each code is for one station: the first one to use it claims it, and you can revoke it any time.</p>
+    <label class="row">What is it? <input id="pairLabel" maxlength="60" size="26" placeholder="e.g. Garage Pi"> <button class="btn primary" id="pairBtn">Make a pairing code</button></label>
+    <div id="pairOut"></div>
+  </section>
+
+  <!-- peering: hubs sharing with each other -->
+  <section class="card" id="peerCard" hidden>
+    <h2>Peers: sharing with other hubs</h2>
+    <p class="note">Two people with their own hubs can share what they log. Each direction is separate and set up by the side that sends; the receiving hub has to agree by giving you a peer code. By default a peer gets every reception, position, telemetry and node your stations logged, and text on public channels, <b>not</b> text on private channels or in direct messages (those packets go without their words), and every location rounded to about 3 km. Your stations' own logs (connections, settings, power) stay here.</p>
+    <h3>Hubs this one sends to</h3>
+    <p class="note"><b>They see</b>: what that hub gets (change it any time; it applies to what's sent from then on). <b>Pass on</b>: also forward what <i>other</i> peers shared with you. <b>Waiting</b>: rows not sent to it yet. <b>Pause</b> stops sending for now; nothing is skipped, and on Resume it catches up. <b>Remove</b> stops sending for good; what they already have stays with them.</p>
+    <div id="peersOut"></div>
+    <details class="sub2" id="peerAddBox">
+      <summary>Send to another hub</summary>
+      <p class="note">The other hub's owner opens their Stations page → Peers → <i>Let another hub send here</i>, and gives you the code.</p>
+      <textarea id="peerCode" rows="3" aria-label="Peer code" placeholder="lk1-…" spellcheck="false"></textarea>
+      <label class="row">They may see <select id="peerShare"></select></label>
+      <label class="opt"><input type="checkbox" id="peerFwd"> <span>Also pass on what <i>other</i> peers share with this hub <span class="muted">(off: only what your own stations logged)</span></span></label>
+      <label class="opt"><input type="checkbox" id="peerExact"> <span>Share exact locations <span class="muted">(off: every location is rounded to about 3 km. On, they see exactly where your antennas are, and where a moving station drove: only for someone you'd tell your address)</span></span></label>
+      <p class="actions"><button class="btn primary" id="peerAdd">Start sending</button></p>
+      <div id="peerAddResult"></div>
+    </details>
+    <div id="peerInBox" hidden>
+      <h3>Hubs that send here</h3>
+      <p class="note">Their stations appear in your station picker and maps like your own. <b>Pause</b> declines what they send for now (it waits on their side and arrives when you resume); <b>Revoke</b> stops them sending more; <b>Delete what it sent</b> also removes everything that arrived from them (it shows exactly what first), leaving your own logs untouched.</p>
+      <div id="peersIn"></div>
+      <label class="row">Whose hub? <input id="peerLabel" maxlength="60" size="24" placeholder="e.g. Sam's hub"> <button class="btn" id="peerCodeBtn">Let another hub send here</button></label>
+      <div id="peerCodeOut"></div>
+    </div>
+  </section>
+
+  <!-- station (collector) -->
+  <section class="card" id="colCard" hidden>
+    <h2>This station sends to a hub</h2>
+    <p class="note">Everything this station logs is kept here too and sent to the hub within a minute; if the hub can't be reached, it waits and catches up later, so nothing is lost.</p>
+    <div id="colStatus"></div>
+    <p class="actions"><button class="btn" id="colTest">Test connection</button> <button class="linkbtn" id="colLeave">Stop sending to the hub</button></p>
+    <div id="colResult"></div>
+  </section>
+</main>
+<script src="stations.js"></script>
+</body>
+</html>

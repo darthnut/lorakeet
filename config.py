@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -46,13 +47,16 @@ DEFAULTS = {
     },
     "http": {
         "port": 5190,
+        "hostnames": [],          # names the dashboard may be opened by besides IP addresses and localhost
+                                  # (e.g. "desk-pc", "desk-pc.tailnet.ts.net"); anything else is refused (DNS rebinding)
         "lan": "off",             # "off" = this computer only; "view" = others on the LAN get read-only access
+                                  # (full after logging in, if a password is set); "login" = nothing until they log in
     },
     "map": {
         "center": [],             # [lat, lon] used before any node has shared a position; empty = world view
         "zoom": 10,
-        "tiles": "osm",           # "osm": OpenStreetMap-based (CARTO, OpenTopoMap); "esri": Esri's (their terms apply;
-                                  # the only choice with satellite imagery)
+        "tiles": "osm",           # "osm": OpenStreetMap standard tiles + OpenTopoMap; "esri": Esri's (their terms
+                                  # apply; the only choice with satellite imagery)
     },
     "base": {
         "id": "",                 # a node to feature as the base station (e.g. "!1234abcd"); empty = none
@@ -75,6 +79,10 @@ DEFAULTS = {
     "remote": {
         "enabled": False,         # answer "lk ..." commands sent to this station's radio by direct message (remote.py)
         "allow": [],              # radios that may send them, e.g. ["!1234abcd"]: PKI direct messages only
+    },
+    "mcp": {                      # mcp_server.py: what an LLM connected to Lorakeet may do besides reading
+        "allow_changes": False,   # watch radios, pause/resume logging, alert settings, mark alerts read, back up, restart
+        "allow_transmit": False,  # send text messages and run traceroutes from this radio (they go out on the mesh)
     },
     "sync": {
         "mode": "off",            # "off"; "collector" = send what this station logs to a hub; "hub" = accept them
@@ -110,8 +118,10 @@ def _merge(defaults, user, path=""):
 
 
 def _validate(c):
-    if c["http"]["lan"] not in ("off", "view"):
-        raise ValueError('lorakeet.toml: http.lan must be "off" or "view"')
+    if not (isinstance(c["http"]["hostnames"], list) and all(isinstance(h, str) and h for h in c["http"]["hostnames"])):
+        raise ValueError('lorakeet.toml: http.hostnames must be a list of names, e.g. ["desk-pc"]')
+    if c["http"]["lan"] not in ("off", "view", "login"):
+        raise ValueError('lorakeet.toml: http.lan must be "off", "view" or "login"')
     h, _, m = c["backup"]["time"].partition(":")
     if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
         raise ValueError('lorakeet.toml: backup.time must be "HH:MM"')
@@ -141,8 +151,6 @@ def _validate(c):
         raise ValueError('lorakeet.toml: sync.mode must be "off", "collector" or "hub"')
     if s["mode"] == "collector" and len(s["token"]) < 16:
         raise ValueError("lorakeet.toml: sync.token must be at least 16 characters (the same on both ends)")
-    if s["mode"] == "hub" and len(s["token"]) < 16 and not s["station_tokens"]:
-        raise ValueError("lorakeet.toml: a hub needs sync.token (16+ characters) or sync.station_tokens")
     if s["token"] and len(s["token"]) < 16:
         raise ValueError("lorakeet.toml: sync.token must be at least 16 characters")
     for entry in s["station_tokens"]:
@@ -172,8 +180,9 @@ def load():
     path = Path(os.environ.get("LORAKEET_CONFIG") or HERE / "lorakeet.toml")
     user = {}
     if path.is_file():
-        with open(path, "rb") as f:
-            user = tomllib.load(f)
+        # utf-8-sig: Windows tools (PowerShell's Set-Content, older Notepad) start the file with a byte-order mark,
+        # which tomllib rejects as "Invalid statement" at line 1
+        user = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     c = _merge(DEFAULTS, user)
     _validate(c)
     c["storage"]["data_dir"] = Path(c["storage"]["data_dir"]) if c["storage"]["data_dir"] else default_data_dir()
@@ -207,6 +216,55 @@ def _toml(v):
     return json.dumps(str(v), ensure_ascii=False)  # a JSON string is a valid TOML basic string
 
 
+SECTION_NOTES = {
+    "station": "# This listening station: a name, and the antenna's position [lat, lon] for the maps.",
+    "sync": "# Listening stations: a hub collects what its stations log; a station sends to a hub (the Stations page).",
+}
+
+
+def update_section(section, values):
+    """Set keys in one [section] of lorakeet.toml (the Radio and Stations pages): `values` {key: value}, None removes
+    the key. Everything else in the file, comments included, is kept; the result is validated exactly like a
+    hand-edited file before it replaces the old one, which is kept as lorakeet.toml.bak."""
+    path = config_path()
+    old = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+    lines = old.splitlines()
+    head = next((i for i, l in enumerate(lines) if l.strip() == f"[{section}]"), None)
+    if head is None:
+        lines += ["", SECTION_NOTES.get(section, f"# {section}"), f"[{section}]"]
+        head = len(lines) - 1
+    end = next((i for i in range(head + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+    keys = "|".join(re.escape(k) for k in values)
+    body = [l for l in lines[head + 1:end] if not re.match(rf"\s*({keys})\s*=", l)]
+    new = [f"{k} = {_toml(v)}" for k, v in values.items() if v is not None]
+    lines[head + 1:end] = new + body
+    text = "\n".join(lines).rstrip("\n") + "\n"
+    try:
+        _validate(_merge(DEFAULTS, tomllib.loads(text)))
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"couldn't update {path.name} automatically ({e}); edit it by hand") from e
+    if path.exists():
+        _write_private(path.with_suffix(".toml.bak"), old)
+    tmp = path.with_suffix(".toml.tmp")
+    _write_private(tmp, text)
+    os.replace(tmp, path)
+    return path
+
+
+def _write_private(path, text):
+    """Write a file only this user can read: it may hold the station's sync token ([sync] token)."""
+    path.unlink(missing_ok=True)  # os.open's mode only applies to a new file
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def update_station(name, location):
+    """[station] name and location (the Radio page). location: [lat, lon] (or with altitude), or empty to clear it."""
+    loc = [round(float(x), 6) for x in (location or [])]
+    return update_section("station", {"name": str(name or "").strip()[:60], "location": loc or None})
+
+
 def write_setup(answers):
     """Write a new lorakeet.toml from the setup page's answers (validated exactly like a hand-written file).
     Refuses to overwrite: setup is for first runs; an existing file is edited by hand."""
@@ -231,6 +289,8 @@ def write_setup(answers):
     loc = a.get("location")
     if loc:
         user["station"]["location"] = [round(float(loc[0]), 6), round(float(loc[1]), 6)]
+    if a.get("hubUrl"):  # this station sends what it logs to a hub (a pairing code, checked by the server first)
+        user["sync"] = {"mode": "collector", "hub_url": str(a["hubUrl"]), "token": str(a.get("hubToken") or "")}
     _validate(_merge(DEFAULTS, user))  # raises ValueError with the same messages a hand-edited file gets
 
     notes = {
@@ -241,6 +301,7 @@ def write_setup(answers):
         "alerts": "# Scheduled traceroutes TRANSMIT on the mesh, so they're off unless you turn them on.",
         "map": '# Map tiles: "osm" (OpenStreetMap + OpenTopoMap) or "esri" (Esri maps and satellite; their terms apply).',
         "station": "# This listening station: a name, and the antenna's position [lat, lon] for the maps.",
+        "sync": "# This station sends what it logs to a hub (from a pairing code). Keep the token private.",
     }
     lines = ["# Lorakeet settings, written by the first-run setup page. Every option is explained in",
              "# lorakeet.example.toml; edit this file and restart Lorakeet to change them.", ""]

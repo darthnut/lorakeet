@@ -8,6 +8,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
+from packetsearch import csv_cell
 from analytics import (OTHER, PORT_GROUPS, _bucket_starts, _connect, alias_map, _coverage, _covered, _window, measured_neighbors,
                        port_group, resolve_relay, scope_local)
 
@@ -191,7 +192,8 @@ def node_csv(db_path, nid, range_key, station=None):
                 "relay_byte", "via_mqtt", "pki_encrypted", "packet_id", "summary", "raw_json"])
     for r in rows:
         relay = f"{r['relay']:02x}" if r["relay"] is not None else ""
-        w.writerow([datetime.fromtimestamp(r["ts"]).isoformat(sep=" ", timespec="seconds"), f"{r['ts']:.3f}",
-                    r["from_id"], r["to_id"], r["portnum"], r["channel"], r["hops"], r["snr"], r["rssi"],
-                    relay, r["via_mqtt"], r["pki"], r["pkt_id"], r["summary"], r["raw"]])
+        w.writerow([csv_cell(v) for v in (
+            datetime.fromtimestamp(r["ts"]).isoformat(sep=" ", timespec="seconds"), f"{r['ts']:.3f}",
+            r["from_id"], r["to_id"], r["portnum"], r["channel"], r["hops"], r["snr"], r["rssi"],
+            relay, r["via_mqtt"], r["pki"], r["pkt_id"], r["summary"], r["raw"])])
     return buf.getvalue()

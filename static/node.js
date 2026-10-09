@@ -168,7 +168,7 @@ function drawMovement(d) {
       L.circle([p.lat, p.lon], { radius: (23300 * 2 ** (10 - p.precision_bits)) / 2, color: col, weight: 1, opacity: last ? 0.6 : 0.2, fillOpacity: last ? 0.06 : 0.02, interactive: false }).addTo(NV.map);
     }
     L.circleMarker([p.lat, p.lon], { radius: last ? 7 : 4, color: css("--surface-1"), weight: 2, fillColor: col, fillOpacity: 1 })
-      .bindTooltip(`${when(p.ts)}${p.alt != null ? ` · ${p.alt} m` : ""}`).addTo(NV.map);
+      .bindTooltip(`${when(p.ts)}${p.alt != null ? ` · ${esc(p.alt)} m` : ""}`).addTo(NV.map);
   });
   const b = L.latLngBounds(pts);
   NV.map.fitBounds(b.pad(0.4), { maxZoom: 13 });

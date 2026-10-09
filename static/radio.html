@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#13294b">
+<title>Radio · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body class="setup-page">
+<header class="topbar">
+  <div class="brand"><img class="logo" src="favicon.svg" alt="" width="22" height="22">Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a><a href="/radio.html" aria-current="page">Radio</a><a href="/stations.html">Stations</a></nav>
+</header>
+
+<main class="setup radio">
+  <h1>Your radio</h1>
+  <p class="lead" id="lead">Connect a radio, check its settings, set up channels and confirm Lorakeet is logging. Changes are only made when you press a button, and the radio's settings are backed up first. Work down the numbered steps; you can come back any time (this page is only available on this computer).</p>
+  <p class="err" id="err" role="alert"></p>
+  <p class="locwarn" id="locBanner" hidden></p>
+
+  <section class="card step" id="s1">
+    <h2><span class="num">1</span> Connect</h2>
+    <div id="connect"><p class="muted">Looking for a radio…</p></div>
+  </section>
+
+  <section class="card step" id="s2" hidden>
+    <h2><span class="num">2</span> Settings</h2>
+    <p class="note">What matters for logging, checked against this radio. Pick a change, then save: everything is written at once, and the radio restarts (a few seconds) to apply it.</p>
+    <p class="note badgekey"><span class="badge2 ok">✓</span> fine as it is · <span class="badge2 suggest">Suggested</span> works, but a change would log more or suit this radio better · <span class="badge2 needed">Needed</span> must be fixed before the radio can log · <span class="badge2 info">Info</span> nothing to fix: there if you want to change it. Settings not listed here stay as they are; the Meshtastic app changes the rest.</p>
+    <div class="names">
+      <label class="row">Name <input id="longName" maxlength="39" size="22" aria-label="Long name"> short <input id="shortName" maxlength="4" size="5" aria-label="Short name (up to 4 characters)"></label>
+      <p class="note">How the radio appears to others on the mesh.</p>
+    </div>
+    <div id="checklist"></div>
+    <div class="actions">
+      <button class="btn primary" id="apply" disabled>Save changes to the radio</button>
+      <span class="muted" id="applyNote"></span>
+    </div>
+  </section>
+
+  <section class="card step" id="s3" hidden>
+    <h2><span class="num">3</span> Channels</h2>
+    <p class="note">A radio reads the channels it has the key for. A private channel of your own (for your radios, or friends and family) keeps your messages and test traffic off the public channel.</p>
+    <div id="channels"></div>
+    <p class="note" id="chanKey" hidden><b>Key:</b> <i>Public default key</i> = the well-known key every Meshtastic radio has, so anyone can read it (that's the point of the main public channel). <i>Private key</i> = only radios given this channel's key can read it. <i>Primary's key</i> = it borrows the primary channel's key. <b>Positions:</b> how precisely this radio shares its own position on that channel: <i>exact</i>, <i>rounded</i> (13 bits is a box about 5 km across; more bits = more precise), or <i>not shared</i>. Lorakeet logs every channel the radio can read, whichever one you send on.</p>
+    <details class="sub2" id="newChan">
+      <summary>Make a private channel</summary>
+      <p class="note">A new channel with a random 256-bit key, added to this radio. Then share it: scan its QR code in the Meshtastic app on your phone (for a radio paired with it), or copy it to another radio plugged into this computer.</p>
+      <label class="row">Name <input id="chanName" maxlength="11" size="14" placeholder="e.g. Family"></label>
+      <label class="opt"><input type="checkbox" id="chanExact" checked> <span>Share exact positions on this channel <span class="muted">(fine for a channel only your own people have)</span></span></label>
+      <button class="btn" id="chanCreate">Make the channel</button>
+    </details>
+    <details class="sub2">
+      <summary>Add a channel from a link</summary>
+      <p class="note">Someone shared a channel with you? Paste its Meshtastic link (https://meshtastic.org/e/#…). Channels already on the radio are never replaced.</p>
+      <label class="row"><input id="chanLink" size="48" aria-label="Channel link" placeholder="https://meshtastic.org/e/#…" autocomplete="off"> <button class="btn" id="chanAdd">Add</button></label>
+    </details>
+    <div id="share" hidden></div>
+  </section>
+
+  <section class="card step" id="s4" hidden>
+    <h2><span class="num">4</span> Logging</h2>
+    <p class="note">A live check since you opened this page. <i>Packets</i> are the messages, positions and telemetry the radio decoded. <i>Per-reception detail</i> is each copy of a packet as it arrived over the air, relayed or repeated: it's what the replay, relays and airtime are built from. All three ticked means everything the radio hears is being kept.</p>
+    <div id="logging"></div>
+    <p class="actions" id="doneLinks" hidden><a class="btn primary" href="/">Open the map</a> <a class="btn" href="/analytics.html">Analytics</a></p>
+  </section>
+
+  <section class="card" id="stationCard" hidden>
+    <h2>This station</h2>
+    <p class="note">Its name, and where its antenna is: that places it on the maps and helps estimate where radios without a position are. Saved in <code id="cfgFile"></code>; Lorakeet uses it after a restart.</p>
+    <p class="note" id="stMobile" hidden>This station moves (<code>[station] mobile</code>), so its position always comes from its radio's GPS; there's no fixed location to set.</p>
+    <label class="row">Name <input id="stName" maxlength="60" size="24" placeholder="e.g. Home"></label>
+    <div id="stLocRow">
+      <label class="row">Antenna
+        <span><input id="stLat" placeholder="latitude" size="11" inputmode="decimal"> <input id="stLon" placeholder="longitude" size="11" inputmode="decimal">
+        <button type="button" class="btn" id="stRadioGps" hidden>Use the radio's GPS position</button>
+        <button type="button" class="btn" id="stGeo">Use this computer's location</button>
+        <button type="button" class="linkbtn" id="stClear">Clear</button></span></label>
+      <p class="locwarn" id="stWarn" hidden></p>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="stSave">Save</button>
+      <button class="btn" id="stRestart" hidden>Restart Lorakeet to use it</button>
+      <span class="muted" id="stNote"></span>
+    </div>
+  </section>
+
+  <section class="card" id="bk" hidden>
+    <h2>Backups</h2>
+    <p class="note">Taken before every change, in <code id="bkDir"></code> (readable only by your user account). They hold the radio's private key and channel keys: keep them private. To restore one: <code>meshtastic --port &lt;port&gt; --configure &lt;file&gt;</code>, with logging paused (tray icon → Pause logging) or Lorakeet stopped, since only one program can use the radio's port.</p>
+    <ul class="bklist" id="bkList"></ul>
+  </section>
+</main>
+<script src="radio.js"></script>
+</body>
+</html>

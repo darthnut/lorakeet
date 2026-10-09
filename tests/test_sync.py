@@ -18,7 +18,7 @@ def batch(rows, station=PI):
 
 
 def row(n, station=PI):
-    return {"src_rowid": n, "station": station, "ts": 1000 + n, "kind": "test"}
+    return {"src_rowid": n, "station": station, "ts": 1_700_000_000 + n, "kind": "test"}
 
 
 def test_a_resent_batch_is_stored_once(hub):

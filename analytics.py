@@ -305,6 +305,9 @@ def _firmware28(db, db_path, since, describe):
             "renumbered": [{"old": o, "new": n, "name": describe(n)["name"]} for o, n in sorted(info["aliases"].items())]}
 
 
+RHYTHM_S = 7 * 86400  # the weekly rhythm card's window
+
+
 def _window(db, range_key):
     """(since, until, first_ever, bucket, strftime format) for a range key."""
     if range_key not in RANGES:
@@ -383,15 +386,18 @@ def _compute(db, range_key, local, describe):
             "online": online.get(key),
         })
 
-    # ---- weekly rhythm: average packets per *covered* hour, by local weekday x hour
+    # ---- weekly rhythm: packets per *covered* hour, by local weekday x hour. Always the rolling past 7 days,
+    # whatever the range (a 24 h range filled one or two days). It starts on the hour after now - 7 days, so
+    # every weekday-hour slot is one hour of the week and the current hour isn't counted twice.
+    rhythm_since = max(first_ever, (int(until - RHYTHM_S) // 3600 + 1) * 3600)
     slot_hours = Counter()
-    for h in covered_hours:
+    for h in _coverage(db, rhythm_since, local):
         d = datetime.strptime(h, "%Y-%m-%d %H")
         slot_hours[(int(d.strftime("%w")), d.hour)] += 1
     heat = []
     for r in q(f"SELECT CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INT) AS dow, "
                f"CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT) AS hr, COUNT(*) AS n {P} GROUP BY 1, 2",
-               since, local):
+               rhythm_since, local):
         hours = slot_hours.get((r["dow"], r["hr"]), 0)
         heat.append({"dow": r["dow"], "hour": r["hr"], "packets": r["n"], "hours": hours,
                      "perHour": r["n"] / hours if hours else None})

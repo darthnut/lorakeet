@@ -138,7 +138,7 @@ function renderDrive() {
     const col = sentCol[s.result];
     L.circleMarker([s.lat, s.lon], { radius: 5, color: col, weight: 2, fillColor: col, fillOpacity: s.result === "none" ? 0 : 0.85 })
       .bindTooltip(`<b>${esc(s.what)}</b> · ${esc(when(s.ts))}<br>${esc(sentLabel[s.result])}` +
-        (s.heardBy.length ? `<br>${s.heardBy.map((h) => `${esc(h.name)}: ${h.hops == null ? "?" : h.hops} hop${h.hops === 1 ? "" : "s"}${h.snr != null ? `, SNR ${fmt(h.snr, 1)}` : ""}`).join("<br>")}` : "") +
+        (s.heardBy.length ? `<br>${s.heardBy.map((h) => `${esc(h.name)}: ${h.hops == null ? "?" : esc(h.hops)} hop${h.hops === 1 ? "" : "s"}${h.snr != null ? `, SNR ${fmt(h.snr, 1)}` : ""}`).join("<br>")}` : "") +
         (s.relays.length ? `<br><span class="t">repeated by ${s.relays.map((r) => esc(r[1])).join(", ")}</span>` : ""), { sticky: true })
       .addTo(L_);
   }
@@ -187,7 +187,7 @@ function dvSelect(c, quiet = false) {
         <dt>Time here</dt><dd>${fmt(c.minutes, 1)} min</dd>
         <dt>Receptions</dt><dd>${nf.format(c.receptions)}${c.perMin != null ? ` · ${fmt(c.perMin, 1)}/min` : ""}</dd>
         <dt>Radios</dt><dd>${c.radios} heard, ${c.direct} directly</dd>
-        <dt>Signal</dt><dd>best ${fmt(c.bestSnr, 1)} dB SNR${c.medSnr != null ? `, median ${fmt(c.medSnr, 1)}` : ""}${c.bestRssi != null ? ` · ${c.bestRssi} dBm` : ""}</dd>
+        <dt>Signal</dt><dd>best ${fmt(c.bestSnr, 1)} dB SNR${c.medSnr != null ? `, median ${fmt(c.medSnr, 1)}` : ""}${c.bestRssi != null ? ` · ${esc(c.bestRssi)} dBm` : ""}</dd>
         <dt>Heard</dt><dd>${esc(when(c.first))} – ${esc(when(c.last))}</dd>
       </dl>
       <div class="dv-h">Heard directly</div>${list(c.directRadios)}

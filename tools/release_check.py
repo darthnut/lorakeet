@@ -18,10 +18,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DENYLIST = ROOT / ".release-denylist"
 
 PLACEHOLDER_IDS = {"!ffffffff", "!1234abcd", "!5678ef90", "!abcd1234", "!deadbeef"}
-EXAMPLE_COORDS = {"47.60620", "-122.33210", "47.6062", "-122.3321"}  # Seattle, the documented example
+EXAMPLE_COORDS = {"47.60620", "-122.33210", "47.6062", "-122.3321",  # Seattle, the documented example
+                  "45.5152", "-122.6784"}  # downtown Portland, the centre of the made-up demo mesh (demo.py)
 EXAMPLE_IPS = {"192.168.1.50"}  # the documented example address for a network radio
 CHECKS = [
-    ("private IP", re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")),
+    # a network range ("192.168.0.0/16") is a definition, not someone's address: skipped, as for Tailscale below
+    ("private IP", re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b(?!/)")),
     ("Tailscale IP", re.compile(r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b(?!/)")),
     ("node id", re.compile(r"![0-9a-f]{8}\b")),
     ("MAC address", re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")),

@@ -26,6 +26,7 @@ from pubsub import pub
 from serial.tools import list_ports
 
 import airtime
+import api_index
 import alerts as alerts_mod
 import analytics
 import anatomy
@@ -33,7 +34,10 @@ import compare
 import drive
 import insights
 import keyflags
+import login as login_mod
 import nodeids
+import pairing
+import radio_setup
 import remote as remote_mod
 import node_analytics
 import packetsearch
@@ -46,6 +50,12 @@ import sync as sync_mod
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 DATA_DIR = CFG["storage"]["data_dir"]
+VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip()
+RADIO_BACKUPS = DATA_DIR / "radio-backups"  # the Radio page's settings backups: private keys, this user only
+RADIO_LOCK = threading.Lock()  # one change to a radio at a time
+DEMO = None          # --demo: the made-up mesh's own radio id (demo.py); no radio, its own data folder and port
+DEMO_IDLE_S = 3 * 3600  # a demo nobody has looked at for this long exits
+LAST_REQUEST = [time.time()]
 
 
 def key_flag(nid):
@@ -207,6 +217,21 @@ FIELD_NOTES = [
     ("positions", "source", "'own' = the listening station's radio's own GPS fix (node = station), logged so a "
                             "moving station's location is known over time; NULL = a position heard from the mesh."),
     ("positions", "fix_time", "The GPS fix's own timestamp as the radio reported it (own fixes only)."),
+    ("*", "src_rowid", "Set on rows that came from elsewhere (a station sending to this hub, or a peer hub): the row's "
+                       "number in the database of the station that logged it, so a resend, or the same row arriving by "
+                       "two routes, is stored once (unique with station). Empty on rows this computer's radio logged."),
+    ("*", "received_via", "How the row reached this database: empty = logged here by this computer's radio; "
+                          "'pair:<id>' = from a station paired on the Stations page; 'shared' / 'token' = from a station "
+                          "using a hand-set [sync] token; 'peer:<hub id>' = from another hub (peering). Rows that came "
+                          "from elsewhere before 0.3.0 have it empty but src_rowid set."),
+    ("packets", "raw (from peers)", "A peer only sees the contents of packets the share settings allow: a private-channel "
+                                    "or direct text arrives with decoded.textWithheld (summary '(text not shared)'), other "
+                                    "payloads with decoded.payloadWithheld (summary '(not shared)'). The reception itself "
+                                    "(time, sender, hops, signal, relay) is complete."),
+    ("positions", "lat / lon (from peers)", "Unless a peer chose to share exact locations, every location it sends is "
+                                            "rounded to a ~3 km grid (0.03 degrees) and marked precision_bits 14: "
+                                            "positions, a moving station's own GPS track, coordinates inside packets "
+                                            "and node-database snapshots, and its stations' reported locations."),
 ]
 
 RX_FIELDS = re.compile(r"\b(id|fr|to|transport|Ch|HopLim|hopStart|relay|nextHop|WantAck|len|rxSNR|rxRSSI|priority)\s*=\s*(-?[0-9a-fA-Fx.]+)")
@@ -376,7 +401,13 @@ MIGRATIONS = [
     "ALTER TABLE positions ADD COLUMN source TEXT",
     "ALTER TABLE positions ADD COLUMN fix_time INTEGER",
     "CREATE INDEX IF NOT EXISTS positions_own ON positions(station, node, ts) WHERE source = 'own'",
+    # 0.3.0 (database layout 2): how each row arrived, so what one route brought can be told apart and deleted
+    *[f"ALTER TABLE {t} ADD COLUMN received_via TEXT" for t in STATION_TABLES],
 ]
+# The database's layout version, stored in the file (PRAGMA user_version). Updates only ever ADD tables, columns
+# and indexes (MIGRATIONS above), never remove or rewrite logged data. Bump it with each change to SCHEMA or
+# MIGRATIONS, so an older Lorakeet opening a newer database can say so.
+SCHEMA_VERSION = 2  # 2: received_via on every station table
 BROADCAST = "^all"
 MAX_TEXT_BYTES = 200
 DB_WAIT_S = 30        # how long a write or read waits for the database before giving up
@@ -406,6 +437,15 @@ class Store:
                 self.db.execute(sql)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        found = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if found > SCHEMA_VERSION:
+            # a newer Lorakeet made this database: logging still works (its additions are left alone), but
+            # this version can't use them. Never lower the number.
+            log.warning("mesh.db is from a newer Lorakeet (database version %d, this one knows %d): update Lorakeet",
+                        found, SCHEMA_VERSION)
+        elif found < SCHEMA_VERSION:
+            self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        self.schema_version = max(found, SCHEMA_VERSION)
         self.db.execute("CREATE TABLE IF NOT EXISTS field_notes (tbl TEXT, col TEXT, note TEXT, PRIMARY KEY (tbl, col))")
         self.db.execute("DELETE FROM field_notes")
         self.db.executemany("INSERT INTO field_notes VALUES (?, ?, ?)", FIELD_NOTES)
@@ -419,6 +459,9 @@ class Store:
         before stations existed, or before the radio connected) to it."""
         self.station = sid
         analytics.HOME["id"] = sid  # what "our radio" means in the combined view
+        with self.lock:  # remembered, so nobody can write as this radio while it's unplugged or before it connects
+            self.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('own_station', ?)", (sid,))
+            self.db.commit()
         with self.lock:
             for t in STATION_TABLES:
                 self.db.execute(f"UPDATE {t} SET station = ? WHERE station IS NULL", (sid,))
@@ -802,13 +845,17 @@ class HealthWatch:
 def station_report(mesh):
     import platform
     import shutil
+    if DEMO:  # made up, like the rest of the demo: never this computer's platform, uptime or disk
+        return {"name": "Demo Home", "version": VERSION, "platform": "demo", "radioHw": "HELTEC_V3",
+                "radioFirmware": "2.7.26", "uptimeS": 3 * 86400, "backlog": 0}
     md = getattr(mesh.iface, "metadata", None) if mesh.iface is not None else None
     loc = CFG["station"]["location"]
     rep = {"name": CFG["station"]["name"] or (mesh.name(mesh.local_id) if mesh.local_id else ""),
-           "note": CFG["station"]["note"], "software": SOFTWARE, "platform": f"{sys.platform} {platform.machine()}",
+           "note": CFG["station"]["note"], "software": SOFTWARE, "version": VERSION, "platform": f"{sys.platform} {platform.machine()}",
            "uptimeS": _uptime_s(), "diskFreeMB": round(shutil.disk_usage(DATA_DIR).free / 1048576),
            "radioFirmware": getattr(md, "firmware_version", None) or None,
-           "radioHw": mesh.describe(mesh.local_id).get("hw") if mesh.local_id else None, **_pi_health()}
+           "radioHw": mesh.describe(mesh.local_id).get("hw") if mesh.local_id else None, **_pi_health(),
+           **channel_fingerprints(mesh.store)}
     if loc:
         rep["location"] = [float(x) for x in loc]
     if CFG["station"]["mobile"]:
@@ -840,12 +887,26 @@ def set_clock_from_gps(gps_ts, event):
         log.warning("system clock is %+.0f s off but couldn't be set: %s", skew, r.stderr.strip()[:200])
 
 
+def station_overrides(store):
+    """The hub's own name / location for a station (the Stations page), {station: {name?, location?}}; these win
+    over what the station reports about itself."""
+    r = store.query("SELECT value FROM settings WHERE key='station_overrides'")
+    return json.loads(r[0]["value"]) if r else {}
+
+
+def _as_location(loc):
+    return tuple(float(x) for x in loc) + ((None,) if len(loc) == 2 else ())
+
+
 def load_station_locations(store, local_id):
-    """analytics.STATION_LOCATIONS from this station's config and the collectors' latest reports."""
+    """analytics.STATION_LOCATIONS from this station's config, the collectors' latest reports and the hub's overrides."""
     r = store.query("SELECT value FROM settings WHERE key='station_meta'")
     for sid, m in (json.loads(r[0]["value"]) if r else {}).items():
         if m.get("location"):
-            analytics.STATION_LOCATIONS[sid] = tuple(m["location"]) + ((None,) if len(m["location"]) == 2 else ())
+            analytics.STATION_LOCATIONS[sid] = _as_location(m["location"])
+    for sid, o in station_overrides(store).items():
+        if o.get("location"):
+            analytics.STATION_LOCATIONS[sid] = _as_location(o["location"])
     if local_id and CFG["station"]["location"]:
         loc = CFG["station"]["location"]
         analytics.STATION_LOCATIONS[local_id] = tuple(float(x) for x in loc) + ((None,) if len(loc) == 2 else ())
@@ -910,12 +971,128 @@ def serial_ports():
     return sorted(out, key=lambda x: (not x["radio"], x["device"]))
 
 
+PRESET_HASHES = {_xor(n.encode()) ^ _xor(DEFAULT_PSK) for n in PRESET_NAMES.values()}
+
+
+def channel_fingerprints(store):
+    """This radio's channels as on-air fingerprints only (never names or keys): {"publicHashes", "privateHashes"}.
+    Stations send it in their report, so the hub can judge each station's traffic by that station's own channels."""
+    r = store.query("SELECT value FROM settings WHERE key='radio_channels'")
+    chans = json.loads(r[0]["value"]).get("channels", []) if r else []
+    if not chans:
+        return {}
+    return {"publicHashes": sorted({c["hash"] for c in chans if c.get("publicKey")}),
+            "privateHashes": sorted({c["hash"] for c in chans if c.get("encrypted") and not c.get("publicKey")})}
+
+
+def public_channel_hashes(store, own=()):
+    """station -> the on-air fingerprints of channels anyone can read, AS THAT STATION'S RADIO SEES THEM: every preset
+    name with the well-known key, plus its channels with a public key, minus any fingerprint one of ITS private
+    channels shares (a fingerprint is one byte, so a collision proves nothing). This hub's own radios use its channel
+    list; other stations the fingerprints in their reports; a station that never reported them (an older Lorakeet, a
+    peer's station) has none: nothing it logged is proven public (sync.public_keys)."""
+    mine = channel_fingerprints(store)
+    r = store.query("SELECT value FROM settings WHERE key='station_meta'")
+    metas = json.loads(r[0]["value"]) if r else {}
+    r = store.query("SELECT value FROM settings WHERE key='own_station'")
+    own = set(own) | ({r[0]["value"]} if r else set())  # stored as the bare id
+
+    def hashes(station):
+        fp = mine if station in own else {k: (metas.get(station) or {}).get(k) for k in ("publicHashes", "privateHashes")}
+        if fp.get("publicHashes") is None and fp.get("privateHashes") is None:
+            return set() if station not in own else set(PRESET_HASHES)
+        return (PRESET_HASHES | set(fp.get("publicHashes") or ())) - set(fp.get("privateHashes") or ())
+    return hashes
+
+
+class PeerManager:
+    """The hubs this one sends to (Stations page -> Peers): one sync.PeerSender each, started at launch and as peers
+    are added, stopped as they're removed."""
+
+    def __init__(self, store, mesh, hub_id):
+        self.store, self.mesh, self.hub_id = store, mesh, hub_id
+        self.peers = pairing.Peers(DATA_DIR / "peers.json")
+        self.senders = {}
+
+    def _report(self, station):
+        if station == self.mesh.local_id:
+            return station_report(self.mesh)
+        r = self.store.query("SELECT value FROM settings WHERE key='station_meta'")
+        m = (json.loads(r[0]["value"]) if r else {}).get(station)
+        return {k: v for k, v in m.items() if k != "received"} if m else None
+
+    def _start(self, peer):
+        snd = sync_mod.PeerSender(self.store, peer, self.hub_id,
+                                  lambda: public_channel_hashes(self.store, {self.mesh.local_id}), self._report)
+        self.senders[peer["id"]] = snd
+        snd.start()
+
+    def start_all(self):
+        for peer in self.peers.all():
+            self._start(peer)
+
+    def add(self, name, url, token, share, forward, hub_id, exact=False):
+        peer = self.peers.add(name, url, token, share, forward, hub_id, exact)
+        self._start(peer)
+        return peer
+
+    def update(self, pid, **kw):
+        peer = self.peers.update(pid, **kw)
+        if peer and pid in self.senders:
+            self.senders[pid].peer.update({k: peer.get(k) for k in ("share", "forward", "name", "url", "exact", "paused")})
+            self.senders[pid].sync_now()
+        return peer
+
+    def remove(self, pid):
+        snd = self.senders.pop(pid, None)
+        if snd:
+            snd.stop()
+        self.peers.remove(pid)
+
+    def list(self):
+        out = []
+        for p in self.peers.list():
+            snd = self.senders.get(p["id"])
+            out.append({**p, "status": dict(snd.status) if snd else None})
+        return out
+
+
+def supervised_now():
+    """Something will start us again if we exit: the Windows runner (supervise.pyw) or systemd."""
+    return bool(os.environ.get("LORAKEET_SUPERVISED") or os.environ.get("INVOCATION_ID"))
+
+
+def heard_points(mesh):
+    """Positions of the radios this station knows (not its own), for the location sanity check."""
+    return [(p.get("lat"), p.get("lon")) for nid, p in list(mesh.pos.items()) if nid != mesh.local_id]
+
+
+def station_settings(mesh):
+    """The Radio page's "This station": what lorakeet.toml says now (re-read, so a saved change shows before the
+    restart that applies it), the radio's own GPS fix, and whether the location looks wrong."""
+    import config as cfgmod
+    try:
+        st = cfgmod.load()["station"]
+    except Exception:  # noqa: BLE001 - a broken file: show what's running
+        st = CFG["station"]
+    loc = list(st["location"] or [])
+    running = CFG["station"]
+    return {"name": st["name"], "location": loc, "mobile": st["mobile"], "configPath": str(cfgmod.config_path()),
+            "pendingRestart": (st["name"], loc) != (running["name"], list(running["location"] or [])),
+            "supervised": supervised_now(), "radioFix": mesh.own_fix_now() if mesh.connected else None,
+            "radioName": mesh.name(mesh.local_id) if mesh.local_id else None,
+            "check": radio_setup.location_check(loc, heard_points(mesh)) if loc else None,
+            "roughM": radio_setup.GEO_ROUGH_M}
+
+
 def setup_info(mesh):
     """What the setup page shows: whether this install is configured, the defaults, ports, the live link."""
     import config as cfgmod
     info = {"configured": CFG["_path"] is not None, "path": str(cfgmod.config_path()),
             "defaults": {"dataDir": str(cfgmod.default_data_dir()), "httpPort": CFG["http"]["port"]},
             "ports": serial_ports(), "status": mesh.status(),
+            "radioName": mesh.name(mesh.local_id) if mesh.connected and mesh.local_id else None,
+            "radioFix": mesh.own_fix_now() if mesh.connected else None,
             "supervised": bool(os.environ.get("LORAKEET_SUPERVISED") or os.environ.get("INVOCATION_ID"))}
     if info["configured"]:  # a read-only summary; the file itself is edited by hand
         r = CFG["radio"]
@@ -944,6 +1121,8 @@ class Mesh:
         self.host, self.tcp_port = host or None, tcp_port
         self.iface = None
         self.connected = False
+        self.connected_at = None
+        self.paused = False  # logging paused (tray / dashboard): the radio's port is let go until resumed
         self.port = None
         self.local_id = None
         self.rx = {}  # node id -> {"rssi","snr","ts","count"} as heard by our radio
@@ -997,11 +1176,11 @@ class Mesh:
         last_snapshot = last_follow = 0
         while True:
             try:
-                if self.connected and time.time() - self.last_rx > WATCHDOG_S:
+                if self.connected and not self.paused and time.time() - self.last_rx > WATCHDOG_S:
                     log.warning("no data from radio for %d s; reconnecting", WATCHDOG_S)
                     self.event("watchdog", silent_s=WATCHDOG_S)
                     self._drop(self.iface)
-                if not self.connected:
+                if not self.connected and not self.paused:
                     self._connect(SerialInterface)
                 if self.connected:
                     if CFG["station"]["mobile"] and time.time() - self._own_refresh > OWN_FIX_REFRESH_S:
@@ -1056,6 +1235,13 @@ class Mesh:
             return
         try:
             with self.lock:
+                # paused while it was connecting (up to 45 s, e.g. to flash a radio that was booting): let go now, or
+                # the port stays held while the tray says it's free (set_paused only drops a connection already in).
+                # Checked in the same lock as the connection is set, so a pause can't slip in between.
+                if self.paused:
+                    log.info("logging was paused while connecting: letting go of %s", port)
+                    threading.Thread(target=self._close_quietly, args=(iface,), daemon=True).start()
+                    return
                 self.iface = iface
                 self.port = port
                 self.local_id = node_id(iface.myInfo.my_node_num)
@@ -1065,6 +1251,7 @@ class Mesh:
                 self.node_cache = iface.nodes or {}
                 self.last_rx = time.time()
                 self.connected = True
+                self.connected_at = time.time()
             log.info("connected: %s on %s, %d nodes", self.local_id, port, len(self.node_cache))
             self.last_connect_error = None
             self.event("connected", port=port, local=self.local_id, nodes=len(self.node_cache),
@@ -1087,6 +1274,19 @@ class Mesh:
         except Exception:  # noqa: BLE001
             log.exception("post-connect setup failed")
             self._drop(iface)
+
+    def set_paused(self, paused):
+        """Pause logging: let go of the radio (its USB port is free for the Meshtastic app, the CLI or a flasher)
+        until resumed. The paused time is a gap in the log, like any time Lorakeet wasn't running."""
+        paused = bool(paused)
+        if paused == self.paused:
+            return
+        self.paused = paused
+        log.info("logging %s", "paused: letting go of the radio" if paused else "resumed")
+        self.event("logging_paused" if paused else "logging_resumed")
+        if paused and self.iface is not None:
+            self._drop(self.iface)
+        self.broadcast("status", self.status())
 
     def _drop(self, iface):
         """Forget a connection. Safe to call from any thread, including the library's reader thread."""
@@ -1322,8 +1522,8 @@ class Mesh:
                           is_licensed=int(bool(user.get("isLicensed"))), data=dumps(user))
 
     def status(self):
-        return {"connected": self.connected, "port": self.port, "localId": self.local_id,
-                "baseId": BASE_ID, "baseName": BASE_NAME, "stations": self.station_names()}
+        return {"connected": self.connected, "paused": self.paused, "port": self.port, "localId": self.local_id,
+                "baseId": BASE_ID, "baseName": BASE_NAME, "stations": self.station_names(), "demo": bool(DEMO)}
 
     # -- history seeding from the radio's own node DB
     def _seed_history(self):
@@ -1766,7 +1966,16 @@ def client_access(ip):
     return None
 
 
-def make_handler(mesh, store, storage, alert_engine, syncer=None):
+def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, peering=None, pairings=None):
+    login = login or login_mod.Login(DATA_DIR / "login.json")
+    pairings = pairings or pairing.Pairings(DATA_DIR / "stations.json")
+    if isinstance(syncer, sync_mod.Hub):
+        syncer.is_revoked = pairings.is_revoked
+    hub_id = peering.hub_id if peering else pairing.install_id(DATA_DIR)
+
+    def hub_name():
+        return CFG["station"]["name"] or (mesh.name(mesh.local_id) if mesh.local_id else None) or socket.gethostname()
+
     def station_meta():
         r = store.query("SELECT value FROM settings WHERE key='station_meta'")
         return json.loads(r[0]["value"]) if r else {}
@@ -1780,6 +1989,9 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             return "All stations"
         if sid == mesh.local_id and CFG["station"]["name"]:
             return CFG["station"]["name"]
+        over = (station_overrides(store).get(sid) or {}).get("name") if store else None
+        if over:
+            return over
         meta = station_meta().get(sid) or {}
         if meta.get("name") and meta.get("name") != sid:
             return meta["name"]
@@ -1791,8 +2003,15 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
         return name
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 60  # a connection that sends nothing for this long is closed (the event stream pings every 15 s)
+
         def log_message(self, *a):
             pass
+
+        def end_headers(self):
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            super().end_headers()
 
         def _json(self, obj, code=200):
             body = json.dumps(obj, default=str).encode()
@@ -1802,6 +2021,12 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def _access(self):
+            """(access, base): login.access() for this request, and client_access() of its address alone."""
+            base = client_access(self.client_address[0])
+            token = login_mod.cookie_value(self.headers.get("Cookie")) if base == "view" else None
+            return login_mod.access(base, CFG["http"]["lan"], login.session(token)), base
 
         def _send(self, body, content_type, headers=None):
             self.send_response(200)
@@ -1813,16 +2038,56 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             self.end_headers()
             self.wfile.write(body)
 
-        def _ingest(self):
+        def _ingest(self, hello=False):
             if not isinstance(syncer, sync_mod.Hub):
-                return self._json({"error": "this server isn't a sync hub"}, 404)
+                return self._json({"error": "this Lorakeet isn't a hub"}, 404)
             ip = self.client_address[0]
             if not sync_mod.allowed_source(ip, CFG["sync"]["allow"]):
                 log.warning("ingest refused from %s: not an allowed network", ip)
                 return self._json({"error": "not from an allowed network"}, 403)
             claimed = self.headers.get("X-Lorakeet-Station") or ""
-            if claimed and not analytics.STATION_RE.match(claimed):
+            if claimed and not analytics.STATION_RE.fullmatch(claimed):
                 return self._json({"error": "bad station header"}, 400)
+            given = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+            from_hub = (self.headers.get("X-Lorakeet-Hub") or "")[:64]
+            hi = {"ok": True, "hub": hub_name(), "version": VERSION, "hubId": hub_id}
+            e = pairings.find(given)
+            if e is not None:  # made on the Stations page: a station's pairing, or a peer hub's
+                if e["revoked"]:
+                    log.warning("ingest refused from %s (%s): pairing revoked", ip, claimed)
+                    return self._json({"error": "this pairing was revoked"}, 401)
+                if e.get("kind") == "peer":
+                    if e.get("hub") and from_hub and e["hub"] != from_hub:
+                        log.warning("ingest refused from %s: peer pairing belongs to another hub", ip)
+                        return self._json({"error": "this pairing code belongs to a different hub"}, 403)
+                    if hello:
+                        return self._json({**hi, "paused": True} if e.get("paused") else hi)
+                    if not claimed or not from_hub:
+                        return self._json({"error": "send X-Lorakeet-Station and X-Lorakeet-Hub"}, 401)
+                    if not pairings.bind(e["id"], hub=from_hub):
+                        return self._json({"error": "this pairing code belongs to a different hub"}, 403)
+                    pairings.seen(e["id"])
+                    if e.get("paused"):  # the sender keeps these pending (not acknowledged) and sends them on resume
+                        return self._json({"error": "paused by the receiving hub (nothing is lost: it's sent when they "
+                                                    "resume)"}, 423)
+                    return self._ingest_body(ip, claimed, via=from_hub, writer=f"peer:{from_hub}")
+                if e["station"] and claimed and e["station"] != claimed:
+                    log.warning("ingest refused from %s (%s): pairing belongs to another station", ip, claimed)
+                    return self._json({"error": "this pairing code belongs to a different station"}, 403)
+                if hello:
+                    return self._json(hi)
+                if not claimed:
+                    return self._json({"error": "send X-Lorakeet-Station"}, 401)
+                writer = f"pair:{e['id']}"
+                if e["station"] is None:  # first use: the station must be free for it before the code is claimed
+                    try:
+                        syncer.claim(claimed, writer)
+                    except sync_mod.IngestError as err:
+                        log.warning("ingest refused from %s (%s): %s", ip, claimed, err)
+                        return self._json({"error": str(err)}, err.status)
+                    if not pairings.bind(e["id"], station=claimed):
+                        return self._json({"error": "this pairing code belongs to a different station"}, 403)
+                return self._ingest_body(ip, claimed, writer=writer)
             tokens = sync_mod.follow_tokens(sync_mod.station_tokens(CFG["sync"]["station_tokens"]),
                                             nodeids.info(DATA_DIR / "mesh.db")["aliases"])
             bound = sync_mod.authorize(self.headers.get("Authorization"), claimed or None, CFG["sync"]["token"], tokens,
@@ -1836,20 +2101,85 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                 return self._json({"error": "bad token"}, 401)
             if not claimed and (CFG["sync"]["require_station_tokens"] or sync_mod.station_tokens(CFG["sync"]["station_tokens"])):
                 return self._json({"error": "send X-Lorakeet-Station (this hub uses per-station tokens)"}, 401)
+            if hello:
+                return self._json(hi)
+            return self._ingest_body(ip, claimed, writer="token" if claimed in tokens else "shared")
+
+        def _ingest_body(self, ip, claimed, via=None, writer="shared"):
+            if not INGEST_SLOTS.acquire(timeout=30):  # a few batches at a time: each may decompress to 50 MB
+                return self._json({"error": "busy, try again shortly"}, 503)
             try:
-                n = int(self.headers.get("Content-Length") or 0)
+                n = self._length()
                 if n > sync_mod.MAX_BODY:
                     raise sync_mod.IngestError(413, "batch too large")
-                batch = sync_mod.decode_body(self.rfile.read(n), self.headers.get("Content-Encoding"))
-                return self._json(syncer.ingest(batch, bound_station=claimed or None))
+                body, self._body_read = self.rfile.read(n), True
+                batch = sync_mod.decode_body(body, self.headers.get("Content-Encoding"))
+                return self._json(syncer.ingest(batch, bound_station=claimed or None, via=via, writer=writer))
             except sync_mod.IngestError as e:
                 log.warning("ingest from %s refused: %s", ip, e)
                 return self._json({"error": str(e)}, e.status)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
             except Exception as e:  # noqa: BLE001
                 log.exception("ingest failed")
                 return self._json({"error": f"ingest failed: {e}"}, 500)
+            finally:
+                INGEST_SLOTS.release()
+
+        def _drain(self, cap=DRAIN_MAX):
+            """After refusing a request without reading its body: read the rest (up to `cap`) before the connection
+            closes. Closing with unread data resets the connection (Windows: WinError 10053), so the sender saw
+            "unreachable" instead of the refusal."""
+            if self._body_read:
+                return
+            try:
+                n = self._length()
+            except ValueError:
+                n = cap + 1
+            if n > cap:
+                self.close_connection = True
+                return
+            while n > 0:
+                chunk = self.rfile.read(min(n, 65536))
+                if not chunk:
+                    break
+                n -= len(chunk)
+
+        def _length(self):
+            """The request body's length; a missing one is 0, a negative or garbled one is refused (rfile.read(-1)
+            would read until the client closes)."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ValueError("bad Content-Length") from None
+            if n < 0:
+                raise ValueError("bad Content-Length")
+            return n
+
+        def _host_ok(self):
+            """DNS rebinding guard: a browser on this PC visiting a site whose name was pointed at 127.0.0.1 would
+            otherwise get this PC's full access. Answer only to IP addresses, localhost, and names listed in
+            [http] hostnames. (Ingest is exempt: it's token-checked, and stations may use any name for the hub.)"""
+            host = (self.headers.get("Host") or "").strip()
+            if not host:
+                return True  # not a browser (browsers always send Host)
+            name = host[1:host.find("]")] if host.startswith("[") else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+            name = name.lower().rstrip(".")
+            try:
+                ipaddress.ip_address(name)
+                return True
+            except ValueError:
+                pass
+            return name == "localhost" or name in {h.lower() for h in CFG["http"]["hostnames"]}
+
+        def _wrong_host(self):
+            return self._json({"error": "Lorakeet only answers to its IP address, localhost, or a name listed in "
+                                        "[http] hostnames in lorakeet.toml"}, 421)
 
         def do_GET(self):  # noqa: N802
+            LAST_REQUEST[0] = time.time()
+            if not self._host_ok():
+                return self._wrong_host()
             t0 = time.time()
             try:
                 return self._get()
@@ -1865,11 +2195,23 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             # server is logging from (analytics._connect validates it and scopes every query to it)
             station = qs.get("station") or mesh.local_id
             path = url.path
-            access = client_access(self.client_address[0])
+            access, base = self._access()
             if access is None:
                 return self._json({"error": "only devices on the local network may connect"}, 403)
+            if path == "/api/version":
+                return self._json({"version": VERSION, "software": SOFTWARE, "python": sys.version.split()[0],
+                                   "meshtastic": _lib_version()})
+            if access == "login" and path != "/api/whoami" and not _login_page_asset(path):
+                if path.startswith("/api/"):
+                    return self._json({"error": "log in first"}, 401)
+                self.send_response(302)
+                self.send_header("Location", "/login.html")
+                self.end_headers()
+                return
             if path == "/api/config":
                 return self._json(config_public())
+            if path == "/api/index":  # every endpoint, for programs and LLMs (api_index.py, docs/API.md)
+                return self._json(api_index.index(VERSION))
             if path == "/api/keyflags":  # radios with a compromised or shared public key (keyflags.py)
                 f = keyflags.flags(DATA_DIR / "mesh.db")
                 return self._json({nid: dict(v, name=mesh.name(nid), text=keyflags.text(v, mesh.name)) for nid, v in f.items()})
@@ -1880,14 +2222,31 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                                      "AND ts >= ? ORDER BY ts", time.time() - hours * 3600):
                     out.setdefault(r["station"] or "", []).append({"ts": r["ts"], "kind": r["kind"], **json.loads(r["detail"] or "{}")})
                 return self._json({"hours": hours, "stations": out})
+            if path == "/api/brief":  # one-line status for the tray icon
+                return self._json({"version": VERSION, "connected": mesh.connected, "paused": mesh.paused,
+                                   "port": mesh.port, "id": mesh.local_id,
+                                   "name": mesh.name(mesh.local_id) if mesh.local_id else None})
             if path == "/api/whoami":
-                return self._json({"access": access, "readOnly": access != "full"})
-            if path == "/api/setup":  # paths and ports: this PC only
-                if access != "full":
+                return self._json({"access": access, "readOnly": access != "full", "version": VERSION, "paused": mesh.paused,
+                                   "demo": bool(DEMO),
+                                   "login": {"enabled": login.enabled, "loggedIn": access == "full" and base != "full",
+                                             "lan": CFG["http"]["lan"]}})
+            if DEMO and _demo_refuses("GET", path):
+                return self._json(DEMO_REFUSAL, 403)
+            if path == "/api/hub":  # the Stations page: tokens and addresses, so this PC only
+                if base != "full":
+                    return self._json({"error": "the Stations page is only available on the dashboard PC"}, 403)
+                return self._json(self._hub_info())
+            if path.startswith("/api/radio"):  # the Radio page: backups and channel keys, so this PC only
+                if base != "full":
+                    return self._json({"error": "the Radio page is only available on the dashboard PC"}, 403)
+                return self._radio_get(path, qs)
+            if path == "/api/setup":  # paths and ports: this PC only (a login doesn't count: it shows paths)
+                if base != "full":
                     return self._json({"error": "setup is only available on the dashboard PC"}, 403)
                 return self._json(setup_info(mesh))
             # first run (no lorakeet.toml yet): the dashboard PC lands on the setup page
-            if path in ("/", "/index.html") and CFG["_path"] is None and access == "full" and "skipsetup" not in qs:
+            if path in ("/", "/index.html") and CFG["_path"] is None and base == "full" and "skipsetup" not in qs and not DEMO:
                 self.send_response(302)
                 self.send_header("Location", "/setup.html")
                 self.end_headers()
@@ -2042,7 +2401,11 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             if path == "/api/sync":
                 if syncer is None:
                     return self._json({"mode": "off"})
-                return self._json(syncer.status if isinstance(syncer, sync_mod.Collector) else syncer.status())
+                st = dict(syncer.status if isinstance(syncer, sync_mod.Collector) else syncer.status())
+                if access != "full":  # the hub's address and peers' hub ids are for this computer only
+                    st.pop("hub", None)
+                    st["stations"] = {k: {x: y for x, y in v.items() if x != "via"} for k, v in (st.get("stations") or {}).items()}
+                return self._json(st)
             if path == "/api/stations":
                 # every listening station that has logged packets
                 rows = analytics.stations(DATA_DIR / "mesh.db")
@@ -2055,7 +2418,7 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                     r.update(name=station_name(r["id"]), current=here, location=list(loc) if loc else None,
                              report=m, lastContact=time.time() if here and mesh.connected else
                              (hub.get(r["id"]) or {}).get("last") or m.get("received"))
-                return self._json({"stations": rows, "current": mesh.local_id, "software": SOFTWARE})
+                return self._json({"stations": rows, "current": mesh.local_id, "software": SOFTWARE, "version": VERSION})
             if path == "/api/analytics":
                 cache = {}
                 describe = lambda nid: cache.setdefault(nid, mesh.describe(nid))  # noqa: E731
@@ -2113,7 +2476,19 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
                     log.exception("%s failed", path)
                     return self._json({"error": f"{path} failed: {e}"}, 500)
             if path == "/api/storage":
-                return self._json(storage.status())
+                st = {**storage.status(), "demo": bool(DEMO)}
+                if access != "full":  # file paths (they include the Windows user name) are for this computer only
+                    names = {d: f"backup folder {i + 1}" for i, d in enumerate(st.get("dests") or [])}
+                    st["dbPath"] = "mesh.db in Lorakeet's data folder"
+                    st["dests"] = list(names.values())
+                    lb = st.get("lastBackup")
+                    if lb:
+                        st["lastBackup"] = {**{k: v for k, v in lb.items() if k not in ("dests", "error")},
+                                            **({"error": "failed"} if lb.get("error") else {}),
+                                            "dests": [{"path": names.get(d.get("path"), "a backup folder"), "ok": d.get("ok"),
+                                                       **({} if d.get("ok") else {"error": "failed"})}
+                                                      for d in lb.get("dests") or []]}
+                return self._json(st)
             if path == "/api/debuglog/sources":
                 return self._json(mesh.debug_log.sources())
             if path == "/api/events":
@@ -2138,6 +2513,15 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             import config as cfgmod
             if CFG["_path"] is not None:
                 return self._json({"error": "already configured: edit lorakeet.toml to change settings"}, 409)
+            if body.get("joinCode"):
+                try:
+                    c = pairing.parse_code(body["joinCode"])
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                result, _ = pairing.test_hubs(c["hubs"], c["token"], mesh.local_id)
+                if not result["ok"] and not body.get("joinAnyway"):
+                    return self._json({"error": f"Couldn't reach the hub: {result['hint']}", "hubTest": result}, 409)
+                body = {**body, "hubUrl": result["url"] if result["ok"] else c["hubs"][0], "hubToken": c["token"]}
             try:
                 path = cfgmod.write_setup(body)
             except FileExistsError as e:
@@ -2153,24 +2537,69 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
         def do_POST(self):  # noqa: N802
             # A collector station sending what it logged. The one POST that may come from another machine:
             # only with sync.mode = "hub", only from the allowed networks (Tailscale), only with the token.
-            if urlparse(self.path).path == "/api/ingest":
-                return self._ingest()
+            if urlparse(self.path).path in ("/api/ingest", "/api/ingest/hello"):  # hello: a station's connection test
+                self._body_read = False
+                try:
+                    return self._ingest(hello=urlparse(self.path).path.endswith("/hello"))
+                finally:
+                    self._drain()
+            if not self._host_ok():
+                return self._wrong_host()
             # Every other POST changes something (sends on the mesh, changes settings, starts a backup), so
-            # only this PC may make one; other LAN devices are view-only.
-            if client_access(self.client_address[0]) != "full":
-                return self._json({"error": "view only: sending and settings work only on the dashboard PC"}, 403)
+            # only this PC, or a LAN device that logged in, may make one; other LAN devices are view-only.
+            access, base = self._access()
+            path = urlparse(self.path).path
             # Only this page may send. A JSON content type forces a CORS preflight that we never
-            # answer, and a foreign Origin is refused outright.
+            # answer, and a foreign Origin is refused outright. From another device the request must name
+            # its origin (browsers always do for these), on top of the login cookie being SameSite=Strict.
             origin = self.headers.get("Origin")
             if origin and urlparse(origin).netloc != self.headers.get("Host", ""):
                 return self._json({"error": "cross-origin request refused"}, 403)
+            if base != "full" and not origin:
+                return self._json({"error": "cross-origin request refused"}, 403)
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return self._json({"error": "expected application/json"}, 415)
+            if access is None:
+                return self._json({"error": "only devices on the local network may connect"}, 403)
+            if path in ("/api/login", "/api/logout"):
+                return self._login(path)
+            if access != "full":
+                return self._json({"error": "view only: log in to send or change settings" if login.enabled
+                                   else "view only: sending and settings work only on the dashboard PC"}, 403)
+            if DEMO and _demo_refuses("POST", path):
+                return self._json(DEMO_REFUSAL, 403)
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-                path = urlparse(self.path).path
+                body = json.loads(self.rfile.read(self._length()) or b"{}")
                 if path == "/api/setup":
+                    if base != "full":
+                        return self._json({"error": "setup is only available on the dashboard PC"}, 403)
                     return self._setup(body)
+                if path == "/api/demo":  # the setup page's "Explore a demo first": start the demo beside this one
+                    if base != "full":
+                        return self._json({"error": "the demo starts from the dashboard PC"}, 403)
+                    if DEMO:
+                        return self._json({"url": "/"})
+                    out = start_demo(CFG["http"]["port"] + 1)
+                    return self._json(out, 200 if out.get("url") else 503)
+                if path.startswith("/api/hub/"):
+                    if base != "full":
+                        return self._json({"error": "the Stations page is only available on the dashboard PC"}, 403)
+                    return self._hub_post(path, body)
+                if path.startswith("/api/radio/"):
+                    if base != "full":
+                        return self._json({"error": "the Radio page is only available on the dashboard PC"}, 403)
+                    return self._radio_post(path, body)
+                if path == "/api/restart":  # the Settings panel's "Restart Lorakeet"
+                    if not supervised_now():
+                        return self._json({"error": "Lorakeet isn't running under its background runner, so it can't "
+                                                    "restart itself: stop it and start it again"}, 409)
+                    log.info("restart requested from the dashboard")
+                    self._json({"ok": True})
+                    threading.Timer(1.0, lambda: os._exit(0)).start()
+                    return None
+                if path == "/api/logging":  # pause / resume logging (the tray icon, the dashboard's paused chip)
+                    mesh.set_paused(bool(body.get("paused")))
+                    return self._json({"paused": mesh.paused})
                 if path == "/api/send":
                     return self._json(mesh.send_text(body.get("text"), body.get("to"), body.get("channel", 0)))
                 if path == "/api/traceroute":
@@ -2193,6 +2622,428 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
             except Exception as e:  # noqa: BLE001 - e.g. the radio was unplugged mid-send
                 log.exception("send failed")
                 return self._json({"error": f"radio error: {e}"}, 503)
+
+        # ---- the Radio page (radio_setup.py)
+        def _radio_get(self, path, qs):
+            iface = mesh.iface
+            if path == "/api/radio":
+                ports = serial_ports()
+                out = {"connected": bool(mesh.connected and iface), "port": mesh.port, "network": bool(mesh.host),
+                       "connectedAt": mesh.connected_at, "ports": ports,
+                       "otherRadios": [p for p in ports if p["radio"] and p["device"] != mesh.port],
+                       "error": mesh.last_connect_error, "hint": radio_setup.connect_hint(mesh.last_connect_error),
+                       "noPortHint": None if mesh.host or any(p["radio"] for p in ports) else radio_setup.NO_PORT_HINT,
+                       "backupDir": str(RADIO_BACKUPS), "mobile": CFG["station"]["mobile"],
+                       "station": station_settings(mesh)}
+                if out["connected"]:
+                    node = iface.localNode
+                    fw = getattr(getattr(iface, "metadata", None), "firmware_version", "") or ""
+                    user = (iface.getMyNodeInfo() or {}).get("user", {})
+                    out["radio"] = {"id": mesh.local_id, "longName": user.get("longName"), "shortName": user.get("shortName"),
+                                    "hw": user.get("hwModel"), "firmware": fw}
+                    out["checklist"] = radio_setup.checklist(node, fw, usb=not mesh.host, mobile=CFG["station"]["mobile"],
+                                                             has_base=bool(BASE_ID))
+                    out["channels"] = radio_setup.channel_list(node, _preset_name(node))
+                    out["backups"] = radio_setup.backups(RADIO_BACKUPS, mesh.local_id)[:10]
+                return self._json(out)
+            if path == "/api/radio/location-check":  # would this antenna position be far from the radios we hear?
+                try:
+                    loc = [float(qs["lat"]), float(qs["lon"])]
+                except (KeyError, ValueError):
+                    return self._json({"error": "lat and lon, please"}, 400)
+                return self._json({"check": radio_setup.location_check(loc, heard_points(mesh))})
+            if path == "/api/radio/logging":  # is it logging? (the walkthrough's last step)
+                since = float(qs.get("since") or time.time() - 600)
+                st = mesh.local_id
+                one = lambda sql: (store.query(sql, st, since) or [{"n": 0}])[0]["n"]  # noqa: E731
+                debug = bool(iface and iface.localNode.localConfig.security.debug_log_api_enabled)
+                return self._json({"connected": bool(mesh.connected and iface), "usb": not mesh.host, "since": since,
+                                   "packets": one("SELECT COUNT(*) AS n FROM packets WHERE station = ? AND ts >= ?"),
+                                   "receptions": one("SELECT COUNT(*) AS n FROM rx_hops WHERE station = ? AND ts >= ?"),
+                                   "lastPacket": (store.query("SELECT MAX(ts) AS t FROM packets WHERE station = ?", st) or [{}])[0].get("t"),
+                                   "debugLog": debug, "logLines": mesh.log_counts["lines"], "mined": mesh.log_counts["mined"]})
+            if path == "/api/radio/share":  # a private channel's link and QR code, to add it in the Meshtastic app
+                if not iface:
+                    return self._json({"error": "no radio connected"}, 409)
+                try:
+                    c = radio_setup.find_channel(iface.localNode, int(qs.get("index", -1)))
+                except (ValueError, radio_setup.RadioError) as e:
+                    return self._json({"error": str(e)}, 400)
+                if radio_setup.key_kind(c.settings.psk, c.role) != "private":
+                    return self._json({"error": "only channels with their own private key are shared here"}, 400)
+                url = radio_setup.share_url(c.settings)
+                log.info("radio: share link shown for channel %d", c.index)
+                return self._json({"name": c.settings.name, "url": url, "svg": radio_setup.qr_svg(url)})
+            return self._json({"error": "not found"}, 404)
+
+        def _radio_post(self, path, body):
+            if path == "/api/radio/station":  # [station] name and location in lorakeet.toml
+                import config as cfgmod
+                if CFG["station"]["mobile"] and body.get("location"):
+                    return self._json({"error": "this station moves ([station] mobile): its position comes from its radio's GPS"}, 400)
+                try:
+                    loc = body.get("location") or []
+                    if loc and not (len(loc) == 2 and -90 <= float(loc[0]) <= 90 and -180 <= float(loc[1]) <= 180):
+                        raise ValueError("latitude -90..90 and longitude -180..180, please")
+                    path_ = cfgmod.update_station(body.get("name"), loc)
+                except (ValueError, TypeError) as e:
+                    return self._json({"error": str(e)}, 400)
+                log.info("station settings saved to %s (name %r, location %s)", path_, body.get("name"), "set" if loc else "none")
+                return self._json({"ok": True, "path": str(path_), "station": station_settings(mesh)})
+            if path == "/api/radio/restart":
+                if not supervised_now():
+                    return self._json({"error": "Lorakeet isn't running under its background runner, so it can't restart "
+                                                "itself: stop it and start it again (the Lorakeet shortcut starts it)"}, 409)
+                log.info("restart requested from the Radio page")
+                self._json({"ok": True})
+                threading.Timer(1.0, lambda: os._exit(0)).start()
+                return None
+            iface = mesh.iface
+            if not (mesh.connected and iface):
+                return self._json({"error": "no radio connected"}, 409)
+            if not RADIO_LOCK.acquire(timeout=1):
+                return self._json({"error": "another change to the radio is still in progress"}, 409)
+            try:
+                node = iface.localNode
+                if path == "/api/radio/apply":
+                    fw = getattr(getattr(iface, "metadata", None), "firmware_version", "") or ""
+                    items = radio_setup.checklist(node, fw, usb=not mesh.host, mobile=CFG["station"]["mobile"],
+                                                  has_base=bool(BASE_ID))
+                    changes = radio_setup.plan(items, body.get("changes"))
+                    names = None
+                    if body.get("names"):
+                        names = radio_setup.check_names(body["names"].get("long"), body["names"].get("short"))
+                        user = (iface.getMyNodeInfo() or {}).get("user", {})
+                        if names == (user.get("longName"), user.get("shortName")):
+                            names = None
+                    if not changes and not names:
+                        return self._json({"ok": True, "nothing": True})
+                    bk = radio_setup.backup(iface, RADIO_BACKUPS, mesh.local_id, "before-settings", mesh.port)
+                    sections = radio_setup.apply(iface, changes, names)
+                    log.info("radio: wrote %s%s (backup %s)", ", ".join(sections) or "-", " + names" if names else "", bk.name)
+                    mesh.event("radio_settings", changes=changes, names=bool(names), backup=bk.name)
+                    # the radio restarts to apply most settings; if it doesn't, reconnect anyway so what the page
+                    # shows next is read back from the radio, not our own edited copy
+                    threading.Timer(15, lambda: mesh._drop(iface) if mesh.iface is iface else None).start()
+                    return self._json({"ok": True, "backup": bk.name, "expected": changes,
+                                       "names": list(names) if names else None})
+                if path == "/api/radio/channel":
+                    action = body.get("action")
+                    if action == "create":
+                        new = [radio_setup.new_channel(body.get("name"), 32 if body.get("exactPositions", True) else 13)]
+                    elif action == "add-link":
+                        new = radio_setup.parse_url(body.get("url"))
+                    elif action == "copy-to":  # one of this radio's channels onto another radio plugged in here
+                        c = radio_setup.find_channel(node, int(body.get("index", -1)))
+                        if radio_setup.key_kind(c.settings.psk, c.role) != "private":
+                            raise radio_setup.RadioError("only channels with their own private key can be copied")
+                        return self._json(self._copy_channel(c.settings, str(body.get("port") or "")))
+                    else:
+                        raise radio_setup.RadioError("unknown channel action")
+                    bk = radio_setup.backup(iface, RADIO_BACKUPS, mesh.local_id, "before-channel", mesh.port)
+                    done = radio_setup.add_channels(node, new)
+                    log.info("radio: channels %s (backup %s)", ", ".join(f"{n}@{i} {w}" for n, i, w in done), bk.name)
+                    mesh.event("radio_channels", channels=[{"name": n, "index": i, "result": w} for n, i, w in done], backup=bk.name)
+                    threading.Timer(15, lambda: mesh._drop(iface) if mesh.iface is iface else None).start()
+                    return self._json({"ok": True, "backup": bk.name, "channels": [{"name": n, "index": i, "result": w} for n, i, w in done]})
+                return self._json({"error": "not found"}, 404)
+            except radio_setup.RadioError as e:
+                return self._json({"error": str(e)}, 400)
+            finally:
+                RADIO_LOCK.release()
+
+        def _copy_channel(self, settings, port):
+            """Write a channel to ANOTHER radio on USB here (not the logging one): open it, back it up, add, close."""
+            if not port or port == mesh.port or port not in {p["device"] for p in serial_ports()}:
+                raise radio_setup.RadioError("pick another radio plugged into this computer")
+            from meshtastic.serial_interface import SerialInterface
+            try:
+                other = SerialInterface(port, timeout=CONNECT_TIMEOUT_S)
+            except Exception as e:  # noqa: BLE001
+                raise radio_setup.RadioError(f"couldn't open {port}: {radio_setup.connect_hint(str(e)) or e}") from e
+            try:
+                oid = node_id(other.myInfo.my_node_num)
+                bk = radio_setup.backup(other, RADIO_BACKUPS, oid, "before-channel", port)
+                done = radio_setup.add_channels(other.localNode, [settings])
+                log.info("radio: channel %s copied to %s on %s (backup %s)", settings.name, oid, port, bk.name)
+                mesh.event("radio_channels", radio=oid, channels=[{"name": n, "index": i, "result": w} for n, i, w in done],
+                           backup=bk.name)
+                return {"ok": True, "radio": oid, "backup": bk.name, "channels": [{"name": n, "index": i, "result": w} for n, i, w in done]}
+            finally:
+                Mesh._close_quietly(other)
+
+        # ---- the Stations page (pairing.py): hub mode, pairing, joining a hub, managing stations
+        def _hub_info(self):
+            import config as cfgmod
+            try:
+                saved = cfgmod.load()["sync"]
+            except Exception:  # noqa: BLE001
+                saved = CFG["sync"]
+            port = CFG["http"]["port"]
+            out = {"mode": CFG["sync"]["mode"], "savedMode": saved["mode"],
+                   "pendingRestart": (saved["mode"], saved["allow"], saved["hub_url"]) !=
+                                     (CFG["sync"]["mode"], CFG["sync"]["allow"], CFG["sync"]["hub_url"]),
+                   "supervised": supervised_now(), "port": port, "hubName": hub_name(), "windows": sys.platform == "win32",
+                   "addresses": pairing.hub_addresses(port), "allow": pairing.allow_flags(saved["allow"]),
+                   "sharedToken": bool(CFG["sync"]["token"]), "pairings": pairings.list(), "stations": self._hub_stations(),
+                   "hubId": hub_id, "peersOut": peering.list() if peering else [], "shareLevels": list(sync_mod.SHARE_LEVELS)}
+            if isinstance(syncer, sync_mod.Collector):
+                out["collector"] = {**syncer.status, "hubUrl": CFG["sync"]["hub_url"]}
+            return out
+
+        def _hub_stations(self):
+            """Every station this hub knows: ones with logged data, ones that reported, ones paired."""
+            metas, over = station_meta(), station_overrides(store)
+            hubst = syncer.status()["stations"] if isinstance(syncer, sync_mod.Hub) else {}
+            plist = pairings.list()
+            ids = {r["id"] for r in analytics.stations(DATA_DIR / "mesh.db")} | set(metas) | {e["station"] for e in plist if e["station"]}
+            rows = []
+            for sid in sorted(ids, key=lambda x: (x != mesh.local_id, x)):
+                m, p = metas.get(sid) or {}, next((e for e in plist if e["station"] == sid), None)
+                loc = analytics.station_location(sid)
+                via = (hubst.get(sid) or {}).get("via")
+                vp = pairings.by_hub(via) if via else None
+                rows.append({"id": sid, "name": station_name(sid), "here": sid == mesh.local_id,
+                             "via": via and {"hub": via, "label": vp["label"] if vp else "a peer hub"},
+                             "pairing": p and {"id": p["id"], "label": p["label"], "revoked": p["revoked"]},
+                             "sharedToken": sid != mesh.local_id and not p and not via and bool(m or hubst.get(sid)),
+                             "lastContact": (hubst.get(sid) or {}).get("last") or m.get("received"),
+                             "version": m.get("version"), "backlog": m.get("backlog"), "mobile": m.get("mobile"),
+                             "location": list(loc) if loc else None, "override": over.get(sid) or {}})
+            return rows
+
+        def _set_override(self, sid, **kw):
+            with store.lock:
+                r = store.db.execute("SELECT value FROM settings WHERE key='station_overrides'").fetchone()
+                allo = json.loads(r[0]) if r else {}
+                o = {**allo.get(sid, {}), **kw}
+                o = {k: v for k, v in o.items() if v}
+                if o:
+                    allo[sid] = o
+                else:
+                    allo.pop(sid, None)
+                store.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('station_overrides', ?)", (json.dumps(allo),))
+                store.db.commit()
+
+        def _hub_post(self, path, body):
+            import config as cfgmod
+            try:
+                if path == "/api/hub/mode":
+                    mode = body.get("mode")
+                    if mode == "hub":
+                        nets = pairing.allow_networks(bool(body.get("lan")), bool(body.get("tailscale")))
+                        if not nets:
+                            raise ValueError("allow at least one kind of network, or stations can't reach this hub")
+                        cfgmod.update_section("sync", {"mode": "hub", "allow": nets})
+                    elif mode == "off":
+                        cfgmod.update_section("sync", {"mode": "off"})
+                    else:
+                        raise ValueError("mode must be hub or off")
+                    log.info("stations: sync mode set to %s (restart to apply)", mode)
+                    return self._json({"ok": True, **self._hub_info()})
+                if path == "/api/hub/pair":
+                    if CFG["sync"]["mode"] != "hub":
+                        raise ValueError("turn on hub mode first (and restart Lorakeet)")
+                    allow = pairing.allow_flags(CFG["sync"]["allow"])
+                    urls = [a["url"] for a in pairing.hub_addresses(CFG["http"]["port"]) if allow.get(a["kind"])]
+                    if not urls:
+                        raise ValueError("this computer has no address in the networks this hub allows")
+                    e, token = pairings.create(body.get("label"))
+                    log.info("stations: pairing code made for %r (%s)", e["label"], e["id"])
+                    return self._json({"ok": True, "id": e["id"], "label": e["label"], "addresses": urls,
+                                       "code": pairing.make_code(urls, token, hub_name())})
+                if path == "/api/hub/station":
+                    act, sid, pid = body.get("action"), body.get("station"), body.get("pairing")
+                    if sid and not analytics.STATION_RE.match(str(sid)):
+                        raise ValueError("bad station id")
+                    if act == "rename":
+                        self._set_override(sid, name=str(body.get("name") or "").strip()[:60] or None)
+                    elif act == "locate":
+                        loc = body.get("location") or []
+                        if loc and not (len(loc) == 2 and -90 <= float(loc[0]) <= 90 and -180 <= float(loc[1]) <= 180):
+                            raise ValueError("latitude -90..90 and longitude -180..180, please")
+                        loc = [round(float(x), 6) for x in loc]
+                        self._set_override(sid, location=loc or None)
+                        if loc:
+                            analytics.STATION_LOCATIONS[sid] = _as_location(loc)
+                        else:
+                            analytics.STATION_LOCATIONS.pop(sid, None)
+                            load_station_locations(store, mesh.local_id)
+                    elif act == "revoke":
+                        if not pairings.revoke(pid):
+                            raise ValueError("no such pairing (or already revoked)")
+                        log.info("stations: pairing %s revoked", pid)
+                    elif act in ("pause", "resume"):  # a peer hub sending here: decline its batches for now
+                        if not pairings.set_paused(pid, act == "pause"):
+                            raise ValueError("no such peer (or it was revoked)")
+                        log.info("peering: receiving from %s %s", pid, "paused" if act == "pause" else "resumed")
+                    elif act == "forget":
+                        if sid == mesh.local_id:
+                            raise ValueError("that's this computer's own radio")
+                        with store.lock:
+                            for key in ("station_meta", "sync_hub", "station_overrides"):
+                                r = store.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+                                if r:
+                                    d = json.loads(r[0])
+                                    d.pop(sid, None)
+                                    store.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(d)))
+                            store.db.commit()
+                        pairings.forget(pid=pid, station=sid)
+                        analytics.STATION_LOCATIONS.pop(sid, None)
+                        mesh.station_ids.discard(sid)
+                        log.info("stations: forgot %s (its logged data stays)", sid or pid)
+                    else:
+                        raise ValueError("unknown action")
+                    return self._json({"ok": True, **self._hub_info()})
+                if path == "/api/hub/peer-code":  # let another hub send to this one
+                    if CFG["sync"]["mode"] != "hub":
+                        raise ValueError("turn on hub mode first (and restart Lorakeet)")
+                    allow = pairing.allow_flags(CFG["sync"]["allow"])
+                    urls = [a["url"] for a in pairing.hub_addresses(CFG["http"]["port"]) if allow.get(a["kind"])]
+                    if not urls:
+                        raise ValueError("this computer has no address in the networks this hub allows")
+                    e, token = pairings.create(body.get("label"), kind="peer")
+                    log.info("peering: peer code made for %r (%s)", e["label"], e["id"])
+                    return self._json({"ok": True, "id": e["id"], "label": e["label"], "addresses": urls,
+                                       "code": pairing.make_code(urls, token, hub_name(), kind="peer", hub_id=hub_id)})
+                if path == "/api/hub/peer-add":  # send this hub's log to another hub
+                    if peering is None:
+                        raise ValueError("peering isn't available on this install")
+                    c = pairing.parse_code(body.get("code"))
+                    if c["kind"] != "peer":
+                        raise ValueError("that's a station pairing code: for peering, the other hub makes a code with "
+                                         "'Let another hub send here'")
+                    if c["hubId"] and c["hubId"] == hub_id:
+                        raise ValueError("that code is from this hub itself")
+                    share = body.get("share") or "default"
+                    if share not in sync_mod.SHARE_LEVELS:
+                        raise ValueError("unknown share level")
+                    result, tried = pairing.test_hubs(c["hubs"], c["token"], hub_id=hub_id)
+                    if not result["ok"] and not body.get("anyway"):
+                        return self._json({**result, "tried": tried, "saved": False}, 409)
+                    peer = peering.add(c["name"] or result.get("hubName") or "Peer hub", result["url"] if result["ok"] else c["hubs"][0],
+                                       c["token"], share, bool(body.get("forward")), c["hubId"] or result.get("hubId") or "",
+                                       exact=bool(body.get("exact")))
+                    log.info("peering: now sending to %s (%s, share=%s, forward=%s)", peer["name"], peer["url"], share, peer["forward"])
+                    return self._json({**result, "saved": True, **self._hub_info()})
+                if path == "/api/hub/peer-forget":  # delete everything a peer hub sent here (and stop it sending)
+                    e = next((x for x in pairings.list() if x["id"] == body.get("pairing") and x.get("kind") == "peer"), None)
+                    if e is None:
+                        raise ValueError("no such peer")
+                    if not isinstance(syncer, sync_mod.Hub):
+                        raise ValueError("this computer isn't a hub")
+                    writer = f"peer:{e['hub']}" if e.get("hub") else None
+                    counts = syncer.owned_by(writer) if writer else {}
+                    if body.get("dryRun"):
+                        return self._json({"ok": True, "stations": [{"id": st, "name": station_name(st), "rows": n}
+                                                                    for st, n in counts.items()],
+                                           "rows": sum(counts.values()), "revoked": bool(e["revoked"])})
+                    if not e["revoked"]:
+                        pairings.revoke(e["id"])
+                    deleted = syncer.delete_from(writer) if writer else {}
+                    for st in deleted:
+                        analytics.STATION_LOCATIONS.pop(st, None)
+                        mesh.station_ids.discard(st)
+                    log.info("peering: deleted %d rows from %d stations sent by %r (pairing %s, revoked)",
+                             sum(deleted.values()), len(deleted), e["label"], e["id"])
+                    mesh.event("peer_data_deleted", pairing=e["id"], label=e["label"], stations=list(deleted),
+                               rows=sum(deleted.values()))
+                    return self._json({**self._hub_info(), "ok": True, "deleted": sum(deleted.values()), "deletedStations": len(deleted)})
+                if path == "/api/hub/peer":
+                    if peering is None:
+                        raise ValueError("peering isn't available on this install")
+                    act, pid = body.get("action"), body.get("id")
+                    if act == "set":
+                        kw = {}
+                        if "share" in body:
+                            if body["share"] not in sync_mod.SHARE_LEVELS:
+                                raise ValueError("unknown share level")
+                            kw["share"] = body["share"]
+                        if "forward" in body:
+                            kw["forward"] = bool(body["forward"])
+                        if "exact" in body:
+                            kw["exact"] = bool(body["exact"])
+                        if "paused" in body:
+                            kw["paused"] = bool(body["paused"])
+                            log.info("peering: sending to %s %s", pid, "paused" if kw["paused"] else "resumed")
+                        if not peering.update(pid, **kw):
+                            raise ValueError("no such peer")
+                    elif act == "remove":
+                        peering.remove(pid)
+                        log.info("peering: stopped sending to %s", pid)
+                    elif act == "sync":
+                        if pid in peering.senders:
+                            peering.senders[pid].sync_now()
+                    elif act == "test":
+                        peer = peering.peers.get(pid)
+                        if not peer:
+                            raise ValueError("no such peer")
+                        result, tried = pairing.test_hubs([peer["url"]], peer["token"], hub_id=hub_id)
+                        return self._json({**result, "tried": tried})
+                    else:
+                        raise ValueError("unknown action")
+                    return self._json({"ok": True, **self._hub_info()})
+                if path == "/api/hub/test":
+                    if body.get("code"):
+                        c = pairing.parse_code(body["code"])
+                        urls, token = c["hubs"], c["token"]
+                    else:
+                        if not CFG["sync"]["hub_url"]:
+                            raise ValueError("this station isn't set up to send to a hub")
+                        urls, token = [CFG["sync"]["hub_url"]], CFG["sync"]["token"]
+                    result, tried = pairing.test_hubs(urls, token, mesh.local_id)
+                    return self._json({**result, "tried": tried})
+                if path == "/api/hub/join":
+                    c = pairing.parse_code(body.get("code"))
+                    if c["kind"] == "peer":
+                        raise ValueError("that's a peer code (for another hub to share with it): use Peers → Send to another hub")
+                    result, tried = pairing.test_hubs(c["hubs"], c["token"], mesh.local_id)
+                    if not result["ok"] and not body.get("anyway"):
+                        return self._json({**result, "tried": tried, "saved": False}, 409)
+                    url = result["url"] if result["ok"] else c["hubs"][0]
+                    cfgmod.update_section("sync", {"mode": "collector", "hub_url": url, "token": c["token"]})
+                    log.info("stations: joined hub %s (restart to apply)", url)
+                    return self._json({**result, "saved": True, "hubUrl": url, **self._hub_info()})
+                if path == "/api/hub/leave":
+                    cfgmod.update_section("sync", {"mode": "off"})
+                    log.info("stations: stopped sending to the hub (restart to apply)")
+                    return self._json({"ok": True, **self._hub_info()})
+                return self._json({"error": "not found"}, 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+
+        def _login(self, path):
+            token = login_mod.cookie_value(self.headers.get("Cookie"))
+            if path == "/api/logout":
+                login.logout(token)
+                return self._json_cookie({"ok": True}, login_mod.clear_cookie())
+            if not login.enabled:
+                return self._json({"error": "no password is set: run  python server.py --set-password  on the dashboard PC"}, 400)
+            try:
+                body = json.loads(self.rfile.read(min(self._length(), 4096)) or b"{}")
+            except ValueError:
+                return self._json({"error": "bad request"}, 400)
+            ip = self.client_address[0]
+            try:
+                new = login.login(ip, body.get("password") if isinstance(body, dict) else None)
+            except login_mod.LockedOut as e:
+                log.warning("login from %s refused: locked out for %d s", ip, e.wait_s)
+                return self._json({"error": str(e), "waitS": e.wait_s}, 429)
+            if not new:
+                log.warning("login from %s: wrong password", ip)
+                return self._json({"error": "wrong password"}, 401)
+            log.info("login from %s", ip)
+            return self._json_cookie({"ok": True}, login_mod.set_cookie(new))
+
+        def _json_cookie(self, obj, cookie):
+            body = json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+            self.wfile.write(body)
 
         def _sse(self):
             self.send_response(200)
@@ -2218,15 +3069,193 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None):
     return Handler
 
 
+def _preset_name(node):
+    from meshtastic.protobuf import config_pb2
+    lora = node.localConfig.lora
+    return PRESET_NAMES.get(config_pb2.Config.LoRaConfig.ModemPreset.Name(lora.modem_preset), "Primary") if lora.use_preset else "Primary"
+
+
+def _login_page_asset(path):
+    """What a device that hasn't logged in yet may load (lan = "login"): the login page and the files it uses."""
+    return path in ("/login.html", "/app.css", "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png",
+                    "/icon-192.png", "/icon-512.png", "/site.webmanifest")
+
+
+def _lib_version():
+    try:
+        from importlib.metadata import version
+        return version("meshtastic")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def set_password_interactive(path):
+    """--set-password: asks twice in the terminal (never on the command line, so it stays out of shell history)."""
+    import getpass
+    lg = login_mod.Login(path)
+    print("Set the password other devices on your network log in with (at least "
+          f"{login_mod.MIN_LENGTH} characters)." + (" This replaces the old one and logs every device out." if lg.enabled else ""))
+    while True:
+        a = getpass.getpass("New password: ")
+        if a != getpass.getpass("Again: "):
+            print("They didn't match. Try again.")
+            continue
+        try:
+            lg.set_password(a)
+        except ValueError as e:
+            print(f"Not set: {e}.")
+            continue
+        break
+    print(f"Saved in {path}, as a salted hash (the password itself is never stored).")
+    if CFG["http"]["lan"] == "off":
+        print("Other devices can't reach the dashboard yet: set [http] lan = \"view\" or \"login\" in lorakeet.toml, then restart.")
+    else:
+        print("Restart Lorakeet to use it.")
+
+
+INGEST_SLOTS = threading.BoundedSemaphore(4)
+DRAIN_MAX = 16 * 1024 * 1024  # a refused station's batch is read and dropped up to this size (Handler._drain)
+MAX_CONNECTIONS = 64  # concurrent requests from other machines; live pages hold one each (the event stream)
+MAX_PER_ADDRESS = 8   # ... and from any one of them, so one device can't take every slot
+MAX_LOCAL = 64        # this computer has its own allowance: other machines can never lock it out
+
+
 class ExclusiveHTTPServer(ThreadingHTTPServer):
     # HTTPServer sets SO_REUSEADDR, which on Windows lets a second process bind the same port
     # and silently share it. Exclusive binding makes a second instance fail fast instead.
     allow_reuse_address = False
 
+    def __init__(self, *a, **k):
+        self._conn_lock, self._conns, self._remote = threading.Lock(), {}, 0
+        super().__init__(*a, **k)
+
+    def _admit(self, ip):
+        """A slot for this connection, or False: addresses that could never be served are closed at once, other
+        machines share MAX_CONNECTIONS with at most MAX_PER_ADDRESS each, this computer has MAX_LOCAL of its own."""
+        local = client_access(ip) == "full"
+        if not local and client_access(ip) is None and not (
+                CFG["sync"]["mode"] == "hub" and sync_mod.allowed_source(ip, CFG["sync"]["allow"])):
+            return False
+        with self._conn_lock:
+            n = self._conns.get(ip, 0)
+            if n >= (MAX_LOCAL if local else MAX_PER_ADDRESS) or (not local and self._remote >= MAX_CONNECTIONS):
+                return False
+            self._conns[ip] = n + 1
+            self._remote += 0 if local else 1
+        return True
+
+    def _release(self, ip):
+        with self._conn_lock:
+            self._conns[ip] -= 1
+            if not self._conns[ip]:
+                del self._conns[ip]
+            self._remote -= 0 if client_access(ip) == "full" else 1
+
+    def process_request(self, request, client_address):
+        """Refuse (close) a connection over its limit instead of starting yet another thread."""
+        ip = client_address[0]
+        if not self._admit(ip):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:  # noqa: BLE001
+            self._release(ip)
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release(client_address[0])
+
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
+
+
+DEMO_REFUSAL = {"error": "Not available in the demo: the Radio, Stations and setup pages change your real radio and "
+                         "Lorakeet's settings. Open your own Lorakeet for those.", "demo": True}
+
+
+def _demo_refuses(method, path):
+    """The demo serves a made-up mesh, but its process can still reach this computer's radios and lorakeet.toml:
+    every page-tier endpoint (radio settings, channels, pairing, peering, setup) is refused there."""
+    e = api_index.find(method, path)
+    return bool(e and e["tier"] == "page" and path != "/api/demo") or path.startswith(("/api/radio", "/api/hub"))
+
+
+def start_demo(port, wait_s=60, tries=10):
+    """Start `server.py --demo` on the first free port from `port` up (or find the one already running) and wait
+    for it. {url} or {error}."""
+    import subprocess
+    import urllib.request
+
+    def probe(p):
+        """True = the demo answers there, False = something else holds the port, None = free."""
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/whoami", timeout=2) as r:
+                return bool(json.loads(r.read()).get("demo"))
+        except urllib.error.HTTPError:
+            return False
+        except Exception:  # noqa: BLE001
+            with socket.socket() as sk:
+                return False if sk.connect_ex(("127.0.0.1", p)) == 0 else None
+    for p in range(port, port + tries):
+        state = probe(p)
+        if state:
+            return {"url": f"http://127.0.0.1:{p}/"}
+        if state is None:
+            break
+    else:
+        return {"error": f"ports {port}-{port + tries - 1} are all taken"}
+    cmd = [sys.executable, str(HERE / "server.py"), "--demo", "--http", str(p)]
+    # not supervised, whatever this process is: the demo's Restart must say it can't, not exit for good
+    env = {k: v for k, v in os.environ.items() if k not in ("LORAKEET_SUPERVISED", "INVOCATION_ID")}
+    if sys.platform == "win32":
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        cmd[0] = str(pyw if pyw.exists() else sys.executable)
+        subprocess.Popen(cmd, cwd=HERE, env=env, close_fds=True, creationflags=subprocess.DETACHED_PROCESS
+                         | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+    else:
+        subprocess.Popen(cmd, cwd=HERE, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    end = time.time() + wait_s
+    while time.time() < end:
+        if probe(p):
+            return {"url": f"http://127.0.0.1:{p}/"}
+        time.sleep(0.5)
+    return {"error": f"the demo didn't start (see {DATA_DIR / 'demo' / 'server.log'})"}
+
+
+def setup_demo():
+    """--demo: a made-up mesh around Portland in <data>/demo, rebuilt when stale; nothing personal, no radio."""
+    global DATA_DIR, DEMO, BASE_ID, BASE_NAME, BASE_BYTE
+    import demo
+    DATA_DIR = DATA_DIR / "demo"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    db = DATA_DIR / "mesh.db"
+    if demo.stale(db):
+        demo.build(db)
+    DEMO = demo.home_of(db)
+    BASE_ID = BASE_NAME = BASE_BYTE = None
+    CFG["map"].update(center=list(demo.PORTLAND), zoom=11)
+    CFG["base"].update(id="", name="")
+    CFG["station"].update(name="Demo Home", location=[], mobile=False, drive_pings=False)
+    CFG["http"]["lan"] = "off"
+    CFG["sync"]["mode"] = "off"
+    CFG["remote"]["enabled"] = False
+    CFG["backup"]["destinations"] = []
+
+    def idle_exit():
+        # an open tab keeps polling, so idleness alone could keep a demo running for days while "the last 24 hours"
+        # empties out: past demo.stale's age it exits too, and the next "Explore a demo" builds a fresh one
+        while time.time() - LAST_REQUEST[0] < DEMO_IDLE_S and not demo.stale(db, 18 * 3600):
+            time.sleep(60)
+        log.info("demo: idle or out of date, exiting")
+        os._exit(0)
+    threading.Thread(target=idle_exit, daemon=True, name="demo-idle").start()
 
 
 def main():
@@ -2235,10 +3264,57 @@ def main():
                     help="serial port (default: lorakeet.toml radio.port, else auto-detect)")
     ap.add_argument("--host", default=CFG["radio"]["host"] or None,
                     help="a radio on the network (IP or name) instead of USB (default: lorakeet.toml radio.host)")
-    ap.add_argument("--http", type=int, default=CFG["http"]["port"])
+    ap.add_argument("--http", type=int, default=None, help="dashboard port (default: lorakeet.toml http.port; "
+                                                                "with --demo, one above it)")
+    ap.add_argument("--demo", action="store_true", help="explore a made-up mesh: no radio, its own data folder "
+                                                         "(<data>/demo) and port")
+    ap.add_argument("--version", action="version", version=f"Lorakeet {VERSION}")
+    ap.add_argument("--set-password", action="store_true",
+                    help="set the password other devices on your network log in with, then exit")
+    ap.add_argument("--clear-password", action="store_true", help="remove the password (and every login), then exit")
+    ap.add_argument("--join", metavar="CODE", help="send what this station logs to a hub: the pairing code from the hub's "
+                                                   "Stations page (or - to type or pipe it in), then restart Lorakeet")
+    ap.add_argument("--force", action="store_true", help="with --join: save even if the hub can't be reached right now")
     args = ap.parse_args()
+    if args.join:
+        import config as cfgmod
+        if args.join == "-":  # read it, so the code stays out of shell history and the process list
+            if sys.stdin.isatty():
+                print("Paste the pairing code from the hub's Stations page, then press Enter:")
+            args.join = sys.stdin.readline().strip()
+        try:
+            c = pairing.parse_code(args.join)
+        except ValueError as e:
+            sys.exit(f"Not joined: {e}.")
+        print(f"Testing the hub{' ' + c['name'] if c['name'] else ''} at {', '.join(c['hubs'])} ...")
+        result, _ = pairing.test_hubs(c["hubs"], c["token"])
+        if result["ok"]:
+            print(f"Reached {result.get('hubName') or 'the hub'} at {result['url']}.")
+        else:
+            print(f"Couldn't reach the hub: {result['error']}\n{result['hint']}")
+            if not args.force:
+                sys.exit("Not joined. Fix that and try again, or add --force to save anyway.")
+        try:
+            path = cfgmod.update_section("sync", {"mode": "collector", "hub_url": result["url"] if result["ok"] else c["hubs"][0],
+                                                  "token": c["token"]})
+        except ValueError as e:
+            sys.exit(f"Not joined: {e}")
+        print(f"Saved in {path}. Restart Lorakeet: it then sends what it logs to the hub, and catches up after any outage.")
+        return
+    if args.set_password or args.clear_password:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if args.set_password:
+            set_password_interactive(DATA_DIR / "login.json")
+        else:
+            login_mod.Login(DATA_DIR / "login.json").clear_password()
+            print("Password removed; other devices are logged out.")
+        return
     if args.host and args.port:
         ap.error("use --port (USB) or --host (network), not both")
+    if args.http is None:
+        args.http = CFG["http"]["port"] + (1 if args.demo else 0)
+    if args.demo:
+        setup_demo()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     handlers = [logging.handlers.RotatingFileHandler(DATA_DIR / "server.log", maxBytes=2_000_000,
@@ -2250,10 +3326,15 @@ def main():
     logging.getLogger("meshtastic").setLevel(logging.WARNING)
 
     store = Store(DATA_DIR / "mesh.db")
+    if DEMO:
+        store.claim_station(DEMO)
     scrub_logged_secrets(store)
+    PAIRINGS = pairing.Pairings(DATA_DIR / "stations.json")
     debug_log = DebugLog(DATA_DIR / "debug.db")
     follow_base()  # [base] id: the base station's current number if firmware 2.8 renumbered it
     mesh = Mesh(store, args.port, debug_log, host=args.host, tcp_port=CFG["radio"]["tcp_port"])
+    if DEMO:
+        mesh.local_id = DEMO
     debug_log.on_batch = lambda rows: mesh.broadcast("debug", rows)
     # Bind before touching the radio: a second instance must exit here, not fight over the COM port.
     try:
@@ -2261,26 +3342,31 @@ def main():
                           dests=CFG["backup"]["destinations"],
                           on_change=lambda st: mesh.broadcast("storage", st), on_event=mesh.event)
         alert_engine = alerts_mod.Alerts(store, mesh, DATA_DIR / "mesh.db", BASE_ID)
-        # http.lan = "view": all interfaces, this PC full access, other private-LAN devices read-only
-        # (client_access); "off": this computer only.
-        bind = "0.0.0.0" if CFG["http"]["lan"] == "view" else "127.0.0.1"
+        # http.lan = "view" / "login": all interfaces; this PC full access, other private-LAN devices read-only
+        # or nothing until they log in (login.access); "off": this computer only.
+        bind = "0.0.0.0" if CFG["http"]["lan"] in ("view", "login") else "127.0.0.1"
         syncer = None
         if CFG["sync"]["mode"] == "hub":
             def on_report(station, rep):
-                if rep.get("location"):
+                if (station_overrides(store).get(station) or {}).get("location"):
+                    pass  # the hub's own placement wins over what the station reports
+                elif rep.get("location"):
                     loc = rep["location"]
                     analytics.STATION_LOCATIONS[station] = tuple(loc) + ((None,) if len(loc) == 2 else ())
                 else:
                     analytics.STATION_LOCATIONS.pop(station, None)
                 mesh.station_ids.add(station)
-            syncer = sync_mod.Hub(store, on_rows=mesh.ingested, on_meta=on_report)
+            syncer = sync_mod.Hub(store, on_rows=mesh.ingested, on_meta=on_report, is_revoked=PAIRINGS.is_revoked)
             # collectors arrive over Tailscale, so the hub must listen beyond this PC even with lan = "off";
             # client_access() still gives non-LAN addresses no dashboard access, only /api/ingest
             bind = "0.0.0.0"
         elif CFG["sync"]["mode"] == "collector":
             syncer = sync_mod.Collector(store, CFG["sync"]["hub_url"], CFG["sync"]["token"], CFG["sync"]["interval_s"],
                                         report=lambda: station_report(mesh))
-        srv = ExclusiveHTTPServer((bind, args.http), make_handler(mesh, store, storage, alert_engine, syncer))
+        login = login_mod.Login(DATA_DIR / "login.json")
+        peering = PeerManager(store, mesh, pairing.install_id(DATA_DIR))
+        srv = ExclusiveHTTPServer((bind, args.http), make_handler(mesh, store, storage, alert_engine, syncer, login, peering,
+                                                                  PAIRINGS))
     except OSError as e:
         log.error("port %d unavailable (%s); another instance is probably running", args.http, e)
         sys.exit(EXIT_PORT_IN_USE)
@@ -2295,6 +3381,10 @@ def main():
                 _pi_health(), mesh.own_fix_now()),
             fix=mesh.own_fix_now, aliases=lambda: nodeids.info(DATA_DIR / "mesh.db")["aliases"])
         log.info("remote commands: on, from %s", ", ".join(CFG["remote"]["allow"]))
+    if DEMO:  # nothing to connect to, back up, alert on or share
+        log.info("Lorakeet %s demo (a made-up mesh) on http://127.0.0.1:%d", VERSION, args.http)
+        srv.serve_forever()
+        return
     threading.Thread(target=mesh.run, daemon=True, name="radio").start()
     if sys.platform.startswith("linux"):
         HealthWatch(mesh.event).start()
@@ -2302,10 +3392,18 @@ def main():
     alert_engine.start()
     if isinstance(syncer, sync_mod.Collector):
         syncer.start()
+    elif CFG["sync"]["mode"] != "collector":
+        peering.start_all()  # a station sends to its hub; peering is between hubs (or single installs)
     log.info("sync: %s", CFG["sync"]["mode"])
     log.info("config: %s", CFG["_path"] or "none (defaults)")
-    log.info("dashboard on http://127.0.0.1:%d%s", args.http,
-             " (full) and on the LAN (view only)" if CFG["http"]["lan"] == "view" else " (this computer only)")
+    lan = CFG["http"]["lan"]
+    log.info("Lorakeet %s, dashboard on http://127.0.0.1:%d%s", VERSION, args.http,
+             " (this computer only)" if lan == "off" else
+             f" (full) and on the LAN ({'view only' if lan == 'view' else 'log in to see it'}"
+             f"{', full access after logging in' if login.enabled else ''})")
+    if lan == "login" and not login.enabled:
+        log.warning('http.lan = "login" but no password is set, so no other device can get in: '
+                    "run  python server.py --set-password")
     srv.serve_forever()
 
 

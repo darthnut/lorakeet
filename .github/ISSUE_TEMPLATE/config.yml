@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How to test Lorakeet
+    url: https://github.com/darthnut/lorakeet/blob/main/TESTING.md
+    about: What to try, what to send back, and what to keep private.

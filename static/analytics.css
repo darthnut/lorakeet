@@ -17,7 +17,8 @@
 
 body.analytics { overflow: auto; display: block; }
 body.analytics .topbar { position: sticky; top: 0; z-index: 1000; flex-wrap: wrap; row-gap: 8px; }
-.pagenav { display: flex; gap: 4px; flex: 1; }
+.pagenav { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.pagenav a { flex: none; }
 .pagenav a { color: var(--text-secondary); text-decoration: none; padding: 4px 10px; border-radius: 6px; }
 .pagenav a:hover { background: var(--surface-2); color: var(--text-primary); }
 .pagenav a[aria-current="page"] { color: var(--text-primary); font-weight: 600; background: var(--surface-2); }

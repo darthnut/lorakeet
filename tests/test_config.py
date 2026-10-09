@@ -68,3 +68,22 @@ def test_windows_paths_survive_the_round_trip(setup_path):
 def test_tests_never_see_a_real_config():
     assert not os.path.exists(os.environ["LORAKEET_CONFIG"]) or "lktests-" in os.environ["LORAKEET_CONFIG"] \
         or "pytest" in os.environ["LORAKEET_CONFIG"]
+
+
+def test_a_byte_order_mark_from_windows_tools_is_fine(tmp_path, monkeypatch):
+    import config
+    p = tmp_path / "lorakeet.toml"
+    p.write_bytes(b"\xef\xbb\xbf[http]\nport = 5199\n")   # what PowerShell 5's Set-Content -Encoding utf8 writes
+    monkeypatch.setenv("LORAKEET_CONFIG", str(p))
+    assert config.load()["http"]["port"] == 5199
+
+
+def test_the_example_documents_every_option_at_its_default():
+    import tomllib
+    from pathlib import Path
+    import config
+    d = tomllib.loads((Path(__file__).resolve().parent.parent / "lorakeet.example.toml").read_text(encoding="utf-8"))
+    config._validate(config._merge(config.DEFAULTS, d))
+    missing = [f"{s}.{k}" for s, sec in config.DEFAULTS.items() if isinstance(sec, dict) for k in sec if k not in d.get(s, {})]
+    differ = [f"{s}.{k}" for s in d for k in d[s] if d[s][k] != config.DEFAULTS[s][k]]
+    assert missing == [] and differ == []

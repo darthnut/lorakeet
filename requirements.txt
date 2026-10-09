@@ -1,2 +1,11 @@
-# Python 3.11 or newer. Brings in protobuf, pyserial, pypubsub and bleak.
+# Python 3.11 to 3.14. Brings in protobuf, pyserial, pypubsub and bleak.
 meshtastic==2.7.11
+# QR codes on the Radio page (sharing a channel with the Meshtastic phone app). Pure Python, BSD-3-Clause.
+segno==1.6.6
+# AES for packet anatomy (rebuilding the encryption layer). Apache-2.0 or BSD-3-Clause. A range, installed with
+# --prefer-binary: the newest releases have no ready-built package for Intel Macs (48.0.0 does) or Windows on ARM
+# (46.0.3 does), and building one needs Rust.
+cryptography>=46.0.3,<51
+# The notification-area (tray) icon on Windows: pystray LGPL-3.0, Pillow MIT-CMU. Not needed elsewhere.
+pystray==0.19.5; sys_platform == "win32"
+pillow==12.3.0; sys_platform == "win32"

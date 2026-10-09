@@ -238,8 +238,9 @@ function renderStats() {
 
 function renderConn() {
   const c = $("conn"), st = S.status;
-  c.className = `conn ${st.connected ? "ok" : "bad"}`;
+  c.className = `conn ${st.connected || st.demo ? "ok" : "bad"}`;
   const local = S.nodes.get(st.localId);
+  if (st.demo) { c.querySelector(".label").textContent = "Demo: a made-up mesh, no radio"; return; }
   c.querySelector(".label").textContent = st.connected ? `${local ? local.longName : st.localId} · ${st.port}` : st.serverDown ? "Dashboard server unreachable — retrying" : "Radio unplugged — showing last known state, retrying";
 }
 
@@ -622,6 +623,7 @@ function backupProblem(s) {
 
 function renderStorage() {
   const s = ST.s; if (!s) return;
+  if (s.demo) { $("store").hidden = true; return; }  // the demo is rebuilt, never backed up
   const prob = backupProblem(s);
   const chip = $("store");
   chip.hidden = false;
@@ -658,7 +660,7 @@ function renderStorage() {
 function renderStorePop() {
   const s = ST.s, lb = s.lastBackup;
   const pct = Math.min(100, (s.dbBytes / s.warnBytes) * 100);
-  const dests = s.dests.map((p) => {
+  const dests = (s.dests || []).map((p) => {
     const d = (lb?.dests || []).find((x) => x.path === p);
     const st = !d ? '<span class="muted">not yet</span>' : d.ok ? '<span class="ok">✓ ok</span>' : `<span class="err">✕ ${esc(d.error || "failed")}</span>`;
     return `<div class="dest"><b>${destName(p)}</b> ${st}<br><span class="muted">${esc(p)}</span></div>`;
@@ -789,9 +791,9 @@ async function renderDetail(id) {
       <dt>Last heard</dt><dd>${n.isLocal ? "connected by USB" : ago(n.lastHeard)}</dd>
       ${n.positionFromStation ? '<dt>Position</dt><dd>listening station\'s configured antenna location</dd>' : ""}
       <dt>Path</dt><dd>${n.isLocal ? "—" : n.hopsAway === 0 ? "direct" : n.hopsAway != null ? `${n.hopsAway} hop${n.hopsAway === 1 ? "" : "s"}` : "unknown"}</dd>
-      ${n.remote ? `<dt>${n.heardHere ? "Also heard by" : "Heard only by"}</dt><dd>${esc(n.remote.stationName)}: ${ago(n.remote.ts)}${n.remote.hops === 0 ? ", direct" : n.remote.hops != null ? `, ${n.remote.hops} hop${n.remote.hops === 1 ? "" : "s"}` : ""}${n.remote.snr != null ? ` · SNR ${fmt(n.remote.snr, 2)} dB` : ""}${n.remote.rssi != null ? ` · RSSI ${n.remote.rssi} dBm` : ""}</dd>` : ""}
-      <dt>${n.hopsAway ? "Last-hop signal" : "Signal"}</dt><dd>${n.snr != null ? `SNR ${fmt(n.snr, 2)} dB` : "—"}${n.rssi != null ? ` · RSSI ${n.rssi} dBm` : ""}</dd>
-      <dt>Position</dt><dd>${n.lat == null && S.est.get(n.id) ? `estimated ${prov("inferred")} ${S.est.get(n.id).lat.toFixed(4)}, ${S.est.get(n.id).lon.toFixed(4)} ±${S.est.get(n.id).radiusKm.toFixed(1)} km<br><span style="color:var(--text-muted)">${esc(S.est.get(n.id).method)}; never reported its own</span>` : n.lat != null ? `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}${n.alt != null ? ` · ${n.alt} m` : ""}${prec ? `<br><span style="color:var(--text-muted)">±${prec >= 1000 ? (prec / 2000).toFixed(1) + " km" : Math.round(prec / 2) + " m"} (shared at reduced precision)</span>` : ""}` : "not shared"}</dd>
+      ${n.remote ? `<dt>${n.heardHere ? "Also heard by" : "Heard only by"}</dt><dd>${esc(n.remote.stationName)}: ${ago(n.remote.ts)}${n.remote.hops === 0 ? ", direct" : n.remote.hops != null ? `, ${esc(n.remote.hops)} hop${n.remote.hops === 1 ? "" : "s"}` : ""}${n.remote.snr != null ? ` · SNR ${fmt(n.remote.snr, 2)} dB` : ""}${n.remote.rssi != null ? ` · RSSI ${esc(n.remote.rssi)} dBm` : ""}</dd>` : ""}
+      <dt>${n.hopsAway ? "Last-hop signal" : "Signal"}</dt><dd>${n.snr != null ? `SNR ${fmt(n.snr, 2)} dB` : "—"}${n.rssi != null ? ` · RSSI ${esc(n.rssi)} dBm` : ""}</dd>
+      <dt>Position</dt><dd>${n.lat == null && S.est.get(n.id) ? `estimated ${prov("inferred")} ${S.est.get(n.id).lat.toFixed(4)}, ${S.est.get(n.id).lon.toFixed(4)} ±${S.est.get(n.id).radiusKm.toFixed(1)} km<br><span style="color:var(--text-muted)">${esc(S.est.get(n.id).method)}; never reported its own</span>` : n.lat != null ? `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}${n.alt != null ? ` · ${esc(n.alt)} m` : ""}${prec ? `<br><span style="color:var(--text-muted)">±${prec >= 1000 ? (prec / 2000).toFixed(1) + " km" : Math.round(prec / 2) + " m"} (shared at reduced precision)</span>` : ""}` : "not shared"}</dd>
       <dt>Airtime TX</dt><dd>${fmt(n.airUtil, 2, "%")}</dd>
       <dt>Uptime</dt><dd>${n.uptime != null ? `${(n.uptime / 3600).toFixed(1)} h` : "—"}</dd>
       ${n.temperature != null ? `<dt>Temperature</dt><dd>${fmt(n.temperature, 1, " °C")}</dd>` : ""}

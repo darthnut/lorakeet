@@ -76,8 +76,8 @@ function renderAnatomy(a) {
       <span><b>${esc(r.preset.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()))}</b>SF${r.sf} · ${r.bwKHz} kHz · CR ${esc(r.cr)}</span>
       <span><b>${tot} ms</b>time on air</span>
       <span><b>${r.onAirBytes} B</b>frame + 2 B CRC</span>
-      ${a.rssi != null ? `<span data-j="rxRssi"><b>${a.rssi} dBm</b>RSSI ${prov("observed", "Our radio's reading of this copy.")}</span>` : ""}
-      ${a.snr != null ? `<span data-j="rxSnr"><b>${a.snr} dB</b>SNR ${prov("observed", "Our radio's reading of this copy.")}</span>` : ""}
+      ${a.rssi != null ? `<span data-j="rxRssi"><b>${esc(a.rssi)} dBm</b>RSSI ${prov("observed", "Our radio's reading of this copy.")}</span>` : ""}
+      ${a.snr != null ? `<span data-j="rxSnr"><b>${esc(a.snr)} dB</b>SNR ${prov("observed", "Our radio's reading of this copy.")}</span>` : ""}
     </div>
     <div class="anat-air" role="img" aria-label="Time on air: preamble ${pre} ms, header and payload ${pay} ms">
       <span class="pre" style="flex:${pre}">preamble · ${r.preambleSymbols} + 4.25 symbols · ${pre} ms</span>

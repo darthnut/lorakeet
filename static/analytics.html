@@ -150,7 +150,7 @@
 
   <section class="card">
     <div class="card-head">
-      <div><h2>Weekly rhythm</h2><p class="sub">Average packets per hour by local day and hour, counting only hours the dashboard was running.</p></div>
+      <div><h2>Weekly rhythm</h2><p class="sub">Average packets per hour by local day and hour, over the past 7 days (it ignores the range above, so there's always a full week), counting only hours the dashboard was running.</p></div>
     </div>
     <div class="heat" id="heat"></div>
   </section>
@@ -175,7 +175,7 @@
   </div>
 
   <section class="card">
-    <div class="card-head"><div><h2>Firmware 2.8 adoption</h2><p class="sub">Radios numbering themselves the 2.8 way (derived from their key), per day, out of those whose key we've heard (accent = on 2.8). 2.8 makes position and telemetry sharing opt-in, so as this grows, fewer positions and battery readings is the firmware, not the mesh. <code>fw:2.8</code> in the node filter lists them.</p></div></div>
+    <div class="card-head"><div><h2>Firmware 2.8 adoption</h2><p class="sub">Radios numbering themselves the 2.8 way (derived from their key), per day, out of those whose key we've heard (accent = on 2.8). 2.8 makes position and telemetry sharing opt-in, so as this grows, fewer positions and battery readings is the firmware, not the mesh. <code>fw:2.8</code> in the node filter lists them. New US radios on 2.8 also default to LongTurbo, which a LongFast radio can't hear at all: they never appear here, so fewer radios heard can be the preset, not the mesh.</p></div></div>
     <div id="fw28"></div>
   </section>
 

@@ -18,7 +18,7 @@ ssh "$TARGET" 'set -e
     || { echo "PARSE ERROR in $f: not deployed"; exit 1; }; done
   cmp -s ~/stage/requirements.txt ~/lorakeet/requirements.txt && pip=0 || pip=1
   cp -r ~/stage/. ~/lorakeet/ && rm -rf ~/stage
-  [ "$pip" = 1 ] && ~/lorakeet/venv/bin/pip install -q -r ~/lorakeet/requirements.txt
+  [ "$pip" = 1 ] && ~/lorakeet/venv/bin/pip install -q --prefer-binary -r ~/lorakeet/requirements.txt
   sudo -n systemctl restart lorakeet && sleep 25
   echo "service: $(systemctl is-active lorakeet)"
   curl -s localhost:5190/api/sync; echo'

@@ -1,5 +1,5 @@
 /* First-run setup page */
-body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; }
+body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; overflow: auto; height: auto; }
 .setup { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; color: var(--text-primary); }
 .setup h1 { font-size: 24px; margin: 8px 0 4px; }
 .setup .lead { color: var(--text-secondary); margin: 0 0 18px; }
@@ -13,14 +13,57 @@ body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; }
 .setup .sub[hidden] { display: none; }
 .setup .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0; }
 .setup .row > span { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.setup input, .setup textarea { max-width: 100%; }
 .setup input[type="text"], .setup input:not([type]), .setup select {
   font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
 .setup .note { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.45; }
 .setup code { font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; word-break: break-all; }
 .setup .live { margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+.setup .locwarn, .radio .locwarn { background: var(--surface-2); border-left: 3px solid var(--warning, #c98a00); padding: 8px 10px; border-radius: 4px; font-size: 13px; margin: 6px 0; }
 .setup .live.ok::before { content: "● "; color: var(--good); }
 .setup .live.wait::before { content: "○ "; color: var(--text-muted); }
 .setup .actions { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 6px; }
+.setup textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
+.setup .okmsg { color: var(--good); } .setup .errmsg { color: var(--critical); }
 .setup .err { flex-basis: 100%; color: var(--critical); margin: 0; min-height: 1em; }
 .setup .summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
 .setup .summary dt { color: var(--text-muted); } .setup .summary dd { margin: 0; }
+
+/* Radio page (radio.html) */
+.radio .step h2 { display: flex; align-items: center; gap: 8px; }
+.radio h2 .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; }
+.radio .hint { background: var(--surface-2); border-left: 3px solid var(--warning, #c98a00); padding: 8px 10px; border-radius: 4px; font-size: 13px; margin: 6px 0; }
+.radio .names { margin: 6px 0 10px; }
+.radio .names input { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
+.radio .ci { border-top: 1px solid var(--border); padding: 10px 0; }
+.radio .ch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.radio .ch .cur { margin-left: auto; color: var(--text-secondary); font-size: 13px; }
+.radio .why { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+.radio .cc { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.radio .cc select, .radio .chans select { font: inherit; font-size: 13px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
+.radio .badge2 { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+.radio .badge2.ok { color: var(--good); border-color: var(--good); }
+.radio .badge2.suggest { color: var(--accent); border-color: var(--accent); }
+.radio .badge2.needed { color: #fff; background: var(--critical); border-color: var(--critical); }
+.radio .chans { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px; }
+.radio .chans th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 12px; padding: 4px 6px; }
+.radio .chans td { border-top: 1px solid var(--border); padding: 6px; vertical-align: middle; }
+.radio details.sub2 { margin: 8px 0; }
+.radio details.sub2 summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.radio details.sub2 input:not([type]) { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
+.radio .sharebox { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 8px; }
+.radio .sharebox .qr svg { display: block; border-radius: 6px; }
+.radio .sharebox > div:last-child { flex: 1 1 260px; min-width: 0; }
+.radio .sharebox h3 { margin: 0 0 6px; font-size: 15px; }
+.radio .sharebox input { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
+.radio .checks { list-style: none; padding: 0; margin: 0 0 8px; font-size: 13px; }
+.radio .checks li { padding: 4px 0; }
+.radio .checks li.ok::before { content: "✓ "; color: var(--good); font-weight: 700; }
+.radio .checks li.wait::before { content: "○ "; color: var(--text-muted); }
+.radio .checks li.na::before { content: "– "; color: var(--text-muted); }
+.radio .bklist { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+@media (max-width: 600px) { .radio .chans th:nth-child(4), .radio .chans td:nth-child(4) { display: none; } }
+.stations textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
+.stations .bad, .stations .linkbtn.danger { color: var(--critical); }
+.stations .mono { font-family: ui-monospace, monospace; font-size: 11px; }
+.stations .paused { color: var(--warning, #c98a00); font-weight: 600; }
