@@ -17,10 +17,13 @@ The videos and most screenshots here come from a real mesh, anonymized the way L
 whole picture is moved onto substitute map tiles of a different place, keeping its shape and distances. The live
 map, setup and Stations screenshots show the built-in demo (a made-up mesh around Portland, Oregon).
 
-https://github.com/user-attachments/assets/df3ec998-7dcd-4a28-b3d8-80e750c8be72
 
-*Traffic replay, Graph view, one day in 30 seconds. Radios appear as they're first heard (Grow mode) and each
-packet travels the path a listening station observed. Names anonymized.*
+https://github.com/user-attachments/assets/6b1252c5-24ca-4eb5-b991-38120e3c6ac2
+
+
+*Traffic replay, Graph view: a Friday evening in Portland, Oregon (3½ hours in 40 seconds), logged by a station
+in a parked car. Radios appear as they're first heard (Grow mode) and fade when they go quiet (Fade mode); each
+packet travels the path the station observed. Names anonymized.*
 
 https://github.com/user-attachments/assets/6cded12b-1df9-49ba-8af9-5b6baf3b39ff
 
