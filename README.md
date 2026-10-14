@@ -44,8 +44,8 @@ firmware 2.7.26. No radio yet? Install it anyway and choose **Explore a demo** o
 
 ### On Windows
 
-1. **Download it.** Open the [releases page](https://github.com/darthnut/lorakeet/releases). The newest release
-   is at the top: scroll to the **Assets** list at the bottom of it and click **Source code (zip)**.
+1. **Download it.** Open the [latest release](https://github.com/darthnut/lorakeet/releases/latest), scroll to the
+   **Assets** list at the bottom of it, and click **Source code (zip)**.
 2. **Unzip it somewhere it can stay.** Lorakeet runs from this folder. Right-click the downloaded zip, choose
    **Extract All...**, and pick a lasting place such as your Documents folder.
 3. **Run the installer.** Open the extracted folder (if it holds a single folder such as `lorakeet-0.4.0`, open
