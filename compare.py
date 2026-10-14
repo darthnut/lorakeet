@@ -15,13 +15,14 @@ import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
-from analytics import STATION_RE, _bucket_starts, _connect, _window, port_group
+import radioid
+from analytics import _bucket_starts, _connect, _window, port_group
 from topology import relay_resolver
 
 
 def compute(db_path, range_key, a, b, describe):
     for s in (a, b):
-        if not (isinstance(s, str) and STATION_RE.match(s)):
+        if not radioid.is_radio_id(s):
             raise ValueError(f"not a station id: {s!r}")
     if a == b:
         raise ValueError("pick two different stations")

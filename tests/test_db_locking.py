@@ -2,13 +2,13 @@
 import sqlite3
 import time
 
-import server
+import store as store_mod
 
 
 def test_writes_go_through_while_a_reader_holds_the_database(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "DB_WAIT_S", 1)  # in rollback mode the write below would wait this long, then fail
+    monkeypatch.setattr(store_mod, "DB_WAIT_S", 1)  # in rollback mode the write below would wait this long, then fail
     path = tmp_path / "mesh.db"
-    store = server.Store(path)
+    store = store_mod.Store(path)
     assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     store.insert("packets", ts=1, from_id="!c0000001")
     reader = sqlite3.connect(f"file:{path}?mode=ro", uri=True, isolation_level=None)
@@ -21,4 +21,4 @@ def test_writes_go_through_while_a_reader_holds_the_database(tmp_path, monkeypat
     reader.execute("COMMIT")
     assert reader.execute("SELECT COUNT(*) FROM packets").fetchone()[0] == 2
     reader.close()
-    store.db.close()
+    store.close()

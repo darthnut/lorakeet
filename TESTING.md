@@ -51,9 +51,10 @@ Open an issue on GitHub (there's a form for bug reports and one for general feed
 - **What you did, what happened, and what you expected.** "I clicked X and nothing happened" is a perfect report.
 - **A screenshot,** ideally of an anonymized view: add `?anon=1` to a Visualizations address and every radio is
   renamed, message text hidden and the map moved somewhere else.
-- **The end of the log,** if something failed: `server.log` in Lorakeet's data folder (Windows:
-  `%LOCALAPPDATA%\Lorakeet`, Linux: `~/.local/share/lorakeet`, macOS: `~/Library/Application Support/Lorakeet`).
-  Read it before posting: it can include your user name in file paths, radio ids and names.
+- **A diagnostics file,** if something failed: **Settings → Help and diagnostics → Save diagnostics**. It holds
+  versions, your radio's model and firmware, recent errors and your settings, with names, radio ids, addresses,
+  paths, locations and keys taken out. Read it before attaching it (**See what's in it** shows it first). If
+  Lorakeet won't start, run `python diagnostics.py` in its folder (with the venv's Python) for the same file.
 
 General impressions count too: what you expected to find and didn't, what wording confused you, what you'd want next.
 

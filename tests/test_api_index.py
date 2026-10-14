@@ -17,8 +17,15 @@ import mcp_server
 ROOT = Path(__file__).resolve().parent.parent
 
 
+WEB = ("web.py", "web_radio.py", "web_hub.py")  # the request handler and its route mixins
+
+
+def _web_source():
+    return "".join((ROOT / f).read_text(encoding="utf-8") for f in WEB)
+
+
 def _server_paths():
-    return set(re.findall(r'"(/api/[A-Za-z0-9/_.-]*)"', (ROOT / "server.py").read_text(encoding="utf-8")))
+    return set(re.findall(r'"(/api/[A-Za-z0-9/_.-]*)"', _web_source()))
 
 
 def test_every_endpoint_the_server_handles_is_in_the_index():
@@ -30,7 +37,7 @@ def test_every_endpoint_the_server_handles_is_in_the_index():
 
 
 def test_every_indexed_endpoint_exists():
-    src = (ROOT / "server.py").read_text(encoding="utf-8")
+    src = _web_source()
     gone = [e["path"] for e in api_index.ENDPOINTS if f'"{e["path"].split("{")[0]}' not in src]
     assert gone == []
     assert all(e["tier"] in api_index.TIERS and e["method"] in ("GET", "POST") for e in api_index.ENDPOINTS)

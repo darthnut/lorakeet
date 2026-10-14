@@ -9,6 +9,9 @@ import pytest
 
 import pairing
 import server
+import runtime
+import store as store_mod
+import web as web_mod
 import sync as sync_mod
 
 
@@ -61,15 +64,15 @@ def hub(tmp_path, monkeypatch):
     cfgfile = tmp_path / "lorakeet.toml"
     cfgfile.write_text('[sync]\nmode = "hub"\n', encoding="utf-8")
     monkeypatch.setenv("LORAKEET_CONFIG", str(cfgfile))
-    monkeypatch.setattr(server, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(runtime, "DATA_DIR", tmp_path)
     monkeypatch.setitem(server.CFG["sync"], "mode", "hub")
     monkeypatch.setitem(server.CFG["sync"], "token", "")
     monkeypatch.setitem(server.CFG["sync"], "station_tokens", [])
     monkeypatch.setitem(server.CFG["sync"], "allow", pairing.allow_networks(True, False))
-    store = server.Store(tmp_path / "mesh.db")
+    store = store_mod.Store(tmp_path / "mesh.db")
     store.station = _Mesh.local_id
     mesh = _Mesh()
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(
         mesh, store, None, None, sync_mod.Hub(store, on_rows=mesh.ingested), None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     host = f"127.0.0.1:{srv.server_address[1]}"
@@ -84,7 +87,7 @@ def hub(tmp_path, monkeypatch):
 
     yield req, host, cfgfile
     srv.shutdown()
-    store.db.close()
+    store.close()
 
 
 def _report(req, token, station):

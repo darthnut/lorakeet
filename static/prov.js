@@ -152,7 +152,9 @@ function fallbackView() {
       document.documentElement.classList.add("demo");
       bar?.insertAdjacentHTML("beforeend", '<span class="rotag demo" title="A made-up mesh around Portland, Oregon: every radio, name, message and position is invented. Nothing here is logged from a radio.">demo data</span>');
     }
-    if (w.access === "full" && !w.login?.loggedIn && !w.demo) bar?.querySelector(".pagenav")?.insertAdjacentHTML("beforeend", '<a href="/radio.html">Radio</a><a href="/stations.html">Stations</a>');
+    const nav = bar?.querySelector(".pagenav");
+    if (w.access === "full" && !nav?.querySelector('a[href="/settings.html"]')) nav?.insertAdjacentHTML("beforeend", '<a href="/settings.html">Settings</a>');
+    if (w.access === "full" && !w.login?.loggedIn && !w.demo) nav?.insertAdjacentHTML("beforeend", '<a href="/radio.html">Radio</a><a href="/stations.html">Stations</a>');
     if (w.paused) {  // logging paused from the tray icon (or here): say so on every page
       bar?.insertAdjacentHTML("beforeend", `<span class="rotag paused" title="Lorakeet has let go of the radio: nothing is being logged.">logging paused${w.readOnly ? "" : ' · <button class="linkbtn" id="lkResume">resume</button>'}</span>`);
       document.getElementById("lkResume")?.addEventListener("click", async () => {

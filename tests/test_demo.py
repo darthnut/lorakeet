@@ -12,6 +12,9 @@ import analytics
 import demo
 import drive
 import server
+import runtime
+import store as store_mod
+import web as web_mod
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -43,7 +46,7 @@ def test_every_view_has_something_to_show(built):
     assert {"Demo Home", "Hilltop Station", "Demo Car"} <= names
     stations = {r[0] for r in _q(path, "SELECT DISTINCT station FROM packets")}
     assert len(stations) == 3 and home in stations
-    assert _q(path, "PRAGMA user_version")[0][0] == server.SCHEMA_VERSION
+    assert _q(path, "PRAGMA user_version")[0][0] == store_mod.SCHEMA_VERSION
     # the newest data is minutes old, so "the last 24 hours" is full
     assert time.time() - _q(path, "SELECT MAX(ts) FROM packets")[0][0] < 3600
 
@@ -108,16 +111,16 @@ def test_the_demo_refuses_everything_that_touches_real_radios_or_settings(monkey
         def status(self):
             return {}
 
-    monkeypatch.setattr(server, "DEMO", "!a0000001")
+    monkeypatch.setattr(runtime, "DEMO", "!a0000001")
     for method, path in (("GET", "/api/radio"), ("GET", "/api/radio/share"), ("GET", "/api/hub"), ("GET", "/api/setup"),
                          ("POST", "/api/radio/station"), ("POST", "/api/radio/apply"), ("POST", "/api/hub/mode"),
                          ("POST", "/api/hub/join"), ("POST", "/api/setup")):
-        assert server._demo_refuses(method, path), path
-    assert not server._demo_refuses("GET", "/api/state") and not server._demo_refuses("POST", "/api/watch")
+        assert web_mod._demo_refuses(method, path), path
+    assert not web_mod._demo_refuses("GET", "/api/state") and not web_mod._demo_refuses("POST", "/api/watch")
     written = []
     monkeypatch.setattr(server.cfgmod if hasattr(server, "cfgmod") else __import__("config"), "update_section",
                         lambda *a, **k: written.append(a))
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(_Mesh(), None, None, None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), None, None, None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         port = srv.server_address[1]

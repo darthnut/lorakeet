@@ -74,6 +74,21 @@ $("vzFadeRemove").addEventListener("change", (e) => { setFade({ remove: e.target
 syncFadeUI();
 $("vzShow").addEventListener("click", () => setClean(false));
 
+// Groovy mode (groovy.js): the button, the ▾ options, V
+const GROOVY_BOXES = { vzTrails: "trails", vzBursts: "bursts", vzAuras: "auras", vzBg: "background", vzKaleido: "kaleido" };
+function syncGroovyUI() {
+  const o = window.Groovy.opts;
+  $("vzGroovy").setAttribute("aria-pressed", String(o.on));
+  $("vzVibe").value = o.vibe; $("vzIntensity").value = o.intensity;
+  for (const [id, k] of Object.entries(GROOVY_BOXES)) $(id).checked = !!o[k];
+}
+const groovy = (changes) => { window.Groovy.set(changes); syncGroovyUI(); };
+$("vzGroovy").addEventListener("click", () => groovy({ on: !window.Groovy.opts.on }));
+$("vzVibe").addEventListener("change", (e) => groovy({ vibe: e.target.value, on: true }));
+$("vzIntensity").addEventListener("change", (e) => groovy({ intensity: e.target.value, on: true }));
+for (const [id, k] of Object.entries(GROOVY_BOXES)) $(id).addEventListener("change", (e) => groovy({ [k]: e.target.checked, on: true }));
+syncGroovyUI();
+
 // In hidden-UI mode the "Show UI" button appears only while the mouse moves, so it stays out of recordings.
 let pointerT = null;
 addEventListener("pointermove", () => {
@@ -100,7 +115,7 @@ document.addEventListener("fullscreenchange", () => {
   redrawSoon();
 });
 
-// H hide/show UI · G grow mode · D fade mode · M texts panel · F full screen · Space play/pause · C clock (hidden-UI mode) · Esc show UI
+// H hide/show UI · G grow mode · D fade mode · M texts panel · V groovy mode · F full screen · Space play/pause · C clock (hidden-UI mode) · Esc show UI
 addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, textarea, select, [contenteditable]")) return;
   const clean = document.body.classList.contains("vz-clean");
@@ -108,6 +123,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "g" || e.key === "G") setGrow(!R.grow);
   else if (e.key === "d" || e.key === "D") { setFade({ on: !R.fade.on }); syncFadeUI(); }
   else if (e.key === "m" || e.key === "M") toggleChat();
+  else if (e.key === "v" || e.key === "V") groovy({ on: !window.Groovy.opts.on });
   else if (e.key === "f" || e.key === "F") toggleFull();
   else if (e.key === "c" || e.key === "C") $("vzCleanClock").classList.toggle("off");
   else if (e.key === "Escape" && clean && !document.fullscreenElement) setClean(false);

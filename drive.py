@@ -33,7 +33,8 @@ import math
 import statistics
 from collections import Counter, defaultdict
 
-from analytics import ALL_STATIONS, STATION_RE, _connect, _window, smooth_track
+import radioid
+from analytics import ALL_STATIONS, _connect, _window, smooth_track
 from topology import relay_resolver
 
 MAX_FIX_AGE_S = 12 * 60   # a fix older than this doesn't place a reception: a parked station logs one every
@@ -70,7 +71,7 @@ def _compute(db, range_key, station, describe, bin_m):
     stations_out, tracks, recs, sent = [], [], [], []
     others = {r[0] for r in db.execute("SELECT DISTINCT station FROM packets WHERE station IS NOT NULL")}
     for st in candidates:
-        if not st or not STATION_RE.match(st):
+        if not radioid.is_radio_id(st):
             continue
         fixes = [tuple(r) for r in db.execute(
             "SELECT ts, lat, lon FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
@@ -113,7 +114,7 @@ def _compute(db, range_key, station, describe, bin_m):
         # silence of silent_s or longer
         rts = [p["ts"] for p in placed]
         segs, cur = [], []
-        for k, (ts, lat, lon) in enumerate(fixes):
+        for ts, lat, lon in fixes:
             if ts < since:
                 continue
             if cur and ts - cur[-1][2] > TRACK_GAP_S:
@@ -163,7 +164,7 @@ def _sent(db, st, fixes, fts, since, until, others, resolve, describe):
         out.append({"ts": ts, "lat": fixes[i][1], "lon": fixes[i][2], "station": st, "pkt": pid,
                     "result": "station" if heard else "mesh" if echoes else "none",
                     "heardBy": sorted(heard.values(), key=lambda h: h["name"]), "echoes": len(echoes),
-                    "relays": [[r, describe(r)["name"] if r.startswith("!") else f"unresolved {r}"] for r in relays],
+                    "relays": [[r, describe(r)["name"] if radioid.protocol_of(r) else f"unresolved {r}"] for r in relays],
                     "what": (text[0][:40] if text and text[0] else None) or (what[0] if what else "packet")})
     return out
 
@@ -211,7 +212,7 @@ def _bin(tracks, recs, bin_m, describe):
         senders = Counter(r["from"] for r in rs)
         direct = {r["from"] for r in rs if r["hops"] == 0}
         relays = Counter(r["relay"] for r in rs if r["relay"])
-        name = lambda nid: describe(nid)["name"] if nid.startswith("!") else f"unresolved {nid}"  # noqa: E731
+        name = lambda nid: describe(nid)["name"] if radioid.protocol_of(nid) else f"unresolved {nid}"  # noqa: E731
         minutes = round(max(c["minutes"], 0.0), 2)
         out.append({
             "lat": round((i + 0.5) * dlat, 6), "lon": round((j + 0.5) * dlon_row(i), 6),

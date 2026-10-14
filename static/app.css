@@ -323,7 +323,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 /* view-only mode for other devices on the LAN (prov.js sets .readonly) */
 .readonly .compose, .readonly #dMsg, .readonly #dTrace, .readonly .star, .readonly [data-backup],
-.readonly #aRead, .readonly [data-t="settings"], .readonly #nvStar { display: none !important; }
+.readonly #aRead, .readonly .asettings, .readonly #nvStar { display: none !important; }
 .rotag.paused { color: var(--warning, #c98a00); border-color: var(--warning, #c98a00); }
 .rotag.demo { color: var(--accent, #2a7fd4); border-color: var(--accent, #2a7fd4); font-weight: 600; }
 .rotag { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
@@ -349,13 +349,11 @@ ul { list-style: none; margin: 0; padding: 0; }
 .alist .ah { display: flex; justify-content: space-between; gap: 8px; }
 .alist .ah span { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .alist .ad { color: var(--text-secondary); margin: 2px 0; }
-.alist a, .sform a { color: var(--accent); text-decoration: none; font-size: 12px; }
-.atabs button.amark { margin-left: auto; color: var(--accent); border-bottom-color: transparent; font-size: 12px; }
-.atabs button.amark:hover { text-decoration: underline; }
-.sform { padding: 8px 14px 14px; }
-.sform h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
-.srow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 3px 0; }
-.srow input[type=number] { width: 70px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text-primary); font: inherit; }
+.alist a { color: var(--accent); text-decoration: none; font-size: 12px; }
+.atabs { align-items: center; }
+.atabs .atitle { padding: 9px 14px; margin-right: auto; }
+.atabs .amark { border: 0; background: none; padding: 9px 14px; cursor: pointer; color: var(--accent); font-size: 12px; text-decoration: none; }
+.atabs .amark:hover { text-decoration: underline; }
 .star { border: 0; background: none; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px; color: var(--text-muted); }
 .star.on { color: var(--base); }
 

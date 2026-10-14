@@ -8,6 +8,7 @@ import pytest
 
 import login as login_mod
 import server
+import web as web_mod
 
 PW = "correct horse battery"
 
@@ -87,10 +88,10 @@ class _Alerts:
 @pytest.fixture
 def lan_server(tmp_path, monkeypatch):
     """A real handler, with every client treated as another device on the LAN."""
-    monkeypatch.setattr(server, "client_access", lambda ip: "view")
+    monkeypatch.setattr(web_mod, "client_access", lambda ip: "view")
     lg = login_mod.Login(tmp_path / "login.json")
     lg.set_password(PW)
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(types.SimpleNamespace(local_id=None, paused=False), None, None, _Alerts(), None, lg))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(types.SimpleNamespace(local_id=None, paused=False), None, None, _Alerts(), None, lg))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     host = f"127.0.0.1:{srv.server_address[1]}"
 
@@ -156,7 +157,8 @@ def test_radio_page_is_this_computer_only_even_logged_in(lan_server, monkeypatch
     monkeypatch.setitem(server.CFG["http"], "lan", "view")
     req = lan_server
     cookie = req("POST", "/api/login", {"password": PW})[1]["Set-Cookie"].split(";")[0]
-    for path in ("/api/radio", "/api/radio/share?index=1", "/api/radio/logging"):
+    for path in ("/api/radio", "/api/radio/share?index=1", "/api/radio/logging", "/api/preferences", "/api/diagnostics",
+                 "/api/diagnostics.zip"):
         assert req("GET", path, cookie=cookie)[0] == 403            # backups and channel keys stay on this computer
     assert req("POST", "/api/radio/apply", {"changes": {}}, cookie=cookie)[0] == 403
     assert req("POST", "/api/radio/channel", {"action": "create", "name": "x"}, cookie=cookie)[0] == 403

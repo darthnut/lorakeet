@@ -3,16 +3,15 @@ import http.client
 import json
 from http.server import BaseHTTPRequestHandler
 import os
-import socket
 import threading
 import time
-import types
 
 import pytest
 
 import login as login_mod
-import pairing
 import server
+import store as store_mod
+import web as web_mod
 import sync as sync_mod
 
 T0 = 1_700_000_000
@@ -29,10 +28,10 @@ def _batch(station, table, rows):
 
 @pytest.fixture
 def hub(tmp_path):
-    store = server.Store(tmp_path / "mesh.db")
+    store = store_mod.Store(tmp_path / "mesh.db")
     store.claim_station(HUB_RADIO)
     yield sync_mod.Hub(store), store
-    store.db.close()
+    store.close()
 
 
 # ---- 2: whatever arrives must fit its column (stored script in number columns)
@@ -59,17 +58,17 @@ def test_station_id_with_a_trailing_newline_is_refused(hub):
 
 # ---- 4 + 8: who may write which station
 def test_nobody_writes_as_the_hubs_own_radio_even_before_it_connects(tmp_path):
-    store = server.Store(tmp_path / "mesh.db")
+    store = store_mod.Store(tmp_path / "mesh.db")
     store.claim_station(HUB_RADIO)
-    store.db.close()
-    again = server.Store(tmp_path / "mesh.db")                # after a restart, radio not connected yet
+    store.close()
+    again = store_mod.Store(tmp_path / "mesh.db")                # after a restart, radio not connected yet
     assert again.station is None
     h = sync_mod.Hub(again)
-    for writer in ("shared", "pair:p1", f"peer:somehub"):
+    for writer in ("shared", "pair:p1", "peer:somehub"):
         with pytest.raises(sync_mod.IngestError) as e:
             h.ingest(_batch(HUB_RADIO, "packets", [_row(1, HUB_RADIO)]), writer=writer)
         assert e.value.status == 409
-    again.db.close()
+    again.close()
 
 
 def test_a_peer_only_writes_stations_it_brought(hub):
@@ -180,7 +179,7 @@ class _Mesh:
 
 @pytest.fixture
 def web(monkeypatch):
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(_Mesh(), None, None, None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), None, None, None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
 
@@ -220,9 +219,9 @@ def test_a_negative_content_length_is_refused(web):
 
 
 def test_connections_time_out_and_are_capped():
-    h = server.make_handler(_Mesh(), None, None, None, None, None)
+    h = web_mod.make_handler(_Mesh(), None, None, None, None, None)
     assert h.timeout and h.timeout <= 120
-    assert server.MAX_CONNECTIONS <= 256 and sync_mod.MAX_JSON <= 64 * 1024 * 1024
+    assert web_mod.MAX_CONNECTIONS <= 256 and sync_mod.MAX_JSON <= 64 * 1024 * 1024
 
 
 def test_a_refused_station_hears_why_even_mid_upload(web):
@@ -239,13 +238,13 @@ def test_a_refused_station_hears_why_even_mid_upload(web):
 
 
 def test_one_device_cant_take_every_connection(monkeypatch):
-    srv = server.ExclusiveHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+    srv = web_mod.ExclusiveHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
     try:
         monkeypatch.setitem(server.CFG["sync"], "mode", "off")
         lan = "192.168.1.50"
-        assert all(srv._admit(lan) for _ in range(server.MAX_PER_ADDRESS)) and not srv._admit(lan)
+        assert all(srv._admit(lan) for _ in range(web_mod.MAX_PER_ADDRESS)) and not srv._admit(lan)
         assert not srv._admit("8.8.8.8")                                  # could never be served: closed at once
-        monkeypatch.setattr(server, "MAX_CONNECTIONS", server.MAX_PER_ADDRESS)
+        monkeypatch.setattr(web_mod, "MAX_CONNECTIONS", web_mod.MAX_PER_ADDRESS)
         assert not srv._admit("169.254.1.1")                             # the shared pool is full...
         assert all(srv._admit("127.0.0.1") for _ in range(20))            # ...this computer still gets in
         srv._release(lan)
@@ -286,9 +285,9 @@ def test_view_only_devices_see_no_paths(monkeypatch):
     class Storage:
         def status(self):
             return {"dbBytes": 1, "dbPath": "/srv/secret-folder/mesh.db", "dests": ["/mnt/secret-folder"], "lastBackup": {"error": "/srv/secret-folder"}}
-    monkeypatch.setattr(server, "client_access", lambda ip: "view")
+    monkeypatch.setattr(web_mod, "client_access", lambda ip: "view")
     monkeypatch.setitem(server.CFG["http"], "lan", "view")
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(_Mesh(), None, Storage(), None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), None, Storage(), None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)

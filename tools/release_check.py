@@ -26,6 +26,7 @@ CHECKS = [
     ("private IP", re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b(?!/)")),
     ("Tailscale IP", re.compile(r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b(?!/)")),
     ("node id", re.compile(r"![0-9a-f]{8}\b")),
+    ("MeshCore id", re.compile(r"\bmc:[0-9a-f]{12}\b")),
     ("MAC address", re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
     ("user path", re.compile(r"[A-Za-z]:\\\\?Users\\\\?\w+|/home/(?!lorakeet\b)\w+|/Users/\w+")),
@@ -65,7 +66,7 @@ def main(argv):
             for label, rx in CHECKS:
                 for m in rx.finditer(line):
                     v = m.group(0)
-                    if label == "node id" and (v in PLACEHOLDER_IDS or "0000" in v):  # 0000: a made-up id (tests)
+                    if label in ("node id", "MeshCore id") and (v in PLACEHOLDER_IDS or "0000" in v):  # 0000: a made-up id (tests)
                         continue
                     if label == "private IP" and v in EXAMPLE_IPS:
                         continue

@@ -15,7 +15,7 @@
 <body class="setup-page">
 <header class="topbar">
   <div class="brand"><img class="logo" src="favicon.svg" alt="" width="22" height="22">Lorakeet</div>
-  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a><a href="/radio.html" aria-current="page">Radio</a><a href="/stations.html">Stations</a></nav>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a><a href="/settings.html">Settings</a><a href="/radio.html" aria-current="page">Radio</a><a href="/stations.html">Stations</a></nav>
 </header>
 
 <main class="setup radio">
@@ -32,16 +32,28 @@
   <section class="card step" id="s2" hidden>
     <h2><span class="num">2</span> Settings</h2>
     <p class="note">What matters for logging, checked against this radio. Pick a change, then save: everything is written at once, and the radio restarts (a few seconds) to apply it.</p>
-    <p class="note badgekey"><span class="badge2 ok">✓</span> fine as it is · <span class="badge2 suggest">Suggested</span> works, but a change would log more or suit this radio better · <span class="badge2 needed">Needed</span> must be fixed before the radio can log · <span class="badge2 info">Info</span> nothing to fix: there if you want to change it. Settings not listed here stay as they are; the Meshtastic app changes the rest.</p>
+    <p class="note badgekey"><span class="badge2 ok">✓</span> fine as it is · <span class="badge2 suggest">Suggested</span> works, but a change would log more or suit this radio better · <span class="badge2 needed">Needed</span> must be fixed before the radio can log · <span class="badge2 info">Info</span> nothing to fix: there if you want to change it. Every other setting is under <b>Advanced</b> below; changes there join the same save.</p>
     <div class="names">
       <label class="row">Name <input id="longName" maxlength="39" size="22" aria-label="Long name"> short <input id="shortName" maxlength="4" size="5" aria-label="Short name (up to 4 characters)"></label>
       <p class="note">How the radio appears to others on the mesh.</p>
     </div>
     <div id="checklist"></div>
     <div class="actions">
-      <button class="btn primary" id="apply" disabled>Save changes to the radio</button>
+      <button class="btn primary" id="apply" disabled>Review and save</button>
+      <button class="btn" id="undoBtn" hidden>Undo last save</button>
       <span class="muted" id="applyNote"></span>
     </div>
+  </section>
+
+  <section class="card" id="adv" hidden>
+    <h2>Advanced: every setting</h2>
+    <p class="note">Everything this radio reports, by section. Change as many settings as you like, in as many sections as you like: nothing is sent until you press <b>Review and save</b>, and then it's one backup, one write and one restart for all of them (the Meshtastic app restarts the radio after every page). Afterwards each change is read back from the radio.</p>
+    <p class="note"><span class="riskkey">Red</span> marks a setting that can cut Lorakeet off from the radio, break logging, transmit a lot, put your traffic on the internet, or that's a legal setting: the review asks you to confirm those. Passwords and PINs are never shown; type a new one to replace it. The radio's keys can't be changed here.</p>
+    <div class="advtools">
+      <input id="advSearch" type="search" placeholder="Find a setting… (e.g. hop, gps, mqtt)" aria-label="Find a setting" autocomplete="off">
+      <label class="opt"><input type="checkbox" id="advOnlyChanged"> <span>Only changed</span></label>
+    </div>
+    <div id="advSections"></div>
   </section>
 
   <section class="card step" id="s3" hidden>
@@ -90,6 +102,23 @@
       <span class="muted" id="stNote"></span>
     </div>
   </section>
+
+  <div class="savebar" id="saveBar" hidden>
+    <span id="saveCount"></span>
+    <button class="btn primary" id="saveReview">Review and save</button>
+    <button class="linkbtn" id="saveDiscard">Discard all</button>
+    <span class="muted" id="saveNote"></span>
+  </div>
+
+  <dialog id="review" aria-labelledby="revTitle">
+    <h2 id="revTitle">Review the changes</h2>
+    <p class="note" id="revUndoNote" hidden>Puts back what the last save changed, from the backup taken just before it. Settings changed elsewhere since (in the Meshtastic app, say) aren't touched, and changes waiting here stay waiting.</p>
+    <p class="note">Written to the radio together: one backup first, one write, one restart (a few seconds). Then each change is read back from the radio.</p>
+    <ul class="revlist" id="revList"></ul>
+    <label class="opt" id="revConfirmRow" hidden><input type="checkbox" id="revConfirm"> <span>I've read the warnings in red and want these changes.</span></label>
+    <p class="err" id="revErr" role="alert"></p>
+    <p class="actions"><button class="btn primary" id="revSave">Save to the radio</button> <button class="btn" id="revCancel">Keep editing</button></p>
+  </dialog>
 
   <section class="card" id="bk" hidden>
     <h2>Backups</h2>

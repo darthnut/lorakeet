@@ -2,7 +2,7 @@
 import time
 
 import analytics
-import server
+import store as store_mod
 import topology
 
 STATION = "!b0000002"
@@ -11,7 +11,7 @@ AWAY = (HOME[0] + 0.02, HOME[1] + 0.02)        # ~2.7 km from it
 
 
 def build(path):
-    store = server.Store(path)
+    store = store_mod.Store(path)
     t = time.time() - 6 * 3600
     store.insert("positions", ts=t - 600, node=STATION, lat=HOME[0], lon=HOME[1], source="own", station=STATION)
     for i in range(30):  # five hours parked at home, a fix every 10 min
@@ -22,7 +22,7 @@ def build(path):
                      lat=HOME[0] + (AWAY[0] - HOME[0]) * f, lon=HOME[1] + (AWAY[1] - HOME[1]) * f)
     # another station heard the car's own broadcast: rounded to a box kilometres wide, and newer than any fix
     store.insert("positions", ts=time.time(), node=STATION, lat=47.5, lon=-122.5, precision_bits=13, station="!a0000001")
-    store.db.close()
+    store.close()
 
 
 def test_a_moving_station_is_drawn_where_it_spent_the_range(tmp_path):
@@ -63,3 +63,49 @@ def test_coverage_squares_are_the_same_whatever_else_is_shown():
     b = drive._bin([{"station": STATION, "segments": [[[HOME[0], HOME[1], 0, 1], [HOME[0] + 0.001, HOME[1], 60, 1]], far]}], [], 250, None)
     home_square = lambda cells: next(c["bounds"] for c in cells if c["bounds"][0][0] <= HOME[0] < c["bounds"][1][0])  # noqa: E731
     assert home_square(a) == home_square(b)                   # the old grid moved with the data's mean latitude
+
+
+def test_a_moving_stations_links_start_where_they_were_seen(tmp_path):
+    """The car is drawn where it spent the range (home), but a radio it heard at the end of its drive is linked
+    from there, not from home: drawn from the marker, the link would claim a range nobody has."""
+    path = tmp_path / "mesh.db"
+    build(path)
+    store = store_mod.Store(path)
+    t = time.time() - 6 * 3600
+    store.insert("packets", ts=t - 600, station=STATION, from_id="!a0000008", to_id="^all", pkt_id=1, portnum="TEXT_MESSAGE_APP")  # logging began
+    for k in range(3):  # three direct receptions near AWAY, at the end of the drive
+        store.insert("rx_hops", ts=t + 18000 + 590 + k, station=STATION, from_id="!a0000009", to_id="^all", pkt_id=100 + k,
+                     hops=0, hop_start=3, hop_limit=3, snr=5.0, rssi=-90)
+    store.insert("rx_hops", ts=t + 600, station=STATION, from_id="!a0000008", to_id="^all", pkt_id=7, hops=0,
+                 hop_start=3, hop_limit=3, snr=5.0, rssi=-90)  # and one while parked at home
+    store.close()
+    db = analytics._connect(path, "*")
+    try:
+        out = topology._compute(db, "24h", STATION, lambda i: {"name": i})
+    finally:
+        db.close()
+    by = {tuple(sorted((e["a"], e["b"]))): e for e in out["edges"]}
+    away = by[tuple(sorted(("!a0000009", STATION)))]["anchors"][STATION]
+    assert len(away) == 1 and away[0][2] == 3 and analytics.dist_m(*AWAY, away[0][0], away[0][1]) < 400
+    home = by[tuple(sorted(("!a0000008", STATION)))]["anchors"][STATION]
+    assert analytics.dist_m(*HOME, home[0][0], home[0][1]) < 100
+    car = next(n for n in out["nodes"] if n["id"] == STATION)
+    assert analytics.dist_m(*HOME, car["lat"], car["lon"]) < 50   # the marker itself stays where it spent the range
+
+
+def test_a_radio_only_a_car_heard_is_placed_where_the_car_heard_it(tmp_path):
+    """Estimated positions anchor on where a moving station was when it heard the radio: anchored on the car's
+    latest spot, everything it heard in one town ended up wherever it parked next."""
+    import insights
+    path = tmp_path / "mesh.db"
+    build(path)  # parked at HOME for five hours, then a drive: its latest fix is AWAY
+    store = store_mod.Store(path)
+    t = time.time() - 6 * 3600
+    store.insert("packets", ts=t - 600, station=STATION, from_id="!a0000008", to_id="^all", pkt_id=1, portnum="TEXT_MESSAGE_APP")
+    for k in range(3):  # a radio with no position of its own, heard only while parked at home
+        store.insert("rx_hops", ts=t + 1200 + k, station=STATION, from_id="!a0000007", to_id="^all", pkt_id=50 + k,
+                     hops=0, hop_start=3, hop_limit=3, snr=4.0, rssi=-95)
+    store.close()
+    est = {e["id"]: e for e in insights.estimate_positions(path, "*", "", lambda i: {"name": i})["estimates"]}
+    e = est["!a0000007"]
+    assert analytics.dist_m(*HOME, e["lat"], e["lon"]) < 200   # not at AWAY, where the car is now

@@ -4,11 +4,22 @@
 //   node tools/record-viz.mjs [out.mp4] [--range 7d] [--station *] [--fps 60] [--no-anon] [--seconds N]
 //        [--ramp-hours 3] [--fade auto|<hours>] [--fade-misses 3] [--fade-remove] [--texts] [--url ...]
 //        [--view graph|geo] [--zoom +1] [--size 1920x1080] [--crf 18] [--slow 600] [--fast 3600]
+//        [--groovy rainbow|neon|lava|aurora] [--groovy-intensity chill|groovy|far-out] [--kaleido]
+//        [--from "2026-10-09 20:00" --to "2026-10-09 23:35" [--play-seconds 40]] [--shift north_m,east_m] [--center lat,lon]
+//        [--key-end]
+// --key-end shows the Key at the END instead of the start, so a site's thumbnail (the first frame) isn't covered by it.
+// In a --from/--to window, Grow starts from the window: only radios heard in it appear, as they're first heard there.
+// --from/--to record just that window (local time; it must lie inside --range), at one steady speed that plays it in
+// --play-seconds (default 40), instead of the whole range with the ramp.
+// --shift keeps the real map but moves every radio by that many metres (with names anonymized; 0,0 = real places),
+// in place of the decoy place: for a clip that says which town it is without pinpointing a home.
 // --view geo records the map (it shows where radios are: consider --station so no moving station's route is drawn);
 // --size / --crf trade quality for file size (GitHub plays README videos up to 10 MB: 1280x720, --crf 26, --fps 30);
 // --zoom (geo) zooms the map in from its fitted framing by that many levels, around the mesh's centre;
 // --slow / --fast are the replay speeds (simulated seconds per second) before and after the ramp.
 // --texts shows the texts panel (lines to each sender; "a text message" in place of the words when anonymized).
+// --groovy records Groovy mode (static/groovy.js): psychedelic colours, comet trails and sparks; the sparks are
+// random, so two recordings differ. Heavier frames: try --groovy-intensity chill for long ranges.
 //
 // Chrome (headless, 1920x1080, dark theme) is driven over the DevTools protocol with Node's built-in WebSocket:
 // no npm installs. The page's clock (performance.now, requestAnimationFrame, timers) is replaced by a simulated
@@ -32,6 +43,9 @@ const ANON = !args.includes("--no-anon"), MAX_S = Number(opt("seconds", 600)), R
 // fade mode (off unless --fade): radios dim when they go quiet; see the Fade menu on the page
 const FADE = { on: args.includes("--fade"), after: (() => { const v = opt("fade", "auto"); return !v || v.startsWith("--") ? "auto" : v; })(),
   misses: Number(opt("fade-misses", 3)), remove: args.includes("--fade-remove") };
+// groovy mode (off unless --groovy): the 🌈 Groovy button's look; an optional vibe name follows the flag
+const GROOVY = { on: args.includes("--groovy"), vibe: (() => { const v = opt("groovy", "rainbow"); return !v || v.startsWith("--") ? "rainbow" : v; })(),
+  intensity: opt("groovy-intensity", "groovy"), trails: true, bursts: true, auras: true, background: true, kaleido: args.includes("--kaleido") };
 const [W, H] = String(opt("size", "1920x1080")).split("x").map(Number), CRF = String(opt("crf", 18));
 const VIEW = opt("view", "graph") === "geo" ? "geo" : "graph", BASE = opt("url", "http://127.0.0.1:5190").replace(/\/$/, ""), PORT = 9333;
 // Chrome/Edge/Chromium and ffmpeg: $CHROME / $FFMPEG, else the usual install locations, else ffmpeg on PATH.
@@ -42,6 +56,10 @@ const CHROME = [process.env.CHROME,
   "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser",
   "/snap/bin/chromium"].find((p) => p && existsSync(p));
 const FFMPEG = [process.env.FFMPEG, join(process.env.USERPROFILE || "", "ffmpeg/bin/ffmpeg.exe")].find((p) => p && existsSync(p)) || "ffmpeg";
+const at = (s) => (s ? new Date(s.replace(" ", "T")).getTime() / 1000 : null);  // local time
+const FROM = at(opt("from")), TO = at(opt("to")), PLAY_S = Number(opt("play-seconds", 40)), SHIFT = opt("shift");
+if ((FROM == null) !== (TO == null) || (FROM != null && !(TO > FROM))) throw new Error("--from and --to go together, from before to");
+const KEY_END = args.includes("--key-end");
 const INTRO_S = 4.5, INTRO_FADE_S = 0.6, OUTRO_S = 2, RAMP_S = 2.5, SLOW = Number(opt("slow", 600)), FAST = Number(opt("fast", 3600));
 
 // Runs in the page before any of its scripts: a simulated clock the recorder advances one frame at a time.
@@ -82,6 +100,7 @@ const FAKE_CLOCK = `(() => {
       localStorage.setItem("meshdash.fade", ${JSON.stringify(JSON.stringify(FADE))});
       localStorage.setItem("meshdash.chat", ${JSON.stringify(args.includes("--texts") ? "1" : "0")});
       localStorage.setItem("meshdash.topoView", ${JSON.stringify(VIEW)});
+      localStorage.setItem("meshdash.groovy", ${JSON.stringify(JSON.stringify(GROOVY))});
     }
   } catch {}
 })();`;
@@ -145,7 +164,8 @@ async function main() {
     await cdp("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }, { name: "prefers-reduced-motion", value: "no-preference" }] });
     await cdp("Page.addScriptToEvaluateOnNewDocument", { source: FAKE_CLOCK });
-    await cdp("Page.navigate", { url: `${BASE}/visualizations.html${ANON ? "?anon=1" : ""}` });
+    const q = ANON ? `?anon=1${SHIFT ? `&shift=${encodeURIComponent(SHIFT)}` : ""}` : "";
+    await cdp("Page.navigate", { url: `${BASE}/visualizations.html${q}` });
 
     // load, then hidden-UI mode (which redraws for the full window); a few frames so each redraw can run
     const ready = async (cond, what) => { for (let i = 0; i < 300; i++) { await js("__film.step(16.667)"); if (await js(cond)) return; await sleep(50); } throw new Error(`timed out waiting for ${what}`); };
@@ -154,12 +174,40 @@ async function main() {
     const gen = await js("R.gen");
     await ready(`R.gen > ${gen} && !!R.graph`, "the full-window redraw");
     const ZOOM = Number(opt("zoom", 0));
-    if (VIEW === "geo" && ZOOM) {
-      await js(`R.map.setZoom(R.map.getZoom() + ${ZOOM}, { animate: false }); 1`);
+    const CENTER = opt("center");  // geo: "lat,lon" to centre on (real coordinates, before any --shift)
+    if (VIEW === "geo" && (ZOOM || CENTER)) {
+      await js(CENTER ? `(() => { const [la, lo] = ${JSON.stringify(CENTER)}.split(",").map(Number);
+          R.map.setView([la, lo], R.map.getZoom() + ${ZOOM}, { animate: false }); return 1; })()`
+        : `R.map.setZoom(R.map.getZoom() + ${ZOOM}, { animate: false }); 1`);
       for (let i = 0; i < 90; i++) { await js("__film.step(16.667)"); await sleep(30); }  // tiles for the new zoom
     }
-    await js(`seek(R.data.since); R.speed = ${SLOW}; __film.fakeTimers(); 1`);
+    if (FROM != null) {  // one window at one steady speed: no ramp, and the replay ends at --to
+      await js(`if (${FROM} < R.data.since || ${TO} > R.data.until) throw new Error("--from/--to must lie inside the range");
+        R.data.until = ${TO}; seek(${FROM}); R.speed = ${(TO - FROM) / PLAY_S}; __film.fakeTimers(); 1`);
+    } else {
+      await js(`seek(R.data.since); R.speed = ${SLOW}; __film.fakeTimers(); 1`);
+    }
     const info = await js(DIRECTOR);
+    if (FROM != null) {
+      // Grow from the window: a radio first heard before it appears when it's first heard INSIDE it (never, if not)
+      await js(`(() => {
+        window.__plan.rampAt = Infinity;
+        for (const [id, t] of R.first) {
+          if (t === -Infinity || t >= ${FROM}) continue;
+          const s = (R.seen.get(id) || []).find((x) => x >= ${FROM});
+          R.first.set(id, s ?? Infinity);
+        }
+        R.revealTimes = [...R.first.values()].filter(Number.isFinite).sort((a, b) => a - b);
+        R.visKey = null; R.grew = false; applyVisibility();
+        // the Key's counts are for the whole range: count the window's own packets instead
+        const n = {};
+        for (const e of R.data.events) if (e.ts >= ${FROM} && e.ts <= ${TO}) n[e.group] = (n[e.group] || 0) + 1;
+        document.querySelectorAll("#filmKey .chip[data-g]").forEach((c) => {
+          const k = n[c.dataset.g] || 0;
+          if (!k) c.remove(); else c.querySelector(".n").textContent = k.toLocaleString();
+        });
+        return 1; })()`);
+    }
     console.log(`range ${new Date(info.since * 1000).toLocaleString()} to ${new Date(info.until * 1000).toLocaleString()}, ${info.radios} radios; ramp at ${new Date(info.rampAt * 1000).toLocaleString()}`);
 
     const ff = spawn(FFMPEG, ["-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "mjpeg", "-i", "-",
@@ -174,14 +222,19 @@ async function main() {
       if (frames % (FPS * 5) === 0) process.stdout.write(`  ${(frames / FPS).toFixed(0)} s of video\n`);
     };
 
-    // 1. the Key over the starting graph, then fade it away
+    // 1. the Key over the starting graph, then fade it away (with --key-end: hidden now, shown at the end)
     const introN = Math.round(INTRO_S * FPS), fadeN = Math.round(INTRO_FADE_S * FPS);
-    for (let i = 0; i < introN + fadeN; i++) {
-      const o = i < introN ? 1 : 1 - (i - introN) / fadeN;
-      await js(`document.getElementById("filmKey").style.opacity = "${o.toFixed(3)}"; __film.step(${dt}); 1`);
-      await shoot();
+    if (KEY_END) {
+      await js(`document.getElementById("filmKey").style.opacity = "0"; 1`);
+    } else {
+      for (let i = 0; i < introN + fadeN; i++) {
+        const o = i < introN ? 1 : 1 - (i - introN) / fadeN;
+        await js(`document.getElementById("filmKey").style.opacity = "${o.toFixed(3)}"; __film.step(${dt}); 1`);
+        await shoot();
+      }
+      await js(`document.getElementById("filmKey").remove(); 1`);
     }
-    await js(`document.getElementById("filmKey").remove(); document.getElementById("replayPlay").click(); 1`);
+    await js(`document.getElementById("replayPlay").click(); 1`);
 
     // 2. play: 10 min/s, a geometric ramp to 1 h/s once most radios are in, to the end of the range
     const step = `(() => {
@@ -200,6 +253,13 @@ async function main() {
       await shoot();
       if (ended && endAt == null) endAt = frames;
       if (endAt != null && (frames - endAt) > OUTRO_S * FPS && !flying) break;
+    }
+    if (KEY_END) {  // 3. the Key fades in over the last frame and holds
+      for (let i = 0; i < fadeN + introN; i++) {
+        const o = Math.min(1, i / fadeN);
+        await js(`document.getElementById("filmKey").style.opacity = "${o.toFixed(3)}"; __film.step(${dt}); 1`);
+        await shoot();
+      }
     }
     ff.stdin.end();
     await done;

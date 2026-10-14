@@ -44,9 +44,11 @@ body:
   - type: textarea
     id: log
     attributes:
-      label: The end of server.log (if something failed)
-      description: In Lorakeet's data folder. Check it for your user name, radio names and ids before pasting.
-      render: text
+      label: Diagnostics (if something failed)
+      description: >-
+        Settings -> Help and diagnostics -> Save diagnostics, then drag the zip in here (or run python diagnostics.py
+        in Lorakeet's folder if it won't start). Personal details are taken out, but read it before attaching.
+        Or paste the end of server.log, checked for your user name, radio names and ids.
   - type: textarea
     id: more
     attributes:

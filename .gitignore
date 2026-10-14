@@ -29,3 +29,8 @@ private/
 
 # local Claude Code config (dev servers, paths on this machine)
 .claude/
+
+# pytest --cov data
+.coverage
+.coverage.*
+htmlcov/

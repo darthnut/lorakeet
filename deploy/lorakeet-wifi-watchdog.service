@@ -4,4 +4,7 @@ After=NetworkManager.service
 
 [Service]
 Type=oneshot
+# systemd logs three or four lines every time a unit runs; once a minute that was the largest writer to the SD card.
+# Notice and above still get through, which includes everything the watchdog itself reports (logger's default).
+LogLevelMax=notice
 ExecStart=/home/lorakeet/lorakeet/deploy/wifi-watchdog.sh

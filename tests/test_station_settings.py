@@ -3,13 +3,13 @@ the Radio page's endpoints for them (this computer only)."""
 import http.client
 import json
 import threading
-import types
 
 import pytest
 
 import config
 import radio_setup
 import server
+import web as web_mod
 
 SEATTLE = (47.6062, -122.3321)  # the documented example location
 
@@ -61,6 +61,9 @@ class _Mesh:
     def name(self, nid):
         return nid
 
+    def event(self, kind, **detail):
+        self.events = getattr(self, "events", []) + [(kind, detail)]
+
 
 @pytest.fixture
 def local_server(tmp_path, monkeypatch):
@@ -69,7 +72,7 @@ def local_server(tmp_path, monkeypatch):
     monkeypatch.setenv("LORAKEET_CONFIG", str(p))
     monkeypatch.delenv("LORAKEET_SUPERVISED", raising=False)
     monkeypatch.delenv("INVOCATION_ID", raising=False)
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(_Mesh(), None, None, None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), None, None, None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     host = f"127.0.0.1:{srv.server_address[1]}"
 
@@ -96,3 +99,38 @@ def test_station_endpoints(local_server):
     assert req("POST", "/api/radio/station", {"name": "x", "location": [95, 0]})[0] == 400
     st, d = req("POST", "/api/radio/restart", {})
     assert st == 409 and "background runner" in d["error"]   # not supervised: says how instead of exiting
+
+
+def test_update_sections_writes_all_or_nothing(tmp_path, monkeypatch):
+    p = tmp_path / "lorakeet.toml"
+    p.write_text('# mine\n[http]\nport = 5199  # keep me\n\n[map]\nzoom = 9\n', encoding="utf-8")
+    monkeypatch.setenv("LORAKEET_CONFIG", str(p))
+    config.update_sections({"map": {"center": [SEATTLE[0], SEATTLE[1]], "zoom": 12}, "backup": {"time": "04:15"},
+                            "http": {"hostnames": ["desk-pc"]}})
+    c = config.file_settings()
+    assert c["map"]["center"] == [47.6062, -122.3321] and c["map"]["zoom"] == 12 and c["backup"]["time"] == "04:15"
+    assert c["http"]["hostnames"] == ["desk-pc"] and "# mine" in p.read_text(encoding="utf-8")
+    before = p.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):  # one bad value refuses the whole batch
+        config.update_sections({"map": {"zoom": 3}, "backup": {"time": "25:00"}})
+    assert p.read_text(encoding="utf-8") == before
+    config.update_sections({"map": {"center": None}})  # None removes the key: back to the default
+    assert config.file_settings()["map"]["center"] == [] and "center" not in p.read_text(encoding="utf-8")
+
+
+def test_preferences_endpoints(local_server, monkeypatch):
+    req, p = local_server
+    monkeypatch.setitem(server.CFG, "_path", str(p))
+    st, d = req("GET", "/api/preferences")
+    assert st == 200 and d["saved"]["http"]["port"] == 5199 and "sync" not in d["saved"]
+    assert "token" not in json.dumps(d)  # never the sync token
+    st, d = req("POST", "/api/preferences", {"changes": {"map": {"zoom": 13, "tiles": "esri"}, "base": {"id": "!a0000001"}}})
+    assert st == 200 and d["saved"]["map"] == {"center": [], "zoom": 13, "tiles": "esri"} and d["saved"]["base"]["id"] == "!a0000001"
+    assert d["running"]["map"]["zoom"] != 13 or d["running"]["map"]["tiles"] != "esri"  # running = until a restart
+    st, d = req("POST", "/api/preferences", {"changes": {"map": {"tiles": "carto"}}})
+    assert st == 400 and "map.tiles" in d["error"] and "lorakeet.toml:" not in d["error"]
+    for bad in ({"sync": {"token": "x" * 20}}, {"storage": {"data_dir": "/tmp"}}, {"map": {"nope": 1}}, {"map": 5}):
+        assert req("POST", "/api/preferences", {"changes": bad})[0] == 400  # only what the page may change
+    assert 'tiles = "esri"' in p.read_text(encoding="utf-8") and "token" not in p.read_text(encoding="utf-8")
+    monkeypatch.setitem(server.CFG, "_path", None)
+    assert req("POST", "/api/preferences", {"changes": {"map": {"zoom": 4}}})[0] == 409  # not set up yet: the setup page

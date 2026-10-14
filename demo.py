@@ -117,7 +117,8 @@ class _Mesh:
 
 def build(path, now=None):
     """Write the demo mesh to a new database at `path` (replacing it). Returns the demo's own radio id."""
-    import server  # the schema and Store; imported here so `import demo` stays cheap
+    import runtime
+    import store as store_mod  # the schema and Store; imported here so `import demo` stays cheap
     from analytics import STATION_TABLES
 
     rng = random.Random(SEED)
@@ -273,7 +274,7 @@ def build(path, now=None):
             done_ts=start + (k + 1) * 50000 + 20)
 
     # ---- the database itself
-    store = server.Store(tmp)
+    store = store_mod.Store(tmp)
     store.claim_station(m.home)
     for table, rs in rows.items():
         if not rs:
@@ -283,10 +284,10 @@ def build(path, now=None):
                              [[r.get(c) for c in cols] for r in rs])
     hub = {m.hill: {"first": start, "last": now - 20, "rows": sum(n for (st, _), n in src.items() if st == m.hill), "tables": {}},
            m.car: {"first": drive[0], "last": drive[1], "rows": sum(n for (st, _), n in src.items() if st == m.car), "tables": {}}}
-    meta = {m.hill: {"name": "Hilltop Station", "location": list(m.radios[m.hill]["pos"]), "version": server.VERSION,
+    meta = {m.hill: {"name": "Hilltop Station", "location": list(m.radios[m.hill]["pos"]), "version": runtime.VERSION,
                      "platform": "linux aarch64", "radioHw": "RAK4631", "radioFirmware": "2.7.26", "uptimeS": DAYS * 86400,
                      "backlog": 0, "received": now - 20},
-            m.car: {"name": "Demo Car", "mobile": True, "version": server.VERSION, "radioHw": "TRACKER_T1000_E",
+            m.car: {"name": "Demo Car", "mobile": True, "version": runtime.VERSION, "radioHw": "TRACKER_T1000_E",
                     "radioFirmware": "2.7.26", "received": drive[1]}}
     private_hash = 124
     settings = {
@@ -303,7 +304,7 @@ def build(path, now=None):
         "port": "demo", "local": m.home, "channels": [{"index": 0, "role": "PRIMARY", "settings": {"name": ""}},
                                                        {"index": 1, "role": "SECONDARY", "settings": {"name": PRIVATE_NAME}}]}), m.home))
     store.db.commit()
-    store.db.close()
+    store.close()
     for p in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm")):
         p.unlink(missing_ok=True)
     tmp.replace(path)

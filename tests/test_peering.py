@@ -7,6 +7,10 @@ import pytest
 
 import pairing
 import server
+import channels
+import runtime
+import store as store_mod
+import web as web_mod
 import sync as sync_mod
 
 A_RADIO, B_RADIO = "!a0000001", "!b0000001"
@@ -16,7 +20,7 @@ T0 = 1_700_000_000  # realistic times: the hub refuses timestamps before 2017
 
 
 def _store(path, station):
-    s = server.Store(path)
+    s = store_mod.Store(path)
     s.station = station
     return s
 
@@ -62,13 +66,13 @@ class _Mesh:
 def hubs(tmp_path, monkeypatch):
     bdir = tmp_path / "b"
     bdir.mkdir()
-    monkeypatch.setattr(server, "DATA_DIR", bdir)
+    monkeypatch.setattr(runtime, "DATA_DIR", bdir)
     monkeypatch.setitem(server.CFG["sync"], "mode", "hub")
     monkeypatch.setitem(server.CFG["sync"], "token", "")
     monkeypatch.setitem(server.CFG["sync"], "station_tokens", [])
     monkeypatch.setitem(server.CFG["sync"], "allow", pairing.allow_networks(True, False))
     b = _store(bdir / "mesh.db", B_RADIO)
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(_Mesh(), b, None, None, sync_mod.Hub(b), None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), b, None, None, sync_mod.Hub(b), None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{srv.server_address[1]}"
     monkeypatch.setattr(pairing, "hub_addresses", lambda port: [{"url": url, "kind": "lan", "ip": "127.0.0.1", "primary": True}])
@@ -96,8 +100,8 @@ def hubs(tmp_path, monkeypatch):
     b.call = call
     yield a, b, sender, code
     srv.shutdown()
-    a.db.close()
-    b.db.close()
+    a.close()
+    b.close()
 
 
 def _b(b, sql, *args):
@@ -180,7 +184,7 @@ def test_deleting_what_a_peer_sent_keeps_everything_else(hubs):
     other = sync_mod.Hub(b)                                           # and a station B got from somewhere else
     other.ingest({"protocol": 1, "station": "!d0000001", "table": "packets",
                   "rows": [{"src_rowid": 1, "station": "!d0000001", "ts": T0 + 60, "from_id": "!c0000001"}]}, writer="shared")
-    pid = next(e["id"] for e in json.loads((server.DATA_DIR / "stations.json").read_text()) if e["kind"] == "peer")
+    pid = next(e["id"] for e in json.loads((runtime.DATA_DIR / "stations.json").read_text()) if e["kind"] == "peer")
     st, pv = b.call("POST", "/api/hub/peer-forget", {"pairing": pid, "dryRun": True})
     assert st == 200 and [x["id"] for x in pv["stations"]] == [A_RADIO] and pv["rows"] > 0 and not pv["revoked"]
     assert _b(b, "SELECT COUNT(*) AS n FROM packets WHERE station = ?", A_RADIO)[0]["n"] > 0   # a preview deletes nothing
@@ -245,8 +249,8 @@ def test_a_rounded_position_doesnt_keep_its_exact_bytes():
 def test_each_station_is_judged_by_its_own_channels(tmp_path):
     """A station's private channel can share its one-byte fingerprint with a public preset (LongFast's is 8): that
     station's traffic on 8 proves nothing. A station that never reported its channels proves nothing either."""
-    import server
-    st = server.Store(tmp_path / "mesh.db")
+    import store as store_mod
+    st = store_mod.Store(tmp_path / "mesh.db")
     st.claim_station("!a0000001")
     st.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('radio_channels', ?)",
                   (json.dumps({"channels": [{"index": 0, "hash": 8, "encrypted": True, "publicKey": True}]}),))
@@ -254,7 +258,7 @@ def test_each_station_is_judged_by_its_own_channels(tmp_path):
         "!a0000002": {"publicHashes": [8], "privateHashes": []},
         "!a0000003": {"publicHashes": [], "privateHashes": [8]}}),))
     st.db.commit()
-    hashes = server.public_channel_hashes(st, {"!a0000001"})
+    hashes = channels.public_channel_hashes(st, {"!a0000001"})
     assert 8 in hashes("!a0000001") and 8 in hashes("!a0000002")
     assert 8 not in hashes("!a0000003") and hashes("!a0000004") == set()
     rows = []
@@ -311,3 +315,26 @@ def test_pausing_receiving_declines_without_losing_anything(hubs):
     assert b.call("POST", "/api/hub/station", {"action": "resume", "pairing": pid})[0] == 200
     s.sync_once()
     assert _b(b, "SELECT 1 FROM packets WHERE pkt_id = 90")
+
+
+def test_an_outage_is_one_log_line_not_one_per_pass(tmp_path, caplog):
+    """A peer that's off (a laptop asleep overnight) used to log a warning every pass: ~700 lines a night."""
+    import logging
+    store = store_mod.Store(tmp_path / "mesh.db")
+    snd = sync_mod.PeerSender(store, {"id": "p9", "name": "Laptop", "url": "", "token": ""}, "me", set, lambda st: None)
+    calls = iter([RuntimeError("peer unreachable: timed out"), RuntimeError("peer unreachable: [WinError 10060] no answer"),
+                  RuntimeError("peer unreachable: timed out"), None, RuntimeError("peer unreachable: timed out")])
+
+    def once():
+        e = next(calls)
+        if e:
+            raise e
+        return 0
+    snd.sync_once = once
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        for _ in range(5):
+            snd.tick()
+    lines = [r.getMessage() for r in caplog.records if "Laptop" in r.getMessage()]
+    assert len(lines) == 3, lines                       # down, back, down again: not five
+    assert "unreachable" in lines[0] and "sending again" in lines[1] and "unreachable" in lines[2]
+    assert snd.status["lastError"] == "peer unreachable: timed out"   # the page still shows the latest error

@@ -67,3 +67,55 @@ body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; ov
 .stations .bad, .stations .linkbtn.danger { color: var(--critical); }
 .stations .mono { font-family: ui-monospace, monospace; font-size: 11px; }
 .stations .paused { color: var(--warning, #c98a00); font-weight: 600; }
+
+/* Radio page, Advanced: every setting, one pending batch */
+.radio .advtools { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 10px 0; }
+.radio .advtools input[type="search"] { flex: 1 1 260px; max-width: 420px; }
+.radio .advsec { border-top: 1px solid var(--border); padding: 6px 0; }
+.radio .advsec > summary { cursor: pointer; padding: 4px 0; }
+.radio .advcount { color: var(--accent); font-size: 12px; margin-left: 6px; }
+.radio .advf { display: grid; grid-template-columns: minmax(150px, 34%) 1fr; gap: 2px 14px; align-items: center;
+  padding: 7px 8px; border-radius: 6px; }
+.radio .advf + .advf { border-top: 1px solid var(--border); }
+.radio .advf .why, .radio .advf .risk { grid-column: 2; margin: 0; font-size: 12px; }
+.radio .advf .risk { display: none; }               /* the warning shows once a change would need it */
+.radio .advf.riskon .risk { display: block; }
+.radio .advf.changed.riskon { box-shadow: inset 3px 0 0 var(--critical); }
+.radio .advf.changed { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.radio .advf:not(.changed) .undo { display: none; }
+.radio .advc { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.radio .advc input[type="number"] { width: 9em; }
+.radio .advc input[type="text"], .radio .advc input[type="password"] { width: min(100%, 18em); }
+.radio .advl { font-weight: 500; }
+.radio .risk, .radio .riskkey { color: var(--critical); }
+.radio .advf.risky .advl::after { content: " ●"; color: var(--critical); font-size: 10px; vertical-align: 2px; }
+@media (max-width: 560px) { .radio .advf { grid-template-columns: 1fr; } .radio .advf .why, .radio .advf .risk { grid-column: 1; } }
+.radio .savebar { position: sticky; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  margin: 14px 0; padding: 10px 14px; border: 1px solid var(--accent); border-radius: 10px; background: var(--surface-1);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
+.radio dialog#review { max-width: min(640px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface-1); color: var(--text-primary); padding: 18px 20px; }
+.radio dialog#review::backdrop { background: rgba(0, 0, 0, .45); }
+.radio .revlist { padding-left: 18px; max-height: 50vh; overflow: auto; }
+.radio .revlist li { margin: 6px 0; }
+.radio .revlist li.risky { border-left: 3px solid var(--critical); padding-left: 8px; list-style: none; margin-left: -18px; }
+
+/* the Settings page (settings.js): the Radio page's field rows, one card per section */
+.settings .setnav { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 4px; font-size: 13px; }
+.settings .setnav a { color: var(--accent); text-decoration: none; }
+.settings .setnav a:hover { text-decoration: underline; }
+.settings section.card { scroll-margin-top: 64px; }
+.settings h2 .applies { font-size: 12px; font-weight: 400; margin-left: 8px; }
+.settings .advf .warnnote { grid-column: 2; margin: 0; font-size: 12px; color: var(--warning, #c98a00); }
+.settings .advc textarea { width: min(100%, 26em); font: inherit; font-family: ui-monospace, monospace; font-size: 13px; padding: 4px 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text-primary); }
+.settings .advc select { max-width: 100%; }
+.settings .advc input[data-part] { width: 9em; }
+.settings .restarttag { font-size: 11px; font-weight: 400; color: var(--warning, #c98a00); border: 1px solid currentColor; border-radius: 8px; padding: 0 5px; margin-left: 4px; }
+.readonly .settings .savebar, .readonly .settings #restartBtn { display: none !important; }
+@media (max-width: 560px) { .settings .advf .warnnote { grid-column: 1; } }
+.settings details.diag { margin: 6px 0; }
+.settings details.diag summary { cursor: pointer; font-family: ui-monospace, monospace; font-size: 13px; }
+.settings details.diag pre { max-height: 360px; overflow: auto; margin: 6px 0; padding: 8px 10px; font-size: 12px; line-height: 1.4;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings a.btn { text-decoration: none; color: inherit; }

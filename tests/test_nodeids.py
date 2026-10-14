@@ -5,7 +5,7 @@ import zlib
 
 import analytics
 import nodeids
-import server
+import store as store_mod
 import topology
 
 KEY = base64.b64encode(b"k" * 32).decode()   # made-up key
@@ -15,7 +15,7 @@ SENDER = "!c0000007"
 
 
 def build(path, old_heard_after_upgrade=False):
-    store = server.Store(path)
+    store = store_mod.Store(path)
     t = time.time() - 3 * 3600
     store.insert("node_info", ts=t, node=OLD, public_key=KEY, long_name="Pi station", station=OLD)
     store.insert("node_info", ts=t + 3600, node=NEW, public_key=KEY, long_name="Pi station", station=NEW)
@@ -28,7 +28,7 @@ def build(path, old_heard_after_upgrade=False):
     store.insert("packets", ts=t + 3600, from_id=NEW, to_id="^all", pkt_id=99, station=NEW)
     if old_heard_after_upgrade:  # two radios on the air at once with one key: a clone, not a renumber
         store.insert("packets", ts=t + 3 * 3600, from_id=OLD, to_id="^all", pkt_id=100, station=NEW)
-    store.db.close()
+    store.close()
 
 
 def test_old_and_new_numbers_are_one_station(tmp_path):

@@ -26,7 +26,8 @@ async function load() {
   renderConnect();
   const on = R.connected;
   for (const id of ["s2", "s3", "s4"]) $(id).hidden = !on;
-  if (on && !busy) { renderChecklist(); renderChannels(); }
+  if (on && !busy) { renderChecklist(); renderChannels(); loadAdvanced().then(loadUndo); }
+  if (!on) $("adv").hidden = true;
   renderBackups();
   renderStation();
   schedule();
@@ -57,8 +58,29 @@ function renderConnect() {
   $("connect").innerHTML = lines.join("");
 }
 
-// ---- step 2: settings
+// ---- step 2: settings, and Advanced. ONE pending batch for the whole page: checklist choices and Advanced edits
+// both live in PA (setting path -> new value, as the page shows it), the names on their own. Review and save sends
+// all of it in one request: one backup, one settings transaction, one restart, then everything is read back.
 const label = (it, v) => (it.options.find((o) => o.value === v) || {}).label ?? (v === true ? "On" : v === false ? "Off" : String(v));
+// enum names for people: words with digits and known abbreviations stay as they are (EU 868, US, OLED SH1106)
+const ACRONYMS = new Set(["US", "EU", "CN", "JP", "ANZ", "KR", "TW", "RU", "IN", "NZ", "TH", "UA", "MY", "SG", "PH", "KZ", "NP", "BR",
+  "LORA", "GPS", "OLED", "TAK", "DHCP", "MQTT", "PIN", "LED", "PWM", "UDP", "IP", "RX", "TX", "NMEA", "WS85", "VE", "MS", "TCP", "HQ", "RTO", "K9"]);
+const nice = (s) => String(s).split("_").map((w, i) => (/\d/.test(w) || ACRONYMS.has(w)) ? w
+  : i ? w.toLowerCase() : w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
+// does this new value need the warning and a confirmation? (the server applies the same rules: radio_advanced.RISK_WHEN)
+function riskNow(f, v) {
+  if (!f || !f.risk) return false;
+  const r = f.riskWhen;
+  if (!r) return true;
+  if ("eq" in r) return v === r.eq;
+  if ("gt" in r) return typeof v === "number" && v > r.gt;
+  if ("notIn" in r) return !r.notIn.includes(v);
+  return true;
+}
+let ADV = null, FIELDS = {}, SECT = {};
+const PA = {}, REVEAL = new Set();  // pending values; secrets whose "replace" box is open
+const pathOf = (it) => R?.checklistPaths?.[it.id];
+
 function renderChecklist() {
   $("longName").value = R.radio.longName || ""; $("shortName").value = R.radio.shortName || "";
   $("checklist").innerHTML = R.checklist.map((it, i) => {
@@ -68,28 +90,202 @@ function renderChecklist() {
     return `<div class="ci ${cls}"><div class="ch"><span class="badge2 ${cls}">${txt}</span><b>${esc(it.title)}</b><span class="cur">${esc(it.options.length ? label(it, it.current) : it.current)}</span></div>
       <p class="why">${esc(it.why)}</p>${sel || rec ? `<div class="cc">${sel}${rec}</div>` : ""}</div>`;
   }).join("");
+  syncChecklist();
   pending();
 }
-function changes() {
-  const out = {};
+function syncChecklist() {  // show PA in the checklist's own selects (a value only Advanced offers gets an extra option)
   for (const s of $("checklist").querySelectorAll("select")) {
-    const it = R.checklist[s.dataset.i], v = JSON.parse(s.value.slice(s.value.indexOf(":") + 1));
-    if (v !== it.current) out[it.id] = v;
+    const it = R.checklist[s.dataset.i], p = pathOf(it); if (!p) continue;
+    const want = p in PA ? PA[p] : it.current, key = `${s.dataset.i}:${JSON.stringify(want)}`;
+    if (![...s.options].some((o) => o.value === key)) s.add(new Option(`${nice(want)} (set in Advanced)`, key));
+    s.value = key;
   }
-  return out;
 }
-function namesChanged() { return $("longName").value.trim() !== (R.radio.longName || "") || $("shortName").value.trim() !== (R.radio.shortName || ""); }
-function pending() {
-  const n = Object.keys(changes()).length + (namesChanged() ? 1 : 0);
-  $("apply").disabled = !n || busy;
-  $("applyNote").textContent = n ? `${n} change${n > 1 ? "s" : ""} to save` : "";
+function setPending(p, v, current) {
+  if (JSON.stringify(v) === JSON.stringify(current)) delete PA[p]; else PA[p] = v;
+  const row = document.querySelector(`[data-row="${CSS.escape(p)}"]`);
+  row?.classList.toggle("changed", p in PA);
+  row?.classList.toggle("riskon", p in PA && riskNow(FIELDS[p], PA[p]));
+  syncChecklist();
+  pending();
 }
-$("checklist").addEventListener("change", pending);
-$("longName").addEventListener("input", pending); $("shortName").addEventListener("input", pending);
+$("checklist").addEventListener("change", (e) => {
+  const s = e.target.closest("select"); if (!s) return;
+  const it = R.checklist[s.dataset.i], p = pathOf(it); if (!p) return;
+  const v = JSON.parse(s.value.slice(s.value.indexOf(":") + 1));
+  setPending(p, v, it.current);
+  rerenderField(p);
+});
 $("checklist").addEventListener("click", (e) => {
   const b = e.target.closest("[data-rec]"); if (!b) return;
-  const it = R.checklist[b.dataset.rec], s = $("checklist").querySelector(`select[data-i="${b.dataset.rec}"]`);
-  s.value = `${b.dataset.rec}:${JSON.stringify(it.recommended)}`; pending();
+  const it = R.checklist[b.dataset.rec], p = pathOf(it); if (!p) return;
+  setPending(p, it.recommended, it.current);
+  rerenderField(p);
+});
+function namesChanged() { return $("longName").value.trim() !== (R.radio.longName || "") || $("shortName").value.trim() !== (R.radio.shortName || ""); }
+$("longName").addEventListener("input", pending); $("shortName").addEventListener("input", pending);
+
+function pending() {
+  const n = Object.keys(PA).length + (namesChanged() ? 1 : 0);
+  const txt = n ? `${n} change${n > 1 ? "s" : ""} waiting` : "";
+  $("apply").disabled = !n || busy;
+  if (!busy) { $("applyNote").textContent = txt; $("saveNote").textContent = ""; }
+  $("saveCount").textContent = txt;
+  $("saveReview").disabled = !n || busy; $("saveDiscard").disabled = !n || busy;
+  $("saveBar").hidden = !n && !busy;
+  for (const el of document.querySelectorAll("[data-count]")) {
+    const c = Object.keys(PA).filter((p) => p.startsWith(el.dataset.count + ".")).length;
+    el.textContent = c ? `${c} changed` : "";
+  }
+}
+
+// -- Advanced
+async function loadAdvanced() {
+  let d = null;
+  try { d = await fetch("/api/radio/advanced").then((r) => r.json()); } catch { /* restarting */ }
+  if (!d || d.error) { ADV = null; $("adv").hidden = true; return; }
+  ADV = d; FIELDS = {}; SECT = {};
+  for (const s of d.sections) for (const f of s.fields) { FIELDS[f.path] = f; SECT[f.path] = s; }
+  for (const p of Object.keys(PA)) if (!FIELDS[p] || FIELDS[p].readonly) delete PA[p];  // gone from this radio
+  renderAdvanced();
+}
+function renderAdvanced() {
+  if (!ADV) return;
+  $("adv").hidden = false;
+  const open = new Set([...document.querySelectorAll(".advsec[open]")].map((d) => d.dataset.sec));
+  const covered = new Set(Object.values(R?.checklistPaths || {}));
+  $("advSections").innerHTML = ADV.sections.map((s) => `<details class="advsec" data-sec="${esc(s.id)}" ${open.has(s.id) ? "open" : ""}>
+    <summary><b>${esc(s.title)}</b> <span class="advcount" data-count="${esc(s.id)}"></span>${s.writable ? "" : ' <span class="muted">· read-only here</span>'}</summary>
+    ${s.about ? `<p class="note">${esc(s.about)}</p>` : ""}${s.writable ? "" : '<p class="note">This firmware section can\'t be changed from Lorakeet: use the Meshtastic app.</p>'}
+    <div class="advfields">${s.fields.map((f) => fieldRow(f, covered.has(f.path))).join("")}</div></details>`).join("");
+  applyFilter();
+  pending();
+}
+function shown(f, v) {
+  if (f.secret) return v === undefined ? (f.set ? "set" : "not set") : v === "" ? "cleared" : "a new one";
+  if (f.type === "bool") return v ? "On" : "Off";
+  if (f.type === "enum") return nice(v);
+  if (f.type === "list") return v.length ? v.join(", ") : "none";
+  if (f.type === "int" && v >= 2147483647) return "never";
+  return v === "" ? "(empty)" : `${v}${f.unit ? ` ${f.unit}` : ""}`;
+}
+function fieldRow(f, covered) {
+  const p = f.path, has = p in PA, v = has ? PA[p] : f.value, dis = f.readonly || busy ? "disabled" : "", a = `data-p="${esc(p)}" aria-label="${esc(f.label)}"`;
+  let ctl;
+  if (f.type === "bool") ctl = `<input type="checkbox" ${a} ${v ? "checked" : ""} ${dis || (f.oneWay === false && !f.value ? "disabled" : "")}>`;
+  else if (f.type === "enum") ctl = `<select ${a} ${dis}>${f.options.map((o) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(nice(o))}${o === f.value ? " (now)" : ""}</option>`).join("")}</select>`;
+  else if (f.type === "int") ctl = `<input type="number" ${a} step="1" min="${f.min}" max="${f.max}" value="${esc(v)}" ${dis}>`;
+  else if (f.type === "float") ctl = `<input type="number" ${a} step="any" value="${esc(v)}" ${dis}>`;
+  else if (f.type === "string" || f.type === "ip") ctl = `<input type="text" ${a} maxlength="${f.maxlen || 64}" value="${esc(v)}" ${dis} spellcheck="false">`;
+  else if (f.secret) ctl = `<span class="muted">${f.set ? "set" : "not set"}</span> ${has || REVEAL.has(p)
+    ? `<input type="password" ${a} autocomplete="new-password" ${f.type === "pin" ? 'inputmode="numeric" maxlength="6"' : 'maxlength="63"'} value="${esc(has ? PA[p] : "")}" placeholder="${f.type === "pin" ? "six digits" : "new password"}" ${dis}>`
+    : `<button class="linkbtn" data-reveal="${esc(p)}" ${dis}>Replace…</button>`}`;
+  else if (f.type === "locked") ctl = `<span class="muted">${f.present ? "present" : "none"} · not changed here</span>`;
+  else ctl = `<span class="muted">${esc(shown(f, f.value))}</span>`;
+  return `<div class="advf${has ? " changed" : ""}${f.risk ? " risky" : ""}${has && riskNow(f, v) ? " riskon" : ""}" data-row="${esc(p)}" title="${esc(f.risk)}" data-q="${esc(`${f.label} ${p} ${f.help} ${f.risk}`.toLowerCase())}">
+    <div class="advl">${esc(f.label)}${f.unit ? ` <span class="muted">(${esc(f.unit)})</span>` : ""}${f.type === "int" && f.value >= 2147483647 ? ' <span class="muted">· now: never</span>' : ""}</div>
+    <div class="advc">${ctl}${f.readonly ? "" : ` <button class="linkbtn undo" data-undo="${esc(p)}">undo</button>`}</div>
+    ${f.help ? `<p class="why">${esc(f.help)}</p>` : ""}${f.risk ? `<p class="risk">${esc(f.risk)}</p>` : ""}${covered ? '<p class="why">Also in Settings above: either place changes the same setting.</p>' : ""}</div>`;
+}
+function rerenderField(p) {
+  const row = document.querySelector(`[data-row="${CSS.escape(p)}"]`), f = FIELDS[p];
+  if (row && f) row.outerHTML = fieldRow(f, Object.values(R?.checklistPaths || {}).includes(p));
+  applyFilter();
+}
+function readControl(el) {  // a control's value as the page keeps it, or undefined to drop the change
+  const f = FIELDS[el.dataset.p];
+  if (f.type === "bool") return el.checked;
+  if (f.type === "int" || f.type === "float") return el.value.trim() === "" ? undefined : Number(el.value);
+  return el.value;
+}
+function onAdvEdit(e) {
+  const el = e.target.closest("[data-p]"); if (!el) return;
+  const f = FIELDS[el.dataset.p], v = readControl(el);
+  if (f.secret) { if (v === "" && !REVEAL.has(f.path)) delete PA[f.path]; else PA[f.path] = v; setPending(f.path, PA[f.path], Symbol("secret")); return; }
+  if (v === undefined) { delete PA[f.path]; setPending(f.path, f.value, f.value); return; }
+  setPending(f.path, v, f.value);
+}
+$("advSections").addEventListener("input", (e) => { if (!e.target.matches("select, input[type=checkbox]")) onAdvEdit(e); });
+$("advSections").addEventListener("change", (e) => { if (e.target.matches("select, input[type=checkbox]")) onAdvEdit(e); });
+$("advSections").addEventListener("click", (e) => {
+  const r = e.target.closest("[data-reveal]");
+  if (r) { REVEAL.add(r.dataset.reveal); rerenderField(r.dataset.reveal); document.querySelector(`[data-p="${CSS.escape(r.dataset.reveal)}"]`)?.focus(); return; }
+  const u = e.target.closest("[data-undo]");
+  if (u) { delete PA[u.dataset.undo]; REVEAL.delete(u.dataset.undo); rerenderField(u.dataset.undo); syncChecklist(); pending(); }
+});
+function applyFilter() {
+  const q = $("advSearch").value.trim().toLowerCase(), only = $("advOnlyChanged").checked;
+  for (const sec of document.querySelectorAll(".advsec")) {
+    let any = false;
+    for (const row of sec.querySelectorAll(".advf")) {
+      const show = (!q || row.dataset.q.includes(q)) && (!only || row.classList.contains("changed"));
+      row.hidden = !show; any ||= show;
+    }
+    sec.hidden = !any;
+    if ((q || only) && any) sec.open = true;
+  }
+}
+$("advSearch").addEventListener("input", applyFilter); $("advOnlyChanged").addEventListener("change", applyFilter);
+
+// -- review and save (one request for everything)
+let MODE = "batch", UNDO = null;  // the review dialog saves the pending batch, or undoes the last save
+async function loadUndo() {
+  try { UNDO = await fetch("/api/radio/undo").then((r) => r.json()); } catch { UNDO = null; }
+  const b = $("undoBtn"), n = UNDO?.available ? UNDO.items.length + (UNDO.names ? 1 : 0) : 0;
+  b.hidden = !n;
+  const when = n ? new Date(UNDO.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  if (n) b.textContent = `${UNDO.redo ? "Redo" : "Undo"} last ${UNDO.redo ? "undo" : "save"} (${when}, ${n} setting${n > 1 ? "s" : ""})`;
+}
+// A setting that's also on the checklist is reviewed in the checklist's words ("Status LED: Blinking → Off"), not
+// the radio's field name ("LED heartbeat disabled: Off → On"), when both values are among its options.
+function checklistWords(f, from, to) {
+  const it = !f.secret && (R?.checklist || []).find((c) => pathOf(c) === f.path);
+  const has = (v) => it && it.options.some((o) => JSON.stringify(o.value) === JSON.stringify(v));
+  return it && has(from) && has(to) ? { title: it.title, from: label(it, from), to: label(it, to) } : null;
+}
+function reviewRow(f, s, from, to) {
+  const w = to === undefined ? null : checklistWords(f, f.value, to);
+  const title = w ? esc(w.title) : `${esc(s || "")} · ${esc(f.label)}`;
+  const toText = to === undefined ? "the previous one" : w ? w.to : shown(f, to);
+  return `<li class="${riskNow(f, to) ? "risky" : ""}"><b>${title}</b>: ${esc(w ? w.from : from)} → <b>${esc(toText)}</b>${riskNow(f, to) ? `<br><span class="risk">${esc(f.risk)}</span>` : ""}</li>`;
+}
+function showReview(rows, risky, verb) {
+  $("revList").innerHTML = rows.join("") || "<li>Nothing to save.</li>";
+  $("revConfirmRow").hidden = !risky; $("revConfirm").checked = false;
+  $("revSave").disabled = risky; $("revSave").textContent = `${verb} ${rows.length} change${rows.length === 1 ? "" : "s"} ${verb === "Save" ? "to the radio" : ""}`.trim();
+  $("revErr").textContent = "";
+  $("review").showModal();
+}
+function openUndo() {
+  if (!UNDO?.available) return;
+  MODE = "undo";
+  $("revTitle").textContent = UNDO.redo ? "Redo what the last undo put back" : "Undo the last save";
+  $("revUndoNote").textContent = UNDO.redo
+    ? "Puts back the settings the last undo reversed, from the backup taken just before it. Settings changed elsewhere since (in the Meshtastic app, say) aren't touched, and changes waiting here stay waiting."
+    : "Puts back what the last save changed, from the backup taken just before it. Settings changed elsewhere since (in the Meshtastic app, say) aren't touched, and changes waiting here stay waiting.";
+  $("revUndoNote").hidden = false;
+  const rows = UNDO.items.map((i) => reviewRow(i.field, i.section, shown(i.field, i.secret ? undefined : i.field.value), i.secret ? undefined : i.to));
+  if (UNDO.names) rows.unshift(`<li><b>Name</b>: ${esc(UNDO.names.from.join(" / "))} → <b>${esc(UNDO.names.to.join(" / "))}</b></li>`);
+  showReview(rows, UNDO.items.some((i) => !i.secret && riskNow(i.field, i.to)), UNDO.redo ? "Redo" : "Undo");
+}
+$("undoBtn").addEventListener("click", openUndo);
+function openReview() {
+  MODE = "batch";
+  $("revTitle").textContent = "Review the changes"; $("revUndoNote").hidden = true;
+  const items = Object.entries(PA).map(([p, v]) => ({ p, v, f: FIELDS[p] || { label: p, path: p }, s: SECT[p] }));
+  const rows = items.map(({ v, f, s }) => reviewRow(f, s ? s.title : "", shown(f, f.secret ? undefined : f.value), v));
+  if (namesChanged()) rows.unshift(`<li><b>Name</b>: ${esc(R.radio.longName)} / ${esc(R.radio.shortName)} → <b>${esc($("longName").value.trim())} / ${esc($("shortName").value.trim())}</b></li>`);
+  showReview(rows, items.some((i) => riskNow(i.f, i.v)), "Save");
+}
+$("revConfirm").addEventListener("change", () => { $("revSave").disabled = !$("revConfirm").checked; });
+$("revCancel").addEventListener("click", () => $("review").close());
+$("apply").addEventListener("click", openReview);
+$("saveReview").addEventListener("click", openReview);
+$("saveDiscard").addEventListener("click", () => {
+  if (!confirm("Discard every change you haven't saved?")) return;
+  for (const p of Object.keys(PA)) delete PA[p];
+  REVEAL.clear();
+  renderChecklist(); renderAdvanced();
 });
 
 async function waitForReconnect(after, note) {
@@ -105,26 +301,40 @@ async function waitForReconnect(after, note) {
   }
 }
 
-$("apply").addEventListener("click", async () => {
-  const ch = changes(), names = namesChanged() ? { long: $("longName").value.trim(), short: $("shortName").value.trim() } : null;
-  busy = true; pending(); $("err").textContent = "";
-  const t0 = Date.now() / 1000, note = (t) => { $("applyNote").textContent = t; };
-  note("Backing up the radio's settings and writing…");
-  const r = await post("/api/radio/apply", { changes: ch, names });
-  if (r.error) { busy = false; $("err").textContent = r.error; pending(); return; }
-  if (r.nothing) { busy = false; note("Nothing to change."); return; }
-  note(`Saved (backup ${r.backup}). The radio is restarting to apply it…`);
+$("revSave").addEventListener("click", async () => {
+  const undo = MODE === "undo", redo = undo && !!UNDO.redo, undoItems = undo ? UNDO.items : [];
+  const sent = undo ? Object.fromEntries(undoItems.filter((i) => !i.secret).map((i) => [i.path, i.to])) : { ...PA };
+  const names = undo ? null : namesChanged() ? { long: $("longName").value.trim(), short: $("shortName").value.trim() } : null;
+  $("revSave").disabled = true; $("revErr").textContent = "";
+  const r = undo ? await post("/api/radio/undo", { confirmRisky: $("revConfirm").checked })
+    : await post("/api/radio/apply", { advanced: sent, names, confirmRisky: $("revConfirm").checked });
+  if (r.error) { $("revErr").textContent = r.error; $("revSave").disabled = false; return; }
+  $("review").close();
+  if (r.nothing) { $("applyNote").textContent = "Nothing to change."; return; }
+  busy = true; pending();
+  const t0 = Date.now() / 1000, note = (t) => { $("applyNote").textContent = t; $("saveNote").textContent = t; };
+  note(`${redo ? "Redone" : undo ? "Undone" : "Saved"} in one write (backup ${r.backup}). The radio is restarting to apply it…`);
   const d = await waitForReconnect(t0, note);
   busy = false;
   if (!d) { note("The radio hasn't come back yet. Check it's still plugged in; this page updates when it does."); load(); return; }
   R = d;
-  const bad = Object.entries(r.expected).filter(([k, v]) => (d.checklist.find((i) => i.id === k) || {}).current !== v);
-  if (r.names && (d.radio.longName !== r.names[0] || d.radio.shortName !== r.names[1])) bad.push(["name", r.names.join(" / ")]);
-  renderConnect(); renderChecklist(); renderChannels(); renderBackups();
-  const n = Object.keys(r.expected).length + (r.names ? 1 : 0);
-  note(bad.length ? `Read back after the restart, ${bad.length} of ${n} didn't take: ${bad.map(([k]) => k).join(", ")}. Try again, or restore the backup.`
-    : `Done: read back from the radio after its restart, all ${n} change${n > 1 ? "s" : ""} took.`);
+  await loadAdvanced();
+  // read back: every change compared with what the radio now reports
+  const bad = [];
+  for (const [p, v] of Object.entries(sent)) {
+    const f = FIELDS[p];
+    const ok = f && (f.secret ? f.set === (v !== "") : f.type === "float" ? Math.abs(Number(f.value) - Number(v)) < 1e-5 : String(f.value) === String(v));
+    if (ok) { if (!undo) delete PA[p]; } else bad.push(f ? `${SECT[p].title} · ${f.label}` : p);
+  }
+  if (r.names && (d.radio.longName !== r.names[0] || d.radio.shortName !== r.names[1])) bad.push("Name");
+  if (!undo) REVEAL.clear();
+  renderConnect(); renderChecklist(); renderAdvanced(); renderChannels(); renderBackups(); loadUndo();
+  const n = Object.keys(sent).length + (r.names ? 1 : 0) + undoItems.filter((i) => i.secret).length;
+  note(bad.length ? `Read back after the restart, ${bad.length} of ${n} didn't take: ${bad.join(", ")}${undo ? "" : " (still listed as waiting)"}. Try again, or restore the backup.`
+    : `Done: read back from the radio after its restart, all ${n} change${n > 1 ? "s" : ""} ${redo ? "redone" : undo ? "undone" : "took"}.`);
+  $("saveBar").hidden = false;
 });
+window.addEventListener("beforeunload", (e) => { if (Object.keys(PA).length && !busy) e.preventDefault(); });
 
 // ---- step 3: channels
 const KEY = { public: ["Public default key", "anyone with Meshtastic can read it"], private: ["Private key", "only radios with this channel's key can read it"],

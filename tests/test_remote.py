@@ -1,5 +1,4 @@
 """Commands over the mesh: who may send one, and what the replies say."""
-import time
 
 import config
 import pytest

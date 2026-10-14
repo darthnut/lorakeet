@@ -239,12 +239,23 @@ def set_fields(node, changes):
     return sections
 
 
-def apply(iface, changes, names=None):
-    """Write the changes in one settings transaction. The caller has made a backup first."""
+def field_path(item_id):
+    """A checklist item's setting as an Advanced path ("config.lora.hop_limit"), so the two never disagree."""
+    sec, field, _ = FIELDS[item_id]
+    return f"config.{sec}.{field}"
+
+
+def apply(iface, changes, names=None, advanced=None):
+    """Write the checklist changes, the names and the Advanced section's planned changes (radio_advanced.plan) in ONE
+    settings transaction: one write per section touched, one restart. The caller has made a backup first."""
+    import radio_advanced
     node = iface.localNode
     if not config_complete(node):
         raise RadioError("the radio's settings didn't fully load; refusing to write (it could reset the radio)")
     sections = set_fields(node, changes)
+    for s in radio_advanced.apply(advanced or {}):
+        if s not in sections:
+            sections.append(s)
     node.beginSettingsTransaction()
     for s in sections:
         node.writeConfig(s)

@@ -275,11 +275,20 @@ const DECOY_DLON = 14.5;
 function decoyShift(centre) {
   const q = new URLSearchParams(location.search);
   if (!q.has("anon") || !centre) return null;
+  // ?shift=north_m,east_m: move everything by that many metres instead (0,0 keeps the real places, names still
+  // anonymized): for a recording that says where it is but shouldn't pinpoint a home
+  const s = (q.get("shift") || "").split(",").map(Number);
+  if (s.length === 2 && s.every(Number.isFinite)) {
+    const dLat = s[0] / 111320, dLon = s[1] / (111320 * Math.cos((centre[0] * Math.PI) / 180));
+    return (p) => [p[0] + dLat, p[1] + dLon];
+  }
   const d = (q.get("decoy") || "").split(",").map(Number);
   const to = d.length === 2 && d.every(Number.isFinite) ? d : [centre[0], centre[1] + DECOY_DLON];
   const dLat = to[0] - centre[0], dLon = to[1] - centre[1];
   return (p) => [p[0] + dLat, p[1] + dLon];
 }
+
+const LINK_MAX_KM = 300;  // longer than any plausible LoRa link (records are a few hundred km, from mountaintops)
 
 // Leaflet map of the topology into el. extra = radios with no observed link (replay ghosts): drawn hollow
 // at their reported or estimated position. still() is re-checked after the async estimate fetch so a stale
@@ -302,10 +311,32 @@ async function buildGeoMap(d, el, still = () => true, extra = [], { trimOutliers
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const map = L.map(el, { scrollWheelZoom: true, zoomSnap: inset ? 0.25 : 1 });
   lkBaseTiles().addTo(map);
-  let drawn = 0;
+  let drawn = 0, tooFar = 0;
+  const sh = (p) => (shift ? shift(p) : p);
+  // no LoRa link spans this: a longer line means one end's position is wrong (a radio still reporting a
+  // position from somewhere else, say), so it's left off the map rather than drawn across the country
+  const plausible = (p, q) => L.latLng(p).distanceTo(q) <= LINK_MAX_KM * 1000;
   for (const e of d.edges) {
+    // a moving station's link starts where the station was when it was seen (topology._anchors), not at its
+    // marker: a car parked in one town would otherwise show links to radios it only heard on the road
+    const moving = e.anchors && (e.anchors[e.a] ? e.a : e.anchors[e.b] ? e.b : null);
+    if (moving) {
+      const other = at(byId.get(moving === e.a ? e.b : e.a));
+      if (!other || !e.anchors[moving].length) continue;
+      const spots = e.anchors[moving].map(([la, lo]) => sh([la, lo]));
+      if (!spots.some((p) => plausible(p, other))) { tooFar++; continue; }
+      drawn++;
+      for (const p of spots) {
+        if (!plausible(p, other)) continue;
+        L.polyline([p, other], { color: css("--text-muted"), weight: edgeWidth(e), opacity: e.measured ? 0.8 : 0.5, dashArray: e.measured ? null : "5 6" })
+          .bindTooltip(`${edgeTip(e, byId)}<br><span class="t">seen with ${esc(byId.get(moving)?.name || moving)} here</span>`, { sticky: true }).addTo(map);
+        L.circleMarker(p, { radius: 2.5, weight: 0, fillColor: css("--accent"), fillOpacity: 0.8, interactive: false }).addTo(map);
+      }
+      continue;
+    }
     const a = at(byId.get(e.a)), b = at(byId.get(e.b));
     if (!a || !b || (a[0] === b[0] && a[1] === b[1])) continue;
+    if (!plausible(a, b)) { tooFar++; continue; }
     drawn++;
     const viaEst = estimated(byId.get(e.a)) || estimated(byId.get(e.b));
     L.polyline([a, b], { color: css("--text-muted"), weight: edgeWidth(e), opacity: viaEst ? 0.35 : e.measured ? 0.8 : 0.5, dashArray: e.measured && !viaEst ? null : "5 6" })
@@ -336,7 +367,7 @@ async function buildGeoMap(d, el, still = () => true, extra = [], { trimOutliers
   }
   map.fitBounds(L.latLngBounds(frame).pad(inset ? 0.1 : 0.3), { maxZoom: 12,
     ...(inset ? { paddingTopLeft: [inset.left + 20, inset.top + 20], paddingBottomRight: [inset.right + 20, inset.bottom + 20] } : {}) });
-  return { map, at: (id) => at(byId.get(id)), byId, markers, shift, placed: placed.length, drawn, estimated: placed.filter(estimated).length };
+  return { map, at: (id) => at(byId.get(id)), byId, markers, shift, placed: placed.length, drawn, tooFar, estimated: placed.filter(estimated).length };
 }
 
 function drawTable(d) {

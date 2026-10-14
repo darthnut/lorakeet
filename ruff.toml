@@ -1,0 +1,13 @@
+# ruff check . (CI runs it). Catches mistakes, not style: pyflakes (undefined/unused names), pycodestyle errors and
+# bugbear's likely bugs. Long lines and `a; b` one-liners are the house style, so they're allowed.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "B"]
+ignore = [
+    "E501",  # long lines: SQL, HTML and messages read better unbroken
+    "E702",  # several short statements on one line
+    "E741",  # `l` as a name
+    "B905",  # zip() without strict=: the lengths are equal by construction
+]

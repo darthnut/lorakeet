@@ -1,6 +1,6 @@
 # Lorakeet
 
-Logging and analytics dashboard for a Meshtastic mesh. `server.py` holds a link to a radio (USB serial),
+Logging and analytics dashboard for a Meshtastic mesh. Lorakeet holds a link to a radio (USB serial),
 logs every packet and every over-the-air reception to SQLite, and serves `static/` with live updates over
 server-sent events. Several listening stations can feed one hub (`sync.py`).
 
@@ -8,10 +8,35 @@ This file is for AI coding assistants and contributors: how the code is organise
 follows. User documentation is in `README.md` and `docs/`. Personal deployment notes, if any, go in an
 untracked `CLAUDE.local.md`.
 
+## Code map
+
+The Python modules sit side by side at the top level (no package: install scripts, the Pi updater and the tray
+all run `server.py` from the folder). Each module's docstring says what it holds.
+
+| | |
+|---|---|
+| `server.py` | entry point only: command-line options, start-up, the demo process |
+| `runtime.py` | process-wide state read at call time: paths, `VERSION`, `DATA_DIR` (the demo moves it), `DEMO`, `BASE_ID`/`BASE_NAME`/`BASE_BYTE` (`follow_base`). Always `runtime.X`, never `from runtime import X`: these change after import |
+| `store.py` | mesh.db: `SCHEMA`, `MIGRATIONS`, `SCHEMA_VERSION`, `FIELD_NOTES`, `Store`, `DebugLog`, secret stripping (`redacted_*`, `scrub_logged_secrets`) |
+| `fwlog.py` | firmware debug-log parsing (`parse_rx`, `parse_tx`) |
+| `channels.py` | channel hashes and keys (`radio_channels`, `channel_keys`), public fingerprints |
+| `link.py` | `RadioLink`, what every protocol's link shares: the reconnect loop and watchdog, pausing, the events log, the SSE fan-out. A link supplies `connect()`, `drop_link()`, `tick()`, `status()` |
+| `mesh.py` | `Mesh(RadioLink)`, the Meshtastic link: connect, log, live state, send; port detection, packet helpers |
+| `meshcore_packet.py` | MeshCore raw packets: `parse` (route, transport codes, path key prefixes, payload), the firmware `packet_hash` (dedup across paths; not the library's `pkt_hash`), `clock_status` (seeded clocks). Pure: no radio or library needed |
+| `radioid.py` | the one place that knows what a radio id is (`!xxxxxxxx`, MeshCore `mc:` + 12 hex). Never write an id regex elsewhere; `static/common.js` `isRadioId` is the browser's copy. MeshCore ids are recognised but not accepted until the MeshCore link lands (`ACCEPTED`). Plan: docs/MESHCORE.md |
+| `station.py` | station health (`HealthWatch`), `station_report`, locations, Radio-page station settings |
+| `peers.py` | `PeerManager` (hub-to-hub senders) |
+| `web.py` | `make_handler` (the request handler: pages, analytics, settings, login, SSE), access, connection limits |
+| `web_radio.py`, `web_hub.py` | route mixins: the Radio page (`/api/radio*`); ingest + the Stations page (`/api/ingest*`, `/api/hub*`). `make(...)` closes over make_handler's state, so their methods read `mesh`, `store` etc. as before |
+| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `packetsearch.py` |
+| features | `alerts.py`, `storage.py` (backups), `sync.py`, `pairing.py`, `remote.py`, `login.py`, `radio_setup.py`, `radio_advanced.py`, `demo.py`, `config.py`, `api_index.py`, `mcp_server.py`, `tray.py`, `supervise.pyw`, `lorakeet.pyw` |
+
+Tests patch a name where it's read: `runtime.DATA_DIR`, `store_mod.DB_WAIT_S`, `web_mod.client_access`.
+
 ## Principles
 
 - **The database is a clean, direct log of what was received.** Store values exactly as received; never
-  "correct" them. Where a value could mislead, document it in `FIELD_NOTES` (server.py), which is rewritten
+  "correct" them. Where a value could mislead, document it in `FIELD_NOTES` (store.py), which is rewritten
   into the `field_notes(tbl, col, note)` table on every start so the caveats travel with the data. If a
   column is derived, keep the raw source alongside it (e.g. `rx_hops.hops` plus `hop_start`/`hop_limit`).
 - **Log complete packet information.** Don't drop fields to save space; `mesh.db` is never pruned by
@@ -37,8 +62,21 @@ untracked `CLAUDE.local.md`.
   rules, backup retention, secret redaction, the release checker, sync (duplicates, tokens, reports),
   analytics on the synthetic mesh (per-station counts, combined de-dup, coverage gaps, capture), drive
   coverage, and phone-log imports. When adding a feature, add a test that fails without it.
-- CI also compiles every .py, `node --check`s every page script and tool, `bash -n`s the deploy scripts
-  and runs `tools/release_check.py`.
+- **Browser tests** (`tests/browser`, Playwright + headless Chromium; left out when Playwright isn't installed): two
+  real server processes with their own temp config, `--demo` for the map/analytics/visualizations/packets pages and
+  a configured no-radio install (the demo database as its log) for Settings/Radio/Stations. The `page` fixture records
+  script errors, console errors and 5xx responses; every test ends with `clean(page)`. Map tiles are answered with a
+  blank PNG (cdnjs loads for real). Add one when a page gains a flow; they caught the Radio/Stations nav missing
+  Settings on day one. On Windows, tests/conftest.py keeps `PLAYWRIGHT_BROWSERS_PATH` before it moves LOCALAPPDATA.
+- **Lint:** `ruff check .` (`ruff.toml`: pyflakes, pycodestyle errors, bugbear; long lines and `a; b` allowed).
+  Coverage: `pytest --cov` (`.coveragerc`). Dev tools: requirements-dev.txt.
+- CI (`tests.yml`): pytest on Linux/Windows x Python 3.11/3.12 (coverage on one), the browser tests, ruff, compiles
+  every .py, `node --check`s every page script and tool, `bash -n`s the deploy scripts, `tools/release_check.py`,
+  and the install scripts end to end. `platforms` (macOS arm64, windows-11-arm) runs only on darthnut/lorakeet or by
+  hand: every dev push runs CI on the private repo, where macOS minutes cost 10x and ARM Windows doesn't exist.
+- Project files: SECURITY.md (GitHub private reporting), CONTRIBUTING.md, CODE_OF_CONDUCT.md (Contributor Covenant
+  2.1, reports through the same private channel), docs/ARCHITECTURE.md, docs/POLICIES.md (a draft until the user
+  removes its banner: don't present its proposals as promises).
 
 ## Logo and icons
 
@@ -112,8 +150,7 @@ nonexistent radio.port).
   Quit (confirm, then the server is terminated and the supervisor exits: the kill-on-close job takes the rest).
   Grey icon while paused. If the supervisor stands down (port taken) the icon closes itself (`exit_when`).
 - **Restart:** the tray's Restart Lorakeet (`restart_server`: terminate the server; `serve()` sees `restarting` and starts
-  it again after 1 s with the back-off reset), and `POST /api/restart` (any full-access page: the Settings panel in
-  alerts.js; `/api/radio/restart` is the same for the Radio/Stations pages) = exit 0 after 1 s when supervised, else a
+  it again after 1 s with the back-off reset), and `POST /api/restart` (any full-access page: the Settings page; `/api/radio/restart` is the same for the Radio/Stations pages) = exit 0 after 1 s when supervised, else a
   409 saying how. Exit code 0 always means "asked to restart" to the supervisor: no crash back-off.
 - **supervise.pyw** allows one supervisor per dashboard port (`Local\lorakeet-supervisor-<port>`); before
   0.3.0 it was one per session, so a second install's runner quietly stood down.
@@ -255,10 +292,38 @@ nonexistent radio.port).
   faintly; the replay moves the dot along it (latest fix at or before the playhead, under 12 min old, else the
   dwell spot), draws the route so far, and flies receptions to where the station was. Other stations use their
   newest EXACT position: a channel-rounded copy of their broadcast never places a station.
+- **A moving station's links and the estimates they feed use where it WAS** (`topology._track_locator`, `_anchors`):
+  each link observation records the station's position then (latest fix within 12 min); edges carry
+  `anchors: {station: [[lat, lon, n], ...]}` (~2 km groups) and the map draws the link from those spots (a small
+  accent dot), never from the marker. `insights.estimate_positions` splits such an edge's weight over its anchors.
+  Found after a trip: the car parked in Astoria drew links to Portland radios it heard the night before, and every
+  radio only the car had heard was "estimated" into Astoria (both used its single spot). Observations with no
+  recent fix aren't placed. Links over `LINK_MAX_KM` (300) aren't drawn on maps at all (a radio still reporting a
+  position from another state): the replay status says how many.
+- **Key changes** (`insights._security`) come only from NodeInfo packets heard on the air (`packets.raw`
+  `decoded.user.publicKey`), dated when each key was first heard. node_info also holds what a station's radio had
+  STORED when it connected, stamped with the connect time; a radio remembering an old key looked like a change.
+- **Peer send failures** log one warning per outage (per kind of error: the text before the first ":"), then
+  "sending again after N min" (`PeerSender.tick`). A sleeping laptop peer had logged ~730 lines in a night.
+- **Recording one window** (`record-viz.mjs --from/--to [--play-seconds]`): seeks to `--from`, sets `R.data.until` to `--to`, one
+  steady speed, no ramp. `?shift=north_m,east_m` (with `anon`; recorder `--shift`) replaces the decoy place with a
+  small move in metres (0,0 = real places, names still anonymized), and `--center lat,lon` re-centres the map view.
+  In a window, Grow starts from `--from` (radios heard earlier appear when first heard inside it) and the Key's counts
+  are the window's own. `--key-end` shows the Key at the end instead of the start (thumbnails are the first frame).
 - `?anon=1` renames every radio by role and order of appearance for sharing. On maps (Geographic, its replay,
   Coverage) it also moves everything by one offset to a decoy place (`decoyShift` in topology.js: default
   14.5 degrees east at the same latitude, which keeps distances exact; `?decoy=lat,lon`), and Coverage renames
   stations/radios, drops links with real ids and never shows message text (test messages carry coordinates).
+- **Groovy mode** (`static/groovy.js`, toolbar "🌈 Groovy" / V, `localStorage meshdash.groovy`, `?groovy=<vibe>` for
+  one visit, not saved; `record-viz.mjs --groovy`): decoration only, never touches the data or the replay's state.
+  Two canvases in the stage: `.groovy-back` under the views (lava-lamp blobs; the map's tiles get a hue-rotate filter
+  from `--groovy-hue` instead) and `.groovy-front` at z 600 (above flights 450, below panels 690+), drawn additively
+  with pre-rendered glow sprites (one per 10° of hue). Each frame it reads `R.flights` (new flight -> ripple + aura at
+  the sender; leg index advanced -> burst where it landed; the dot's cx/cy -> trail particles) and maps layer
+  coordinates to the stage through `R.layer.getScreenCTM()`, which works for the zoomed graph and the map alike.
+  Edges/node circles get inline stroke/fill a few times a second, cleared on exit. Its own rAF loop schedules the
+  next frame FIRST: a frame during a view redraw (`R.graph` null) once threw and stopped the effects for good.
+  Reduced motion: colours, no particles. The Coverage view is left alone.
 - **Texts panel** (toolbar "💬 Texts" / M, `localStorage meshdash.chat`, off by default): a chat log on the right
   that fills as the replay reaches each readable text, with a line from each entry to its sender (new lines
   bright for 6 s, then faint; hover an entry to light its line; lines redrawn every frame by their own rAF loop
@@ -275,8 +340,8 @@ nonexistent radio.port).
 ## API index and the MCP server (`api_index.py`, `docs/API.md`, `mcp_server.py`)
 
 - **Every endpoint is listed in `api_index.ENDPOINTS`** (method, path, tier, params/body, summary); `GET /api/index`
-  serves it and `tools/api_docs.py` writes docs/API.md from it. `tests/test_api_index.py` fails when server.py
-  handles a path the index lacks (or the reverse) or the doc is stale: add the entry, run `python tools/api_docs.py`.
+  serves it and `tools/api_docs.py` writes docs/API.md from it. `tests/test_api_index.py` fails when web*.py
+  handle a path the index lacks (or the reverse) or the doc is stale: add the entry, run `python tools/api_docs.py`.
 - **Tiers:** `read`; `change` (Lorakeet's own state); `transmit` (goes on air); `page` (Radio/Stations/setup:
   radio config, keys, pairing, peering; this PC only); `internal` (ingest, login, SSE).
 - **`mcp_server.py`**: MCP over stdio (newline-delimited JSON-RPC 2.0, protocol 2025-06-18 / 2025-03-26 /
@@ -329,10 +394,61 @@ Works through the logger's own connection (`mesh.iface`), so nobody stops Lorake
   `radio_setup.location_check` flags a location > 150 km from the median of the radios heard (3+ positions);
   browser locations worse than 1 km are called a rough guess (an IP-based fix put a test VM in Europe). The setup
   page shares the checks (`/api/radio/location-check`) and offers the radio's own GPS fix.
+- **Advanced** (`radio_advanced.py`, `GET /api/radio/advanced`): `schema(node)` = every section the radio reported
+  (`HasField`), fields generated from the protobuf descriptors (nested messages flattened to dotted paths
+  `config.network.ipv4_config.ip`; IPv4 fixed32s as dotted quads, first octet in the low byte). Sections the library
+  can't write (`WRITABLE`; e.g. module.tak/statusmessage) are read-only: `node.writeConfig` calls `our_exit` on an
+  unknown name. `SECRETS` (Wi-Fi password, MQTT password, Bluetooth PIN) are write-only: schema says only `set`,
+  `public_view` turns them into "(changed)" for responses, events and logs. `LOCKED` (private/public/admin keys) never
+  change; `ONE_WAY` (managed mode) only to off. `plan()` validates types, `BOUNDS`, enum names, `MAXLEN` and drops
+  no-ops. `RISKS` + `RISK_WHEN` (by the new value): the page shows the warning and the review needs a tick only when
+  the change needs it; the server refuses a risky batch without `confirmRisky` (409 `needsConfirm`). **One batch:**
+  the page keeps ONE pending set `PA` (path -> value) for the checklist (via `checklistPaths`, `field_path`) and
+  Advanced, plus the names; `POST /api/radio/apply {advanced, names, confirmRisky}` -> one backup, `radio_setup.apply`
+  writes every touched section in one transaction, one restart; the page reads every value back afterwards.
+  Tests: `tests/test_radio_advanced.py` (stand-in node + the real handler).
+- **Undo last save** (`GET/POST /api/radio/undo`, `Handler._undo_plan`): the newest `radio_settings` event for this
+  radio names the paths it changed (`advanced` + checklist `changes` via `field_path`) and its `backup`; the old
+  values come from that backup (`radio_advanced.backup_values`: export_config's camelCase YAML, a missing key = the
+  default) and are written back as one batch (backup "before-undo", event `undoOf`). Recomputed server-side at save
+  time; secrets go back without ever being returned; values the radio can't take (an unset PIN) are skipped. Only
+  that save's settings: anything changed elsewhere since stays. An undo is itself a save, so the next undo redoes.
 - Every third-party import must be in requirements.txt: `cryptography` (anatomy's AES) once wasn't, and only a
   fresh install showed it. `tests/test_anatomy_crypto.py` now exercises it.
 - Tests: `tests/test_radio_setup.py` (a stand-in node from real protobufs); access in `tests/test_login.py`.
   Never test writes on a real radio without the user's go.
+
+## Diagnostics (`diagnostics.py`, Settings -> Help, `GET /api/diagnostics[.zip]`, `python diagnostics.py`)
+
+- `build(config_path, data_dir, live)` -> {file: text}: README, summary.json (versions, packages, database rows/size/
+  layout, events and recent problems, backups, the radio from the newest `connected` event: `RADIO_METADATA` +
+  whitelisted `RADIO_CONFIG` keys only, channel counts), config.txt (`redact_config`: line by line, so a broken file
+  still comes through; only bools, numbers and `SAFE_STRINGS`, else `<set>`, lists as counts, comments dropped),
+  log.txt (`pick_log`: WARNING+ with tracebacks, plus start-up/connection lines; never other INFO chatter),
+  supervise.txt. `live` = what only the server knows (`Handler._live_diagnostics`). Page tier: this computer only.
+- **`Redactor`**: rules for raw bytes, peer/pairing labels, pairing codes, URLs (not localhost), emails, MACs, IPv4/6,
+  Windows and home paths (spaces inside), coordinates, lat/lon keys, long tokens; radio ids -> `!node01`...
+  consistently; then names, CASE-SENSITIVE, from node_info, station meta, peers.json/stations.json labels, Wi-Fi names
+  in `network` events, private channel names, the hostname and user name (`is_name`: 3+ chars, not `COMMON`, not a
+  short all-lowercase word: a radio called "SELF" blanked `self` in every traceback; one called "node" blanked
+  `alert:new-node`). summary.json's whole-text pass skips names so key names survive.
+- Checked against the real desk install with `tools/release_check.py` and the denylist before shipping. When adding a
+  field, add its personal values to `tests/test_diagnostics.py`'s SECRETS install: that test fails on any leak.
+- `python diagnostics.py [folder]` sets `LORAKEET_DIAGNOSTICS`, which makes config.py fall back to the defaults (and
+  the file's `data_dir`, by regex) instead of raising, and avoids importing the radio libraries.
+
+## Settings page (`/settings.html`, `static/settings.js`)
+
+- One page for Lorakeet's own settings; the bell (alerts.js) only lists alerts and links to `#alerts`. `SECTIONS` in
+  settings.js defines every field once: `src: "alerts"` fields are the DB alert settings (`GET/POST /api/settings`,
+  live); the rest are `[section] key`s of lorakeet.toml. One pending set (`P`) and one Save, like the Radio page.
+- `GET/POST /api/preferences` (page tier: this computer only even when logged in; the demo refuses it): only the keys
+  in `web.PREFS_EDITABLE` (never `sync`, the token or `data_dir`). GET returns `saved` (the file now,
+  `config.file_settings`) and `running` (`CFG`); they differ until a restart, which the page marks per field and in
+  a banner. POST `{changes: {section: {key: value}}}` -> `config.update_sections`: every section in one write,
+  validated with `_validate` like a hand edit, all or nothing (`.bak` kept; `None` removes a key). 409 before setup.
+- Section ids must not collide with page CSS (`#map` is the live map: the Map section is `#mapsettings`).
+- Tests: `tests/test_station_settings.py` (update_sections, the endpoints).
 
 ## Stations page (`pairing.py`, `/stations.html`, `/api/hub*`, this computer only)
 

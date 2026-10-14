@@ -3,6 +3,7 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_dispatch:  # Actions tab -> tests -> Run workflow: also runs the other-platforms job on a private fork
 
 jobs:
   python:
@@ -20,7 +21,47 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - run: python -m pytest
+      - name: Tests (with a coverage report on one of them)
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}-${{ matrix.python }}" = "ubuntu-latest-3.12" ]; then
+            python -m pytest --ignore=tests/browser --cov --cov-report=term-missing:skip-covered
+          else
+            python -m pytest --ignore=tests/browser
+          fi
+
+  browser:
+    # The pages in headless Chromium against a real Lorakeet on the demo mesh (tests/browser).
+    name: Pages in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest tests/browser
+
+  platforms:
+    # macOS (Apple silicon) and Windows on ARM: where a dependency without a wheel for that platform shows up (the
+    # cryptography gap did). Public repository only (free there; Windows ARM runners exist only for public ones), or by hand.
+    if: github.repository == 'darthnut/lorakeet' || github.event_name == 'workflow_dispatch'
+    name: Python 3.12 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest --ignore=tests/browser
 
   checks:
     name: Syntax and release checks
@@ -35,6 +76,8 @@ jobs:
           node-version: "22"
       - name: Every Python file compiles
         run: python -m compileall -q .
+      - name: Lint (ruff.toml, likely bugs and unused or undefined names)
+        run: pip install ruff && ruff check .
       - name: Every page script and tool parses
         run: for f in static/*.js tools/*.mjs; do node --check "$f"; done
       - name: Shell scripts parse

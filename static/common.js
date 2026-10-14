@@ -1,6 +1,8 @@
 "use strict";
 /* Helpers shared by the Analytics and Visualizations pages. */
 
+// A radio id, not a relay label like "0x22" (radioid.py: Meshtastic "!1234abcd", MeshCore "mc:" + 12 hex digits)
+const isRadioId = (s) => /^(![0-9a-f]{8}|mc:[0-9a-f]{12})$/.test(String(s ?? ""));
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();

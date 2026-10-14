@@ -46,10 +46,15 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
   per-reception detail, role, hop limit, preset, GPS), explains each one and changes them in one go, after
   backing up the radio's settings. It makes private channels and shares them by QR code with the Meshtastic
   app or onto another radio on USB, adds channels from a link, sets this station's name and antenna position,
-  and confirms packets are being logged.
+  and confirms packets are being logged. Its **Advanced** section has every other setting, and any number of
+  changes across every section go to the radio in one write with one restart (the Meshtastic apps restart it
+  after each page). **Undo last save** puts back exactly what the last save changed.
 - **Runs quietly in the background (Windows).** An installer with desktop and Start-menu shortcuts, and a
   Lorakeet icon in the notification area showing what it's doing, with Open, Pause logging (frees the radio's
   USB port for the Meshtastic app or a flasher), Restart and Quit.
+- **Settings in one place.** The Settings page explains and changes Lorakeet's own options (alerts, this station,
+  the radio connection, access from other devices, the map, backups, remote commands, LLM access). Anything that
+  needs a restart is marked, with a Restart button.
 - **Analytics.** Traffic by type and hour, channel utilization and airtime, who relays to you, node
   roles and hardware, per-node pages, readable vs private traffic.
 - **Topology and replay.** The mesh as a graph of real RF links (measured and inferred), with a replay
@@ -58,7 +63,8 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
   chat panel as the replay reaches them, each linked to its sender. On the map, a moving station's dot
   follows its GPS route. For sharing, `?anon=1` renames every radio, hides message text and moves the whole
   map to a decoy place (same shape and distances, somewhere else); `tools/record-viz.mjs` renders the replay
-  to MP4, from short clips for a README to smooth 60 fps.
+  to MP4, from short clips for a README to smooth 60 fps. And for fun, **🌈 Groovy** mode: psychedelic
+  colours, comet trails behind packets, sparks where they land and a lava-lamp background, in four vibes.
 - **Drive coverage.** Put a station in a car (a Pi with a GPS radio) and the Coverage view maps what it heard
   along the route, square by square, and where the mesh heard *it*: each packet it sent, marked by whether
   one of your other stations heard it, a relay repeated it, or there's no sign it got out. Optional drive
@@ -78,7 +84,8 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
 - **Several listening stations.** Small stations (a Raspberry Pi and a radio) log locally and sync to one hub
   over your local network or Tailscale, so you can compare what different places hear; a per-station timeline
   shows their power dips and network drop-outs. Set it up on the Stations page: make one computer the hub, and
-  pair each station with a one-time code. See [docs/PI-SETUP.md](docs/PI-SETUP.md).
+  pair each station with a one-time code. Stations are easy on SD cards: Lorakeet writes in batches every few
+  seconds rather than row by row, and keeps the system log quiet. See [docs/PI-SETUP.md](docs/PI-SETUP.md).
 - **Sharing with someone else's hub (peering).** Two people with their own hubs can trade what they log, each
   choosing what the other sees. Every location is rounded to about 3 km unless you allow exact ones. See
   [Sharing with another hub](#sharing-with-another-hub-peering) below.
@@ -86,6 +93,9 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
   Lorakeet's documented API instead of the screen. See [Good to know](#good-to-know).
 - **Alerts and backups.** Watched nodes going silent or low on battery, new nodes, nightly
   integrity-checked database backups to folders you choose.
+- **Diagnostics for bug reports.** Settings → Help and diagnostics saves one file with what a bug report needs
+  (versions, the radio's model and firmware, the settings that matter, recent warnings), with personal details
+  taken out.
 
 ![The live map on the demo mesh: radios, links, estimated positions and the node list](docs/screenshots/map.png)
 
@@ -154,15 +164,18 @@ venv/bin/python lorakeet.pyw   # starts Lorakeet and opens it in your browser
 
 The first time, Lorakeet opens on a **setup page** that asks a few questions (your radio, this station,
 privacy and access, storage and maps) and writes `lorakeet.toml` for you; every other option is explained
-in `lorakeet.example.toml`, and you can edit the file by hand any time. A USB radio is detected automatically (or set `[radio] port`). For a radio on
-your network instead (Wi-Fi or Ethernet boards), set `[radio] host` to its IP address or name. Over the
+in `lorakeet.example.toml`. Change them later on the **Settings** page (alerts, access, backups, the map, the
+radio connection, remote commands, LLM access), or edit the file by hand any time. A USB radio is detected
+automatically (or set `[radio] port`). For a radio on your network instead (Wi-Fi or Ethernet boards), set
+`[radio] host` to its IP address or name. Over the
 network you get every decoded packet, but not the per-reception detail below: radios only send their debug
 log over USB. `tools/radio_wifi.py` puts an ESP32 radio on your Wi-Fi without typing the password into
 your shell.
 
 **No radio yet, or just curious?** The setup page's **Explore a demo** opens a made-up mesh around Portland,
-Oregon in a tab of its own (or run `python server.py --demo` and open http://127.0.0.1:5191): three days of invented radios, chatter, a second
-listening station, a drive and a logging gap, so every view has something in it. It runs beside your own
+Oregon in a tab of its own (or run `python server.py --demo` and open http://127.0.0.1:5191): three days of
+invented radios, chatter, a second listening station, a drive and a logging gap, so every view has something in
+it. It runs beside your own
 Lorakeet on the next port up (5191 by default), never touches your log, radio or settings, and stops on its
 own after a few idle hours.
 
@@ -171,16 +184,18 @@ own after a few idle hours.
 *First run: a few questions, or explore the made-up demo mesh first.*
 
 **Then the Radio page** (opened for you after setup, and in the top bar; only on Lorakeet's own computer, even
-for a device that logged in) checks the radio: the region, per-reception detail (relays, duplicates, airtime, replay: it needs the radio's debug log, which
-the page turns on for you), its role and more, and confirms Lorakeet is logging. It backs up the radio's
-settings before every change, to a folder only your user account can read, in the format
-`meshtastic --configure` restores. Flashing firmware stays with the
+for a device that logged in) checks the radio: the region, per-reception detail (relays, duplicates, airtime,
+replay: it needs the radio's debug log, which the page turns on for you), its role and more, and confirms
+Lorakeet is logging. Every change is listed for review before it's written, and **Undo last save** reverses the
+last one. It backs up the radio's settings before every change, to a folder only your user account can read, in
+the format `meshtastic --configure` restores. Flashing firmware stays with the
 [Meshtastic web flasher](https://flasher.meshtastic.org).
 
 ![The Radio page: each setting that matters for logging, checked and explained](docs/screenshots/radio.png)
 
-*The Radio page: each setting that matters for logging, checked against the radio and explained, changed in one
-go after a backup. (The radio's name and id are replaced in this picture.)*
+*The Radio page: each setting that matters for logging, checked against the radio and explained, then the Advanced
+section with every other setting. Changes from both go to the radio together after a review and a backup, and
+Undo last save reverses the last one. (The radio's name, id and port are replaced in this picture.)*
 
 **A dedicated listening station** (a Raspberry Pi with a radio, at home, somewhere else or in a car):
 see [docs/PI-SETUP.md](docs/PI-SETUP.md). Make a pairing code on the hub's Stations page, and the station's setup
@@ -199,7 +214,7 @@ code waiting to be used, and a peer hub in each direction. (Demo stations; addre
 2. **Run the installer again** (Windows: double-click **Install Lorakeet**; elsewhere `./install.sh`). It only
    installs what changed.
 3. **Restart Lorakeet:**
-   - Windows: the tray icon → **Restart Lorakeet** (or the bell → Settings → Restart). **Coming from 0.2.x** there's
+   - Windows: the tray icon → **Restart Lorakeet** (or Settings → Restart Lorakeet). **Coming from 0.2.x** there's
      no tray icon yet: stop the old Lorakeet (close its window, or end the Task Scheduler task you made for it),
      then start it with the new **Lorakeet** shortcut.
    - Linux with the service: `sudo systemctl restart lorakeet`.
@@ -220,7 +235,7 @@ logs as before and leaves newer additions alone, with a warning in the log.
 - **Ask an LLM about your mesh.** `mcp_server.py` connects Claude Desktop, Claude Code or any MCP app to
   Lorakeet, so you can ask "which radios went quiet today?" or "who relays most of my traffic?" and it reads the
   answer from Lorakeet instead of the screen. `python mcp_server.py --print-config` shows how to add it. It can
-  only read until you allow more in `lorakeet.toml` (`[mcp] allow_changes`, `allow_transmit`), and it never
+  only read until you allow more on the Settings page (LLM access; `[mcp]` in `lorakeet.toml`), and it never
   touches radio settings, keys or pairing. Scripts can use the same JSON API: see [docs/API.md](docs/API.md).
 - **Who can use it.** By default it only answers on this computer. `[http] lan = "view"` gives other
   devices on your local network a read-only view. To send and change settings from a phone or laptop too,
@@ -277,8 +292,8 @@ separately, by the side that sends, and only after the receiving side agrees:
    off by default. Your stations' own logs (connections, settings, power) are never shared.
 3. **Pause** works from either side, any time: the sender stops sending, or the receiver declines what arrives;
    nothing is lost, and on **Resume** it catches up. To stop for good: the sender removes the peer (what's already
-   sent stays with them); the receiver can **Revoke** it, or **Revoke and delete what it sent**, which removes exactly that
-   hub's data (after showing what will go) and nothing else.
+   sent stays with them); the receiver can **Revoke** it, or **Revoke and delete what it sent**, which removes
+   exactly that hub's data (after showing what will go) and nothing else.
 
 Both hubs need to reach each other: on the same network, or over [Tailscale](https://tailscale.com) (share your
 hub with the other person's Tailscale account). Peering uses the same port and checks as stations.
@@ -293,18 +308,26 @@ code is organised and the rules it follows, which is also a decent map for human
 
 ```sh
 venv/bin/pip install -r requirements-dev.txt
+venv/bin/python -m playwright install chromium     # once, for the browser tests
 venv/bin/python -m pytest
 ```
 
-The tests build a small synthetic mesh on the fly (no radio, no real data needed). GitHub Actions runs
-them on Linux and Windows for every push and pull request, along with syntax checks and the
-personal-details check in `tools/release_check.py`.
+The tests build a small synthetic mesh on the fly (no radio, no real data needed), and `tests/browser` drives
+every page in headless Chromium against the demo mesh. GitHub Actions runs them on Linux and Windows for every
+push and pull request (macOS and Windows on ARM too), along with a lint (`ruff check .`) and the personal-details
+check in `tools/release_check.py`. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
 
 ## Status and support
 
 A hobby project, maintained on a best-effort basis. Issues and pull requests are welcome, but there are
-no promises about response times. Trying it out? [TESTING.md](TESTING.md) says what to try, what's useful to send
-back, and what to keep private. Ideas and plans: [docs/STATION-NETWORK-ROADMAP.md](docs/STATION-NETWORK-ROADMAP.md).
+no promises about response times. Next up: logging **MeshCore** meshes too, alongside Meshtastic
+([the plan](docs/MESHCORE.md), issue [#10](https://github.com/darthnut/lorakeet/issues/10)).
+
+Something broken? **Settings → Help and diagnostics** saves a file for your bug report with personal details taken
+out (`python diagnostics.py` does the same if Lorakeet won't start). Trying it out? [TESTING.md](TESTING.md) says
+what to try, what's useful to send back, and what to keep private. Want to help? [CONTRIBUTING.md](CONTRIBUTING.md).
+Found a security problem? [SECURITY.md](SECURITY.md) (privately, please). How it fits together:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **Not affiliated with Meshtastic.** Meshtastic® is a registered trademark of Meshtastic LLC. Lorakeet is an
 independent project that talks to Meshtastic radios through the official Python library.

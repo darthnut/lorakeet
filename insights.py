@@ -15,6 +15,7 @@ import keyflags
 import topology
 import weak_keys
 from analytics import STATION_LOCATIONS, _connect, _window, scope_local
+import radioid
 
 # ------------------------------------------------------------------ helpers
 
@@ -125,7 +126,7 @@ def estimate_positions(db_path, local, base_id, describe):
     finally:
         db.close()
     now = time.time()
-    obs = defaultdict(list)  # unpositioned node -> [(anchor id, weight, snr)]
+    obs = defaultdict(list)  # unpositioned node -> [(anchor id, (lat, lon, precision bits), weight, snr, measured)]
     for e in topo["edges"]:
         for me, other in ((e["a"], e["b"]), (e["b"], e["a"])):
             if me in anchors or other not in anchors:
@@ -134,7 +135,16 @@ def estimate_positions(db_path, local, base_id, describe):
             w_snr = 0.3 if snr is None else min(1.0, max(0.1, (snr + 20) / 30))
             w_cnt = math.log2(1 + e["count"])
             w_age = math.exp(-max(0, now - (e["last"] or now)) / (RECENCY_DAYS * 86400))
-            obs[me].append((other, w_snr * w_cnt * w_age, snr, e["measured"]))
+            w = w_snr * w_cnt * w_age
+            spots = (e.get("anchors") or {}).get(other)
+            if spots is not None:
+                # a moving station: where it was each time it saw this radio (topology._anchors), never its latest
+                # spot. A car parked in Astoria once dragged every radio it had heard in Portland to Astoria.
+                tot = sum(n for *_, n in spots)
+                for la, lo, n in spots:
+                    obs[me].append((other, (la, lo, None), w * n / tot, snr, e["measured"]))
+                continue
+            obs[me].append((other, anchors[other], w, snr, e["measured"]))
     out = []
     drives = drive_estimates(db_path)
     for nid, e in drives.items():  # heard directly from enough places along drives: better than link partners
@@ -147,23 +157,23 @@ def estimate_positions(db_path, local, base_id, describe):
     for nid, items in obs.items():
         if nid in drives:
             continue
-        tw = sum(w for _, w, _, _ in items)
+        tw = sum(w for _, _, w, _, _ in items)
         if tw <= 0:
             continue
-        lat = sum(anchors[a][0] * w for a, w, _, _ in items) / tw
-        lon = sum(anchors[a][1] * w for a, w, _, _ in items) / tw
-        prec = max(precision_km(anchors[a][2]) for a, _, _, _ in items)
+        lat = sum(p[0] * w for _, p, w, _, _ in items) / tw
+        lon = sum(p[1] * w for _, p, w, _, _ in items) / tw
+        prec = max(precision_km(p[2]) for _, p, _, _, _ in items)
         if len(items) == 1:
             radius = SINGLE_ANCHOR_KM
         else:
-            spread = math.sqrt(sum(w * _haversine_km((lat, lon), anchors[a][:2]) ** 2 for a, w, _, _ in items) / tw)
-            n_eff = tw ** 2 / sum(w * w for _, w, _, _ in items)
+            spread = math.sqrt(sum(w * _haversine_km((lat, lon), p[:2]) ** 2 for _, p, w, _, _ in items) / tw)
+            n_eff = tw ** 2 / sum(w * w for _, _, w, _, _ in items)
             radius = max(MIN_RADIUS_KM, spread / math.sqrt(n_eff))
         out.append({
             "id": nid, **describe(nid), "lat": lat, "lon": lon, "radiusKm": radius + prec,
             "anchors": [{"id": a, "name": describe(a)["name"], "weight": round(w / tw, 3), "snr": s, "measured": m,
-                         "assumed": a == local and a not in positions} for a, w, s, m in
-                        sorted(items, key=lambda x: -x[1])],
+                         "assumed": a == local and a not in positions} for a, _, w, s, m in
+                        sorted(items, key=lambda x: -x[2])],
             "provenance": "inferred",
             "method": "single anchor: within radio range" if len(items) == 1 else f"{len(items)} anchors, weighted centroid",
         })
@@ -290,7 +300,7 @@ def _health(db, range_key, local, describe):
     roles = {r["node"]: r["role"] for r in q("SELECT node, role, MAX(ts) FROM node_info GROUP BY node")}
     heard = {r[0]: r[1] for r in q("SELECT from_id, COUNT(*) FROM packets WHERE ts>=? GROUP BY 1", since)}
     for nid, role in roles.items():
-        if role in ROUTER_ROLES and heard.get(nid, 0) >= 5 and len(nid) == 9 and not relay_bytes.get(int(nid[-2:], 16)):
+        if role in ROUTER_ROLES and heard.get(nid, 0) >= 5 and radioid.is_meshtastic(nid) and not relay_bytes.get(radioid.relay_byte(nid)):
             findings.append(_finding("info", "router-silent", f"{role.replace('_', ' ').title()} not seen relaying",
                                      "Configured as infrastructure but no packet reached us via it. It may relay "
                                      "traffic our radio can't hear, so this is weak evidence.", nid,
@@ -335,10 +345,8 @@ def _health(db, range_key, local, describe):
 def _security(q, local, describe):
     out = []
     latest = {}
-    history = defaultdict(list)
     for r in q("SELECT node, public_key, ts FROM node_info ORDER BY ts"):
         if r["public_key"]:
-            history[r["node"]].append((r["ts"], r["public_key"]))
             latest[r["node"]] = r["public_key"]
     # old -> new numbers of radios renumbered by firmware 2.8 (analytics views already merge most of them)
     aliases = {r[0]: r[1] for r in q("SELECT old, new FROM _alias")} if q("SELECT 1 FROM sqlite_temp_master WHERE name = '_alias'") else {}
@@ -356,7 +364,7 @@ def _security(q, local, describe):
     by_key = defaultdict(list)
     for nid, key in latest.items():
         by_key[key].append(nid)
-    for key, nodes in by_key.items():
+    for nodes in by_key.values():
         if len(nodes) < 2:
             continue
         benign = keyflags.renumbered(nodes, aliases)
@@ -370,17 +378,25 @@ def _security(q, local, describe):
                              "config, and lets one impersonate the other.") + f" Nodes: {names}.",
                             nodes[0], [{"label": "nodes", "value": len(nodes), "prov": "reported"}], describe))
 
-    # key changes
-    for nid, hist in history.items():
-        keys = []
+    # key changes: only keys heard ON THE AIR (NodeInfo packets, at the time they arrived). node_info also holds
+    # what a station's radio had STORED when it connected, stamped with the connect time: a radio that remembered a
+    # node's old key made that old key look like a fresh change (five radios "changed key" the minute a car's Pi
+    # first connected). Nodes with no NodeInfo packet logged are left out: no change can be confirmed.
+    aired = defaultdict(list)
+    for r in q("SELECT from_id, ts, json_extract(raw, '$.decoded.user.publicKey') AS k FROM packets "
+               "WHERE portnum = 'NODEINFO_APP' AND json_extract(raw, '$.decoded.user.publicKey') IS NOT NULL ORDER BY ts"):
+        aired[r["from_id"]].append((r["ts"], r["k"]))
+    for nid, hist in aired.items():
+        first = {}
         for ts, k in hist:
-            if not keys or keys[-1][1] != k:
-                keys.append((ts, k))
-        if len(keys) > 1:
+            first.setdefault(k, ts)  # when each key was first heard
+        if len(first) > 1:
+            newest = max(first.values())
             out.append(_finding("info", "key-changed", "Public key changed",
-                                f"Changed {len(keys) - 1} time(s), last {time.strftime('%Y-%m-%d %H:%M', time.localtime(keys[-1][0]))}. "
+                                f"Announced {len(first)} different keys over the air; the newest was first heard "
+                                f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(newest))}. "
                                 "Usually a factory reset or re-flash; occasionally impersonation.", nid,
-                                [{"label": "distinct keys", "value": len(keys), "prov": "reported"}], describe))
+                                [{"label": "distinct keys heard", "value": len(first), "prov": "observed"}], describe))
 
     # impersonation of our own radio
     if local:

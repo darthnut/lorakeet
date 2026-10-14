@@ -1,10 +1,10 @@
 "use strict";
-/* Alerts bell + settings panel, injected into every page's top bar. Also exposes meshWatch() for stars. */
+/* Alerts bell, injected into every page's top bar (its settings are on the Settings page). Also exposes meshWatch() for stars. */
 (() => {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const ago = (ts) => { const s = Math.max(0, Date.now() / 1000 - ts); return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`; };
   const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
-  const ST = { alerts: [], unread: 0, settings: null, status: null, tab: "alerts" };
+  const ST = { alerts: [], unread: 0, settings: null };
   const nodeLink = (id) => (location.pathname.endsWith("analytics.html") ? `#node=${encodeURIComponent(id)}` : `/analytics.html#node=${encodeURIComponent(id)}`);
 
   const bar = document.querySelector(".topbar");
@@ -16,7 +16,7 @@
   async function load() {
     try {
       const [a, s] = await Promise.all([fetch("/api/alerts?limit=100").then((r) => r.json()), fetch("/api/settings").then((r) => r.json())]);
-      ST.alerts = a.alerts; ST.unread = a.unread; ST.status = s; ST.settings = s.settings;
+      ST.alerts = a.alerts; ST.unread = a.unread; ST.settings = s.settings;
       render();
       document.dispatchEvent(new CustomEvent("mesh-settings", { detail: ST.settings }));
     } catch { /* server restarting */ }
@@ -25,34 +25,12 @@
   function render() {
     $("bellCount").hidden = !ST.unread; $("bellCount").textContent = ST.unread;
     if ($("alertpop").hidden) return;
-    const s = ST.settings, at = ST.status?.autoTraceroute || {};
-    const tabs = `<nav class="atabs"><button data-t="alerts" class="${ST.tab === "alerts" ? "on" : ""}">Alerts</button><button data-t="settings" class="${ST.tab === "settings" ? "on" : ""}">Settings</button>${ST.tab === "alerts" && ST.unread ? '<button class="amark" id="aRead">Mark all read</button>' : ""}</nav>`;
-    let body;
-    if (ST.tab === "alerts") {
-      body = ST.alerts.length ? `<ul class="alist">${ST.alerts.map((a) => `<li class="${a.read ? "" : "unread"} sev-${esc(a.severity)}">
-          <div class="ah"><b>${esc(a.title)}</b><span>${esc(ago(a.ts))}</span></div><div class="ad">${esc(a.detail || "")}</div>
-          ${a.node ? `<a href="${nodeLink(a.node)}">open node →</a>` : ""}${a.resolved_ts ? ' <span class="muted">· resolved</span>' : ""}</li>`).join("")}</ul>`
-        : '<p class="muted" style="padding:12px">No alerts yet.</p>';
-    } else {
-      const num = (k, label, step = 1) => `<label class="srow"><span>${label}</span><input type="number" step="${step}" min="0" data-k="${k}" value="${s[k]}"></label>`;
-      const chk = (k, label) => `<label class="srow"><span>${label}</span><input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}></label>`;
-      body = `<div class="sform">
-        <h4>Watched nodes</h4>
-        <p class="muted">${s.watched.length ? s.watched.map((id) => `<a href="${nodeLink(id)}">${esc(id)}</a>`).join(", ") : "none"}. Star a node on its Analytics page or in the map's node panel.</p>
-        ${num("silenceHours", "Alert when silent for (hours)", 0.5)}${chk("notifySilence", "…and notify")}${chk("notifyBack", "Notify when it's back")}
-        ${num("lowBatteryPct", "Low battery at (%)")}${chk("notifyLowBattery", "…and notify")}
-        <h4>Whole mesh</h4>
-        ${chk("notifyNewNodes", "Notify about new nodes")}${num("newNodeBatchMin", "…at most every (min)")}
-        ${chk("notifyHealth", "Notify on new health warnings (daily check)")}
-        <h4>Scheduled traceroutes <span class="muted">(transmits)</span></h4>
-        ${chk("autoTraceroute", "Enabled")}${num("autoTracerouteMin", "At most one every (min)")}${num("autoTracerouteMaxChUtil", "Skip when channel busier than (%)")}
-        ${num("autoTracerouteRefreshHours", "Re-trace a node after (hours)")}${num("autoTracerouteRetryHours", "Retry a non-answering node after (hours)")}
-        <p class="muted">Last: ${at.ts ? `${esc(ago(at.ts))}: ${at.target ? `<a href="${nodeLink(at.target)}">${esc(at.target)}</a> · ` : ""}${esc(at.reason || "")}` : "not run yet this session"}</p>
-        <p class="muted" id="sSaved"></p>
-        <h4>Lorakeet</h4>
-        <p class="srow"><span class="muted">Reconnects the radio and rereads its settings; logging pauses for a few seconds.</span><button class="btn" id="sRestart">Restart Lorakeet</button></p></div>`;
-    }
-    $("alertpop").innerHTML = tabs + body;
+    const head = `<nav class="atabs"><b class="atitle">Alerts</b>${ST.unread ? '<button class="amark" id="aRead">Mark all read</button>' : ""}<a class="amark asettings" href="/settings.html#alerts">Settings</a></nav>`;
+    const body = ST.alerts.length ? `<ul class="alist">${ST.alerts.map((a) => `<li class="${a.read ? "" : "unread"} sev-${esc(a.severity)}">
+        <div class="ah"><b>${esc(a.title)}</b><span>${esc(ago(a.ts))}</span></div><div class="ad">${esc(a.detail || "")}</div>
+        ${a.node ? `<a href="${nodeLink(a.node)}">open node →</a>` : ""}${a.resolved_ts ? ' <span class="muted">· resolved</span>' : ""}</li>`).join("")}</ul>`
+      : '<p class="muted" style="padding:12px">No alerts yet.</p>';
+    $("alertpop").innerHTML = head + body;
   }
 
   $("bell").addEventListener("click", (e) => {
@@ -62,26 +40,7 @@
   });
   document.addEventListener("click", (e) => { if (!$("alertpop").hidden && !e.target.closest("#alertpop") && !e.target.closest("#bell")) { $("alertpop").hidden = true; $("bell").setAttribute("aria-expanded", "false"); } });
   $("alertpop").addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-t]"); if (t) { ST.tab = t.dataset.t; render(); return; }
     if (e.target.id === "aRead") { await post("/api/alerts/read", {}); load(); }
-    if (e.target.id === "sRestart") {
-      const b = e.target; b.disabled = true; b.textContent = "Restarting…";
-      const r = await post("/api/restart", {}).catch(() => ({}));
-      if (r.error) { b.disabled = false; b.textContent = "Restart Lorakeet"; $("sSaved").textContent = r.error; return; }
-      await new Promise((res) => setTimeout(res, 3000));
-      for (let i = 0; i < 60; i++) {  // straight back under its runner; reload once it answers
-        try { if ((await fetch("/api/version")).ok) { location.reload(); return; } } catch { /* not up yet */ }
-        await new Promise((res) => setTimeout(res, 1500));
-      }
-      b.textContent = "Still starting: reload in a minute";
-    }
-  });
-  $("alertpop").addEventListener("change", async (e) => {
-    const k = e.target.dataset.k; if (!k) return;
-    const v = e.target.type === "checkbox" ? e.target.checked : Number(e.target.value);
-    const r = await post("/api/settings", { [k]: v });
-    if (r.error) { $("sSaved").textContent = r.error; return; }
-    ST.settings = r.settings; $("sSaved").textContent = "Saved.";
   });
 
   // live: new alerts arrive over the page's shared event stream (prov.js lkEvents)

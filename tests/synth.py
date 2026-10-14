@@ -4,7 +4,7 @@ The expected numbers are known exactly, so analytics can be checked against them
 import json
 import time
 
-import server
+import store as store_mod
 
 HOME, PI = "!a0000001", "!b0000002"      # listening stations
 RELAY = "!d00000ff"                       # relays everything multi-hop (relay byte 0xff)
@@ -28,7 +28,7 @@ def build(path, now=None):
     """Write the synthetic mesh to a new database at path; returns facts the tests compare against."""
     now = now or time.time()
     start = now - HOURS * 3600
-    store = server.Store(path)
+    store = store_mod.Store(path)
     # station reports, once a minute: HOME the whole time, PI only during the middle hour
     for m in range(HOURS * 60):
         ts = start + m * 60
@@ -55,7 +55,7 @@ def build(path, now=None):
                 facts["both"] += 1
     # the relay is heard directly, so relay byte 0xff resolves to it
     store.insert("links", ts=start + 5, a=RELAY, b=HOME, snr=7.0, source="direct", station=HOME)
-    store.db.close()
+    store.close()
     return facts
 
 

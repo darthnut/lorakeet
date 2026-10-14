@@ -25,14 +25,12 @@ import collections
 import csv
 import hashlib
 import json
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-sys.argv, _args = sys.argv[:1], sys.argv[1:]  # server.py parses argv on import
-import server  # noqa: E402
-from config import CFG  # noqa: E402
+import store as store_mod
+from config import CFG
 
 SOURCE = "android-datalog"
 
@@ -126,7 +124,7 @@ def main():
     ap.add_argument("csv")
     ap.add_argument("--station", help="the radio the log is from (default: worked out from the log)")
     ap.add_argument("--dry-run", action="store_true")
-    a = ap.parse_args(_args)
+    a = ap.parse_args()
     if a.csv.lower().endswith(".json"):
         station, tables, d = convert_nodedb(a.csv, Path(a.csv).name)
         n = len(d["nodes"])
@@ -140,7 +138,7 @@ def main():
     print("  to import: " + ", ".join(f"{t} {len(r)}" for t, r in tables.items()))
     if a.dry_run:
         return
-    store = server.Store(Path(CFG["storage"]["data_dir"]) / "mesh.db")
+    store = store_mod.Store(Path(CFG["storage"]["data_dir"]) / "mesh.db")
     stored = store_rows(store, tables)
     print("  stored (new): " + ", ".join(f"{t} {n}" for t, n in stored.items()))
     store.execute("INSERT INTO events (ts, kind, detail, station) VALUES (?, 'datalog_import', ?, ?)", time.time(),

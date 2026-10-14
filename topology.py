@@ -11,11 +11,12 @@ Evidence, strongest first:
                took exactly one hop, its sender must have been heard by that relayer. Packets name the
                relayer by one byte only, so this is used only when exactly one known node matches.
 """
+import bisect
 import json
-import sqlite3
 from collections import defaultdict
 
-from analytics import (_connect, alias_map, smooth_track, _coverage, _window, is_combined, measured_neighbors, port_group, resolve_relay, scope_local,
+import radioid
+from analytics import (_connect, alias_map, smooth_track, _coverage, _window, measured_neighbors, port_group, resolve_relay, scope_local,
                        station_ids, station_location)
 
 MEASURED = ("direct", "traceroute", "neighborinfo")
@@ -29,8 +30,8 @@ def relay_resolver(db, local):
     known |= set(aliases)  # pre-2.8 numbers: relay bytes logged before an upgrade end in them
     by_byte = defaultdict(list)
     for nid in known:
-        if len(nid) == 9 and nid != local:
-            by_byte[int(nid[-2:], 16)].append(nid)
+        if radioid.is_meshtastic(nid) and nid != local:
+            by_byte[radioid.relay_byte(nid)].append(nid)
     neighbors = measured_neighbors(db, local)
     return lambda relay: resolve_relay(by_byte.get(relay, []), neighbors, aliases)
 
@@ -46,6 +47,8 @@ def compute(db_path, range_key, local_id, describe):
 def _compute(db, range_key, local, describe):
     since, until, *_ = _window(db, range_key)
     q = lambda sql, *a: db.execute(sql, a).fetchall()  # noqa: E731
+    tracks = station_tracks(db, since, until)
+    locate = _track_locator(tracks)
 
     edges = {}
 
@@ -53,11 +56,14 @@ def _compute(db, range_key, local, describe):
         if not a or not b or a == b or a in ("^all", "!ffffffff") or b in ("^all", "!ffffffff"):
             return
         key = tuple(sorted((a, b)))
-        e = edges.setdefault(key, {"a": key[0], "b": key[1], "sources": defaultdict(int), "snr": [], "last": 0})
+        e = edges.setdefault(key, {"a": key[0], "b": key[1], "sources": defaultdict(int), "snr": [], "last": 0, "where": {}})
         e["sources"][source] += 1
         if snr is not None:
             e["snr"].append(snr)
         e["last"] = max(e["last"], ts or 0)
+        for end in (a, b):  # a moving station: remember where it was when this link was seen
+            if end in tracks:
+                e["where"].setdefault(end, []).append(locate(end, ts))
 
     # Receptions mined from the firmware debug log (rx_hops) see every copy, duplicates included; the
     # packets table sees the first copy the firmware passed to us. Use both, but skip a packet-based
@@ -126,7 +132,6 @@ def _compute(db, range_key, local, describe):
 
     # nodes: every endpoint, with identity, latest position and activity in range
     ids = {i for e in edges.values() for i in (e["a"], e["b"])}
-    tracks = station_tracks(db, since, until)
     pos = _positions(db, ids, tracks)
     pkts = {r[0]: r[1] for r in q("SELECT from_id, COUNT(*) FROM packets WHERE ts >= ? GROUP BY 1", since)}
     degree = defaultdict(int)
@@ -143,6 +148,7 @@ def _compute(db, range_key, local, describe):
             "a": e["a"], "b": e["b"], "sources": src, "count": sum(src.values()),
             "measured": any(s in src for s in MEASURED),
             "snr": sum(e["snr"]) / len(e["snr"]) if e["snr"] else None, "last": e["last"],
+            **({"anchors": {s: _anchors(pts) for s, pts in e["where"].items()}} if e["where"] else {}),
         })
     out_edges.sort(key=lambda e: -e["count"])
     return {"range": range_key, "since": since, "until": until, "local": local, "stations": station_ids(db, local),
@@ -193,6 +199,37 @@ def station_tracks(db, since, until):
             pts = [pts[int(i * step)] for i in range(TRACK_POINTS_MAX)] + [pts[-1]]
         out[sid] = {"track": [[round(t, 1), round(la, 6), round(lo, 6)] for t, la, lo in pts], "dwell": dwell}
     return out
+
+
+ANCHOR_GRID = (0.02, 0.03)  # degrees: ~2 km squares, where a moving station's link observations are grouped
+ANCHORS_MAX = 8
+
+
+def _track_locator(tracks):
+    """(station, ts) -> where a moving station was then: its latest fix at or before ts, if no older than
+    TRACK_FIX_MAX_AGE_S (as drive.py), else None."""
+    times = {s: [p[0] for p in v["track"]] for s, v in tracks.items()}
+
+    def locate(station, ts):
+        tr, ts_list = tracks[station]["track"], times[station]
+        if ts is None:
+            return None
+        i = bisect.bisect_right(ts_list, ts) - 1
+        return (tr[i][1], tr[i][2]) if i >= 0 and ts - tr[i][0] <= TRACK_FIX_MAX_AGE_S else None
+    return locate
+
+
+def _anchors(points):
+    """Where a moving station saw one link: its positions at each observation grouped into ~2 km squares,
+    [[lat, lon, observations], ...], busiest first. The map draws the link from these spots: drawn from the
+    station's marker (where it spent the range), a link seen on the road would cross half the state.
+    Observations with no recent fix aren't placed anywhere."""
+    groups = defaultdict(list)
+    for p in points:
+        if p:
+            groups[(round(p[0] / ANCHOR_GRID[0]), round(p[1] / ANCHOR_GRID[1]))].append(p)
+    out = [[round(sum(la for la, _ in g) / len(g), 5), round(sum(lo for _, lo in g) / len(g), 5), len(g)] for g in groups.values()]
+    return sorted(out, key=lambda a: -a[2])[:ANCHORS_MAX]
 
 
 def _positions(db, ids, tracks):

@@ -45,7 +45,7 @@ def on_line(line, interface):  # noqa: ARG001
                 found.append(ip)
 pub.subscribe(on_line, "meshtastic.log.line")
 time.sleep(20)
-for attempt in range(3):
+for _attempt in range(3):
     try:
         i = SerialInterface(a.port)
         break

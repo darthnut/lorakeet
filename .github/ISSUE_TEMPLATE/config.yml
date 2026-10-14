@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/darthnut/lorakeet/security/advisories/new
+    about: Not in a public issue, please. See SECURITY.md for what counts.
   - name: How to test Lorakeet
     url: https://github.com/darthnut/lorakeet/blob/main/TESTING.md
     about: What to try, what to send back, and what to keep private.

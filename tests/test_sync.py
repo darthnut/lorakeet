@@ -1,14 +1,14 @@
 """Collector → hub sync: batches, duplicates, tokens and station reports."""
 import pytest
 
-import server
+import store as store_mod
 import sync
 from synth import PI
 
 
 @pytest.fixture
 def hub(tmp_path):
-    store = server.Store(tmp_path / "hub.db")
+    store = store_mod.Store(tmp_path / "hub.db")
     store.station = "!a0000001"
     return sync.Hub(store)
 

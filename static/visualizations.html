@@ -59,6 +59,24 @@
         <p class="hint">Auto learns how often each radio is usually heard (kept between 2 and 24 hours). Hours we weren't logging never count as silence.</p>
       </div>
     </details>
+    <button type="button" class="btn vz-panel" id="vzGroovy" aria-pressed="false" title="Just for fun: psychedelic colours, comet trails and sparks over the replay (V)">🌈 Groovy</button>
+    <details class="vz-panel vz-fadeopts" id="vzGroovyOpts">
+      <summary title="Groovy options" aria-label="Groovy options">▾</summary>
+      <div class="vz-panel vz-fade-menu">
+        <label>Vibe
+          <select id="vzVibe"><option value="rainbow">Rainbow</option><option value="neon">Neon</option>
+            <option value="lava">Lava lamp</option><option value="aurora">Aurora</option></select></label>
+        <label>Intensity
+          <select id="vzIntensity"><option value="chill">Chill</option><option value="groovy">Groovy</option>
+            <option value="far-out">Far out</option></select></label>
+        <label class="vz-check"><input type="checkbox" id="vzTrails"> Comet trails behind packets</label>
+        <label class="vz-check"><input type="checkbox" id="vzBursts"> Sparks where each hop lands</label>
+        <label class="vz-check"><input type="checkbox" id="vzAuras"> Radios glow when they speak</label>
+        <label class="vz-check"><input type="checkbox" id="vzBg"> Lava-lamp background</label>
+        <label class="vz-check"><input type="checkbox" id="vzKaleido"> Kaleidoscope</label>
+        <p class="hint">Just for fun: the data underneath is the same. Add <code>?groovy=neon</code> (or rainbow, lava, aurora) to the address to share it on.</p>
+      </div>
+    </details>
     <button type="button" class="btn vz-panel" id="vzChatBtn" aria-pressed="false" title="Show text messages in a chat panel as the replay reaches them, each linked to its sender (M)">💬 Texts</button>
     <button type="button" class="btn vz-panel" id="vzHide" title="Hide the controls, e.g. to screen-record (H)">Hide UI</button>
     <button type="button" class="btn vz-panel" id="vzFull" title="Full screen (F)">⛶ Full screen</button>
@@ -127,6 +145,7 @@
 <script src="insights.js"></script>
 <script src="topology.js"></script>
 <script src="replay.js"></script>
+<script src="groovy.js"></script>
 <script src="drive.js"></script>
 <script src="viz.js"></script>
 <script src="alerts.js"></script>

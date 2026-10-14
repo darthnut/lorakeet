@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#13294b">
+<title>Settings · Lorakeet</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body class="setup-page">
+<header class="topbar">
+  <div class="brand"><img class="logo" src="favicon.svg" alt="" width="22" height="22">Lorakeet</div>
+  <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html">Packets</a><a href="/settings.html" aria-current="page">Settings</a></nav>
+</header>
+
+<main class="setup radio settings">
+  <h1>Settings</h1>
+  <p class="lead" id="lead">How Lorakeet itself behaves. Change what you like, then <b>Save</b>: alert settings apply at once; the others are written to <code>lorakeet.toml</code> together (comments and anything else in it kept, the previous copy kept as a backup) and apply after a restart. Your radio's own settings are on the <a href="/radio.html">Radio</a> page; other Lorakeets and peers on <a href="/stations.html">Stations</a>.</p>
+  <p class="err" id="err" role="alert"></p>
+  <p class="locwarn" id="restartBanner" hidden></p>
+  <nav class="setnav" id="setnav" aria-label="Sections"></nav>
+  <div id="sections"></div>
+
+  <div class="savebar" id="saveBar" hidden>
+    <span id="saveCount"></span>
+    <button class="btn primary" id="saveBtn">Save</button>
+    <button class="linkbtn" id="discardBtn">Discard changes</button>
+    <span class="muted" id="saveNote"></span>
+  </div>
+</main>
+<script src="prov.js"></script>
+<script src="alerts.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

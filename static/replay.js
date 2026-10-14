@@ -82,11 +82,11 @@ async function drawReplay(d, range) {
   $("topoReplayGraph").hidden = R.view !== "graph";
   $("topoReplayMap").hidden = R.view !== "map";
   if (R.map) { R.map.remove(); R.map = null; }
-  R.graph = null; R.unplaced = 0;
+  R.graph = null; R.unplaced = 0; R.tooFar = 0;
   if (R.view === "map") {
     const m = await buildGeoMap(d, $("topoReplayMap"), () => current() && R.view === "map", extra.nodes, { trimOutliers: true, inset: vizInset() });
     if (!m) { if (current() && R.view === "map") $("replayStatus").textContent = "None of these radios have a position to put on the map."; return; }
-    R.map = m.map;
+    R.map = m.map; R.tooFar = m.tooFar;
     // flights draw in an SVG laid over the map; positions are re-projected every frame, so pan and zoom just work
     const svg = d3.select(m.map.getContainer()).append("svg").attr("class", "flightsvg");
     R.layer = svg.append("g").attr("class", "flights").node();
@@ -659,6 +659,7 @@ function updateStatus() {
   const since = rd.miningSince ? ` Every duplicate copy is included from ${when(rd.miningSince)}, when debug-log mining began; before that, only the first copy of each packet.` : "";
   $("replayStatus").textContent = `${nf.format(rd.events.length)} receptions and transmissions${rd.truncated ? " (newest only: the range holds more)" : ""}.` +
     (R.ghostCount ? ` ${R.ghostCount} radios were heard only through multi-hop relays and have no observed link; they're drawn hollow${R.view === "graph" ? ", next to their usual relayer" : ""}.` : "") +
-    (R.view === "map" ? ` On the map, radios without a position use their estimate${R.unplaced ? `, and ${R.unplaced} with neither can't be placed, so their packets are left out of the animation (the log still lists them)` : ""}.` : "") + since +
+    (R.view === "map" ? ` On the map, radios without a position use their estimate${R.unplaced ? `, and ${R.unplaced} with neither can't be placed, so their packets are left out of the animation (the log still lists them)` : ""}.` : "") +
+    (R.view === "map" && R.tooFar ? ` ${R.tooFar} link${R.tooFar > 1 ? "s" : ""} longer than ${LINK_MAX_KM} km not drawn: no radio link spans that, so a radio's reported position is wrong (the graph still shows ${R.tooFar > 1 ? "them" : "it"}).` : "") + since +
     (R.skipped ? ` ${nf.format(R.skipped)} not animated: too many at once at this speed (try a slower speed).` : "");
 }

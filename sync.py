@@ -25,7 +25,8 @@ import time
 import urllib.error
 import urllib.request
 
-from analytics import STATION_RE, STATION_TABLES
+import radioid
+from analytics import STATION_TABLES
 
 log = logging.getLogger("lorakeet.sync")
 BATCH_ROWS = 500
@@ -337,11 +338,24 @@ class PeerSender:
         self.status["paused"] = bool(self.peer.get("paused"))
         if self.status["paused"]:
             return
+        name = self.peer.get("name") or self.peer["id"]
         try:
             self.sync_once()
         except Exception as e:  # noqa: BLE001 - next pass retries
-            log.warning("peer %s: %s", self.peer.get("name") or self.peer["id"], e)
+            # one line per outage, not one per pass (a laptop asleep overnight was 700 lines): logged again only
+            # when the kind of failure changes ("peer unreachable", "refused"...), and once more when it ends
+            kind = str(e).split(":")[0]
+            if kind != getattr(self, "_failing", None):
+                log.warning("peer %s: %s (retrying every %d s; logged again when it changes or recovers)", name, e, self.interval)
+                self._failing = kind
+                self._failing_since = getattr(self, "_failing_since", None) or time.time()
+            else:
+                log.debug("peer %s: %s", name, e)
             self.status.update(lastError=str(e), lastErrorAt=time.time())
+            return
+        if getattr(self, "_failing", None):
+            log.info("peer %s: sending again after %.0f min", name, (time.time() - self._failing_since) / 60)
+            self._failing = self._failing_since = None
 
     def stations(self):
         """Stations whose data this peer may get: everything here that didn't arrive from a peer, plus (forward)
@@ -521,7 +535,7 @@ def station_tokens(entries):
     """sync.station_tokens ["!id:token", ...] -> {station id: token}."""
     out = {}
     for e in entries or []:
-        sid, _, tok = str(e).partition(":")
+        sid, tok = radioid.split_station_token(e)
         out[sid] = tok
     return out
 
@@ -559,7 +573,6 @@ def decode_body(raw, encoding):
 
 NODE_COLUMNS = {"from_id", "to_id", "node", "target", "a", "b"}
 JSON_COLUMNS = {"raw", "forward", "back", "data", "detail"}
-NODE_RE = re.compile(r"![0-9a-f]{8}|\^all")
 TEXT_MAX = {"raw": 256 * 1024, "data": 4 * 1024 * 1024, "detail": 256 * 1024, "forward": 64 * 1024, "back": 64 * 1024}
 TEXT_MAX_DEFAULT = 4096
 MIN_TS = 1.5e9  # 2017: a timestamp before this is nonsense (and ts=0 could pose as "first seen")
@@ -581,7 +594,7 @@ def _check_value(table, col, kind, v, now):
         raise IngestError(400, f"{where} must be text")
     if len(v) > TEXT_MAX.get(col, TEXT_MAX_DEFAULT):
         raise IngestError(400, f"{where} is too long")
-    if col in NODE_COLUMNS and not NODE_RE.fullmatch(v):
+    if col in NODE_COLUMNS and not (v in radioid.BROADCAST or radioid.is_radio_id(v)):
         raise IngestError(400, f"{where} must be a node id")
     if col in JSON_COLUMNS:
         try:
@@ -743,7 +756,7 @@ class Hub:
         station, table, rows = batch.get("station"), batch.get("table"), batch.get("rows")
         if bound_station is not None and station != bound_station:
             raise IngestError(403, "this token belongs to a different station")
-        if not isinstance(station, str) or not STATION_RE.fullmatch(station):
+        if not radioid.is_radio_id(station):
             raise IngestError(400, "bad station id")
         if writer is not None:
             if writer.startswith("peer:") and table is not None and table not in PEER_TABLES:

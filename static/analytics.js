@@ -577,7 +577,7 @@ async function renderCompare(range) {
     bucket: d.bucket, groups: ["a", "both", "b"], gapText: "Both stations weren't logging",
     series: d.series.map((s) => ({ t: s.t, covered: s.covered, total: s.covered ? s.a + s.both + s.b : null, byGroup: s.covered ? { a: s.a, both: s.both, b: s.b } : null })),
   }, (g) => CMP_COL[g], (g) => label[g]);
-  const relayName = (r) => (r === "direct" ? "direct (no relay)" : r === "unknown" ? "unknown" : r.startsWith("!") ? (S_NAME(r)) : `relay ${r}`);
+  const relayName = (r) => (r === "direct" ? "direct (no relay)" : r === "unknown" ? "unknown" : isRadioId(r) ? (S_NAME(r)) : `relay ${r}`);
   const rel = (rows) => rows.length ? rows.map((r) => `<div><span>${esc(relayName(r.relay))}</span> <b>${nf.format(r.n)}</b></div>`).join("") : '<p class="muted">—</p>';
   $("cmpRelays").innerHTML = `<div class="cmp-two"><div><h4>${A}</h4>${rel(d.topRelays.a)}</div><div><h4>${B}</h4>${rel(d.topRelays.b)}</div></div>`;
   $("cmpPaths").innerHTML = `<p>Of the ${nf.format(p.both)} packets both heard, <b>${nf.format(d.relaysSame)}</b> reached both through the same last relay and <b>${nf.format(d.relaysDifferent)}</b> through different ones.</p>` +

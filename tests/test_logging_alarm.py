@@ -3,7 +3,7 @@ import json
 import time
 
 import alerts
-import server
+import store as store_mod
 
 LOCAL = "!a0000001"
 
@@ -23,7 +23,7 @@ class FakeMesh:
 
 
 def run(tmp_path, monkeypatch, mined_per_min):
-    store = server.Store(tmp_path / "mesh.db")
+    store = store_mod.Store(tmp_path / "mesh.db")
     mesh = FakeMesh()
     mesh.log_counts = {"lines": 0, "mined": 0}
     a = alerts.Alerts(store, mesh, tmp_path / "mesh.db", None)

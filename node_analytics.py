@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from packetsearch import csv_cell
+import radioid
 from analytics import (OTHER, PORT_GROUPS, _bucket_starts, _connect, alias_map, _coverage, _covered, _window, measured_neighbors,
                        port_group, resolve_relay, scope_local)
 
@@ -147,7 +148,7 @@ def _compute_node(db, nid, range_key, local, describe):
 
     # Packets this node relayed to us. Packets name the relayer by one byte only, so this is exact only
     # when no other known node shares that last byte; report the ambiguity rather than guess.
-    byte = int(nid[-2:], 16) if len(nid) == 9 else None
+    byte = radioid.relay_byte(nid)
     relayed = q("SELECT COUNT(*) FROM packets WHERE relay = ? AND hops > 0 AND from_id != ? AND ts >= ?",
                 byte, nid, since)[0][0] if byte is not None else 0
     # "relayed to us" is exact when this node is the only one with the byte, or the only one with a measured

@@ -2,11 +2,12 @@
 import http.client
 import json
 import threading
-import types
 
 import pytest
 
-import server
+import mesh as mesh_mod
+import runtime
+import web as web_mod
 import tray
 
 
@@ -48,7 +49,8 @@ class _Mesh:
     def name(self, nid):
         return "Desk"
 
-    set_paused = server.Mesh.set_paused
+    set_paused = mesh_mod.Mesh.set_paused
+    drop_link = mesh_mod.Mesh.drop_link
 
 
 def test_pausing_lets_go_of_the_radio_and_is_logged():
@@ -63,7 +65,7 @@ def test_pausing_lets_go_of_the_radio_and_is_logged():
 
 def test_pause_endpoint_and_brief(monkeypatch):
     m = _Mesh()
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(m, None, None, None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(m, None, None, None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     host = f"127.0.0.1:{srv.server_address[1]}"
 
@@ -75,7 +77,7 @@ def test_pause_endpoint_and_brief(monkeypatch):
         return r.status, json.loads(r.read())
 
     try:
-        assert req("GET", "/api/brief")[1] == {"version": server.VERSION, "connected": True, "paused": False,
+        assert req("GET", "/api/brief")[1] == {"version": runtime.VERSION, "connected": True, "paused": False,
                                               "port": "COM9", "id": "!a0000001", "name": "Desk"}
         assert req("POST", "/api/logging", {"paused": True}) == (200, {"paused": True})
         assert req("GET", "/api/brief")[1]["paused"] and req("GET", "/api/whoami")[1]["paused"]
@@ -95,7 +97,7 @@ def test_restart_endpoint_explains_when_it_cant(monkeypatch):
     monkeypatch.delenv("LORAKEET_SUPERVISED", raising=False)
     monkeypatch.delenv("INVOCATION_ID", raising=False)
     m = _Mesh()
-    srv = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(m, None, None, None, None, None))
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(m, None, None, None, None, None))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         c = http.client.HTTPConnection(f"127.0.0.1:{srv.server_address[1]}", timeout=10)
@@ -125,7 +127,7 @@ def test_pausing_while_it_connects_lets_go_of_the_radio():
             FakeIface.closed = True
 
     class M:
-        _connect, _close_quietly = server.Mesh._connect, staticmethod(server.Mesh._close_quietly)
+        _connect, _close_quietly = mesh_mod.Mesh._connect, staticmethod(mesh_mod.Mesh._close_quietly)
         paused, iface, lock, last_connect_error = False, None, th.RLock(), None
 
         def _pick_port(self):

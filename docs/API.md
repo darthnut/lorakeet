@@ -125,7 +125,14 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | GET | `/api/radio/location-check` | Is this antenna position far from the radios heard? | `lat`<br>`lon` |
 | GET | `/api/radio/logging` | Packets and receptions logged since then (the walkthrough's last step). | `since`: unix time |
 | GET | `/api/radio/share` | A private channel's share link and QR code (contains its key). | `index`: channel index |
-| POST | `/api/radio/apply` | Change radio settings (after a backup). |  |
+| GET | `/api/preferences` | The Settings page: the lorakeet.toml settings it may change, as saved and as running (they differ until a restart). |  |
+| POST | `/api/preferences` | Save Settings page changes to lorakeet.toml in one validated write (most apply after a restart). | `changes`: {section: {key: value}} |
+| GET | `/api/diagnostics` | The diagnostics bundle's files as text (Settings -> Help), personal details removed: to look at before saving. |  |
+| GET | `/api/diagnostics.zip` | The diagnostics bundle as a zip download, for a bug report. Nothing is sent anywhere. |  |
+| GET | `/api/radio/advanced` | Every setting the radio reported, by section, with help and warnings (secrets: only whether they're set). |  |
+| GET | `/api/radio/undo` | What 'Undo last save' would change: the last save's settings, back to the backup taken before it. |  |
+| POST | `/api/radio/undo` | Undo the last settings save (one backup, one write, one restart). |  |
+| POST | `/api/radio/apply` | Change radio settings in one batch: checklist items, names and any Advanced settings, one backup and one restart. |  |
 | POST | `/api/radio/channel` | Create, add or copy a channel. |  |
 | POST | `/api/radio/station` | This station's name and location. |  |
 | POST | `/api/radio/restart` | Restart Lorakeet from the Radio / Stations pages. |  |

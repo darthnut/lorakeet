@@ -12,6 +12,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import radioid
+
 log = logging.getLogger("lorakeet.config")
 HERE = Path(__file__).resolve().parent
 
@@ -154,8 +156,8 @@ def _validate(c):
     if s["token"] and len(s["token"]) < 16:
         raise ValueError("lorakeet.toml: sync.token must be at least 16 characters")
     for entry in s["station_tokens"]:
-        sid, _, tok = str(entry).partition(":")
-        if not (len(sid) == 9 and sid.startswith("!")) or len(tok) < 16:
+        sid, tok = radioid.split_station_token(entry)
+        if not radioid.is_radio_id(sid) or len(tok) < 16:
             raise ValueError('lorakeet.toml: sync.station_tokens entries look like "!1234abcd:<16+ character token>"')
     if s["mode"] == "collector" and not s["hub_url"].startswith(("http://", "https://")):
         raise ValueError('lorakeet.toml: sync.hub_url must be like "http://home-pc:5190"')
@@ -167,12 +169,12 @@ def _validate(c):
             except ValueError:
                 raise ValueError(f"lorakeet.toml: sync.allow: {n!r} is not a network") from None
     for nid in c["remote"]["allow"]:
-        if not (isinstance(nid, str) and len(nid) == 9 and nid.startswith("!")):
+        if not radioid.is_radio_id(nid):
             raise ValueError('lorakeet.toml: remote.allow entries look like "!1234abcd"')
     if c["remote"]["enabled"] and not c["remote"]["allow"]:
         raise ValueError("lorakeet.toml: remote.enabled needs at least one radio in remote.allow")
     bid = c["base"]["id"]
-    if bid and not (len(bid) == 9 and bid.startswith("!")):
+    if bid and not radioid.is_radio_id(bid):
         raise ValueError('lorakeet.toml: base.id must look like "!1234abcd"')
 
 
@@ -190,7 +192,20 @@ def load():
     return c
 
 
-CFG = load()
+LOAD_ERROR = None
+try:
+    CFG = load()
+except ValueError as _e:  # TOMLDecodeError is a ValueError too
+    if not os.environ.get("LORAKEET_DIAGNOSTICS"):
+        raise
+    # diagnostics.py: a broken file is what the report is about, so carry on with the defaults, and the data folder
+    # if the file names one, to find the logs
+    LOAD_ERROR = str(_e)
+    CFG = _merge(DEFAULTS, {})
+    _p = Path(os.environ.get("LORAKEET_CONFIG") or HERE / "lorakeet.toml")  # (config_path() is defined below)
+    _m = re.search(r'^\s*data_dir\s*=\s*"([^"]+)"', _p.read_text(encoding="utf-8-sig", errors="replace"), re.M)
+    CFG["storage"]["data_dir"] = Path(_m.group(1)) if _m else default_data_dir()
+    CFG["_path"] = str(_p)
 
 
 def public():
@@ -222,13 +237,8 @@ SECTION_NOTES = {
 }
 
 
-def update_section(section, values):
-    """Set keys in one [section] of lorakeet.toml (the Radio and Stations pages): `values` {key: value}, None removes
-    the key. Everything else in the file, comments included, is kept; the result is validated exactly like a
-    hand-edited file before it replaces the old one, which is kept as lorakeet.toml.bak."""
-    path = config_path()
-    old = path.read_text(encoding="utf-8-sig") if path.exists() else ""
-    lines = old.splitlines()
+def _edit_section(lines, section, values):
+    """`lines` with keys set in one [section] (values None = removed), the section added if missing."""
     head = next((i for i, l in enumerate(lines) if l.strip() == f"[{section}]"), None)
     if head is None:
         lines += ["", SECTION_NOTES.get(section, f"# {section}"), f"[{section}]"]
@@ -238,6 +248,19 @@ def update_section(section, values):
     body = [l for l in lines[head + 1:end] if not re.match(rf"\s*({keys})\s*=", l)]
     new = [f"{k} = {_toml(v)}" for k, v in values.items() if v is not None]
     lines[head + 1:end] = new + body
+    return lines
+
+
+def update_sections(changes):
+    """Set keys in several sections of lorakeet.toml at once (the Settings page): {section: {key: value}}, None removes a
+    key. Everything else in the file, comments included, is kept; the result is validated exactly like a hand-edited
+    file before it replaces the old one (kept as lorakeet.toml.bak): all of it or none."""
+    path = config_path()
+    old = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+    lines = old.splitlines()
+    for section, values in changes.items():
+        if values:
+            lines = _edit_section(lines, section, values)
     text = "\n".join(lines).rstrip("\n") + "\n"
     try:
         _validate(_merge(DEFAULTS, tomllib.loads(text)))
@@ -249,6 +272,21 @@ def update_section(section, values):
     _write_private(tmp, text)
     os.replace(tmp, path)
     return path
+
+
+def update_section(section, values):
+    """Set keys in one [section] of lorakeet.toml (the Radio and Stations pages); see update_sections."""
+    return update_sections({section: values})
+
+
+def file_settings():
+    """lorakeet.toml as it is on disk now, merged over the defaults and validated (CFG is what's RUNNING: they differ
+    until a restart)."""
+    path = config_path()
+    user = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
+    c = _merge(DEFAULTS, user)
+    _validate(c)
+    return c
 
 
 def _write_private(path, text):

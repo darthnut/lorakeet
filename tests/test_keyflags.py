@@ -7,7 +7,7 @@ import zlib
 import keyflags
 import nodeids
 import packetsearch
-import server
+import store as store_mod
 import weak_keys
 
 WEAK = base64.b64encode(b"w" * 32).decode()      # made-up keys
@@ -34,13 +34,13 @@ def test_which_radios_are_flagged(monkeypatch):
 
 def test_packet_browser_filters_by_sender_key(tmp_path):
     path = tmp_path / "mesh.db"
-    store = server.Store(path)
+    store = store_mod.Store(path)
     for i, sender in enumerate(("!c0000002", "!c0000004")):
         store.insert("packets", ts=time.time() - 60, from_id=sender, to_id="^all", pkt_id=i, portnum="TEXT_MESSAGE_APP", raw="{}")
     store.insert("node_info", ts=1, node="!c0000002", public_key=CLONED)
     store.insert("node_info", ts=1, node="!c0000003", public_key=CLONED)
     store.insert("node_info", ts=1, node="!c0000004", public_key=OWN)
-    store.db.close()
+    store.close()
     flagged = keyflags.compute(path)
     assert set(flagged) == {"!c0000002", "!c0000003"}
     rows = packetsearch.search(path, "packets", {"keyflag": "any", "keyflagNodes": flagged}, station="*")["rows"]

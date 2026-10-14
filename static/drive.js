@@ -66,10 +66,10 @@ function dvDecoy(d) {
   const label = new Map(), n = { Station: 0, Radio: 0 }, stations = new Set(d.stations.map((s) => s.id));
   const nm = (id) => { if (!label.has(id)) { const w = stations.has(id) ? "Station" : "Radio"; label.set(id, `${w} ${++n[w]}`); } return label.get(id); };
   for (const s of d.stations) s.name = nm(s.id);
-  for (const c of d.cells) for (const k of ["topRadios", "directRadios", "relays"]) for (const r of c[k] || []) r[1] = String(r[0]).startsWith("!") ? nm(r[0]) : "an unresolved relay";
+  for (const c of d.cells) for (const k of ["topRadios", "directRadios", "relays"]) for (const r of c[k] || []) r[1] = isRadioId(r[0]) ? nm(r[0]) : "an unresolved relay";
   for (const s of d.sent || []) {
     for (const h of s.heardBy) h.name = nm(h.station);
-    for (const r of s.relays) r[1] = String(r[0]).startsWith("!") ? nm(r[0]) : "an unresolved relay";
+    for (const r of s.relays) r[1] = isRadioId(r[0]) ? nm(r[0]) : "an unresolved relay";
     s.what = /^Lorakeet ping/.test(s.what || "") ? "ping" : /_APP$/.test(s.what || "") || s.what === "packet" ? s.what : "a text message";
   }
   const mv = (p) => { const [a, b] = sh([p[0], p[1]]); p[0] = a; p[1] = b; };
@@ -179,7 +179,7 @@ function dvKm(a, b) {
 function dvSelect(c, quiet = false) {
   DV.sel = c;
   if (!c) { $("dvCell").innerHTML = '<p class="muted">Click a square on the map.</p>'; return; }
-  const link = (id, name) => (id.startsWith("!") && !ANON ? `<a href="${esc(nodeHref(id))}">${esc(name)}</a>` : esc(name));  // anon: no real ids in links
+  const link = (id, name) => (isRadioId(id) && !ANON ? `<a href="${esc(nodeHref(id))}">${esc(name)}</a>` : esc(name));  // anon: no real ids in links
   const list = (rows, val) => rows.length ? `<ul class="dv-list">${rows.map((r) => `<li>${link(r[0], r[1])}${val ? `<span class="muted">${esc(val(r))}</span>` : ""}</li>`).join("")}</ul>` : '<p class="muted">none</p>';
   $("dvCell").innerHTML = c.receptions === 0
     ? `<dl class="dv-kv"><dt>Time here</dt><dd>${fmt(c.minutes, 1)} min</dd></dl><p>Nothing heard in this square: a gap in coverage (or the radio was busy elsewhere). Worth another pass to confirm.</p>`

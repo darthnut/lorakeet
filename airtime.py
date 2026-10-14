@@ -17,6 +17,7 @@ from analytics import (OTHER, PORT_GROUPS, _bucket_starts, _connect, _coverage, 
                        _window, is_combined, port_group, scope_local)
 from anatomy import radio_layer
 from topology import relay_resolver
+import radioid
 
 NOT_DECODED = "Not decoded"  # a copy whose packet never reached the API (heard, but our radio passed on another copy or none)
 
@@ -109,7 +110,6 @@ def _compute(db, range_key, local, describe):
     groups = [g for g, _ in PORT_GROUPS] + [OTHER, NOT_DECODED]
     groups = [g for g in groups if by_group.get(g)]
     series, covered_s = [], 0.0
-    step = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
     for start in _bucket_starts(since, until, bucket):
         key = start.strftime(fmt)
         # seconds of this bucket that were logged AND after reception mining began: the denominator
@@ -133,7 +133,7 @@ def _compute(db, range_key, local, describe):
     or_rows = sorted(originators.items(), key=lambda kv: -kv[1][0])
 
     def ident(i):
-        return {"id": i, **describe(i)} if i.startswith("!") else {"id": None, "name": i}
+        return {"id": i, **describe(i)} if radioid.protocol_of(i) else {"id": None, "name": i}
     ch = [v[0] for v in util.values() if v[0] is not None]
     return {
         "range": range_key, "since": since, "until": until, "bucket": bucket, "miningSince": mining_since,

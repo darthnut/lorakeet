@@ -1,0 +1,8 @@
+# pytest --cov: Lorakeet's own code, not the tests or the helper tools
+[run]
+source = .
+omit =
+    tests/*
+    tools/*
+    deploy/*
+    venv*/*

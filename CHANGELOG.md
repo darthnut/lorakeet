@@ -6,6 +6,71 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.4.0 (2026-10-13)
+
+**New**
+- **Every radio setting, saved in one go.** The Radio page's new **Advanced** section shows every setting the radio
+  reports (device, LoRa, position, power, network, screen, Bluetooth, security and every module), with plain help,
+  units and a search. Change as many as you like, in any section, together with the checklist and the radio's
+  name: **Review and save** writes them all at once, with one backup and one restart, then reads each one back
+  from the radio. (The Meshtastic apps restart the radio after every settings page.) Changes that can cut
+  Lorakeet off from the radio, break logging, transmit a lot, put traffic on the internet or are legal settings
+  are marked in red and need a confirmation. Passwords and PINs are write-only; the radio's keys aren't changed
+  here; managed mode can only be turned off.
+- **Undo last save** (Radio page): puts back exactly the settings the last save changed, from the backup taken
+  just before it (a replaced password too, never shown), after the same review; one write, one restart. Settings
+  changed elsewhere since are left alone. Pressing it again redoes.
+- **Settings page** (top bar → Settings): Lorakeet's own settings in one place, each explained: alerts (moved here
+  from the bell, which now just lists them), this station, the radio connection, access from other devices,
+  map, base station, backups and storage, remote commands and LLM access. One **Save**: alert settings apply at
+  once; the rest are written to `lorakeet.toml` together (checked like a hand edit, comments kept, the previous
+  copy kept as `lorakeet.toml.bak`), each marked until a restart applies it, with a Restart button. On this
+  computer only (devices on your network see the alert settings).
+- **Diagnostics for bug reports** (Settings → Help and diagnostics): one zip with versions, the radio's model,
+  firmware and the settings that matter, the database's size, backups, sync, recent warnings and errors, and your
+  settings, with names, radio ids, addresses, paths, Wi-Fi networks, locations and keys taken out before anything
+  is written. **See what's in it** shows it first; nothing is sent anywhere. If Lorakeet won't start (even with a
+  broken `lorakeet.toml`), `python diagnostics.py` in its folder saves the same file.
+- **🌈 Groovy mode** (Visualizations, or press V), just for fun: the replay in psychedelic colours. Comet trails
+  follow every packet, sparks fly where each hop lands, rainbow ripples mark each transmission, radios glow when
+  they speak, links and radios shift through the palette over a lava-lamp background (the map's tiles cycle
+  colour instead). Four vibes (Rainbow, Neon, Lava lamp, Aurora), three intensities up to "Far out", and a
+  kaleidoscope. `?groovy=neon` in the address turns it on for sharing; `tools/record-viz.mjs --groovy lava` records it.
+
+**Changed**
+- **Much less wear on a Pi's SD card.** Lorakeet commits what it logs every 2 seconds instead of once per row, the
+  radio's debug log every 15 seconds (its live view still updates every 2), and the station Wi-Fi watchdog no
+  longer fills the system log with a few lines a minute. Measured on a listening Pi: card writes down from about
+  1 GB to 450 MB a day. Anything logged in the last 2 seconds is still written when Lorakeet stops or restarts.
+  An existing station picks up the watchdog change when `deploy/setup-station.sh` is run again.
+
+**Fixed**
+- **A replacement database no longer loses data at the hub.** A station whose database was replaced (a new SD
+  card, a reinstall) counted rows from 1 again, and the hub, which recognises rows by their number, ignored every
+  new one as already received. New databases now start counting at a time-based number.
+- **Restarting on Linux** (a Pi) could fail for up to a minute with "port 5190 unavailable" after any recent
+  connection to the dashboard.
+- **Maps after a drive:** a moving station's links are drawn from where it was when it heard each radio, not from
+  where it's parked now; radios only it heard are estimated near where it heard them. (After a trip, a car parked
+  at the coast showed links to radios in the city it passed through, and pulled those radios to the coast.) Links
+  longer than any radio link (300 km: a radio reporting a position from another state) are left off the map, and
+  the replay says how many.
+- **"Public key changed"** counts only keys heard over the air, dated when the new one was first heard. A radio's
+  stored list of old keys, copied when a station connects, no longer looks like a change.
+- **A peer that's offline** (a laptop asleep) is logged once, and again when it's back, instead of every minute.
+
+**For contributors**
+- `server.py` (3,500 lines) is split into modules by job: `store.py` (the database), `mesh.py` (the radio link),
+  `web.py` with `web_radio.py` and `web_hub.py` (the HTTP routes), `station.py`, `channels.py`, `fwlog.py`,
+  `peers.py` and `runtime.py`; `server.py` is the entry point. Nothing changes for users. CLAUDE.md has the map.
+- **Browser tests:** `tests/browser` opens every page in headless Chromium (Playwright) against a real Lorakeet on
+  the demo mesh: data renders, nothing throws or fails, Settings saves, no sideways scrolling on a phone. They found
+  the Radio and Stations pages missing the Settings link (fixed).
+- **CI:** a lint (`ruff check .`, `ruff.toml`), a coverage report, the browser tests, and macOS (Apple silicon) and
+  Windows on ARM runs on the public repository.
+- **SECURITY.md** (report privately through GitHub), **CONTRIBUTING.md**, a **code of conduct** (Contributor
+  Covenant 2.1) and a short **docs/ARCHITECTURE.md**.
+
 ## 0.3.0 (2026-10-09)
 
 The biggest release so far: a proper install, a radio setup page, several stations with no file editing, sharing

@@ -87,7 +87,7 @@ class Lorakeet:
 
     def resolve(self, node):
         node = str(node or "").strip()
-        if re.fullmatch(r"!?[0-9a-fA-F]{8}", node):
+        if re.fullmatch(r"!?[0-9a-fA-F]{8}", node) or re.fullmatch(r"mc:[0-9a-f]{12}", node):
             return "!" + node.lstrip("!").lower()
         if not node:
             raise ToolError("which radio? give its id (!1234abcd) or name")

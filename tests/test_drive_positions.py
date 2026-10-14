@@ -4,7 +4,7 @@ import time
 
 import analytics
 import insights
-import server
+import store as store_mod
 
 CAR, HOME = "!b0000002", "!a0000001"
 TARGET = (47.6062, -122.3321)        # the documented example location: where the hidden radio really is
@@ -12,7 +12,7 @@ RADIO, FEW, CLOSE = "!c0000001", "!c0000002", "!c0000003"
 
 
 def build(path):
-    store = server.Store(path)
+    store = store_mod.Store(path)
     store.insert("packets", ts=1, from_id="!c0000009", station=HOME)  # another listening station exists
     t, k = time.time() - 7200, 0
     # the car stops at 6 spots in a ring 2-6 km around the radio, a few minutes at each
@@ -30,7 +30,7 @@ def build(path):
         ts = t + 5000 + j * 200
         store.insert("positions", ts=ts, node=CAR, lat=TARGET[0] + 0.0022 * j, lon=TARGET[1], source="own", station=CAR)
         store.insert("rx_hops", ts=ts + 5, from_id=CLOSE, hops=0, snr=1.0, pkt_id=1000 + j, station=CAR)
-    store.db.close()
+    store.close()
 
 
 def test_a_radio_heard_from_many_places_is_placed_near_where_it_is(tmp_path):

@@ -49,10 +49,10 @@ def test_watched_list_in_alerts_uses_the_new_number(monkeypatch):
 
 
 def test_the_base_station_is_followed_to_its_new_number(monkeypatch):
-    import server
-    monkeypatch.setattr(server, "BASE_ID", OLD)
-    monkeypatch.setattr(server, "BASE_NAME", OLD)
-    monkeypatch.setattr(server, "BASE_BYTE", 0x01)
+    import runtime
+    monkeypatch.setattr(runtime, "BASE_ID", OLD)
+    monkeypatch.setattr(runtime, "BASE_NAME", OLD)
+    monkeypatch.setattr(runtime, "BASE_BYTE", 0x01)
     monkeypatch.setattr(nodeids, "info", lambda p: {"aliases": {OLD: "!b00000c3"}, "v28": set(), "keyed": set()})
-    server.follow_base()
-    assert server.BASE_ID == "!b00000c3" and server.BASE_BYTE == 0xc3 and server.BASE_NAME == "!b00000c3"
+    runtime.follow_base()
+    assert runtime.BASE_ID == "!b00000c3" and runtime.BASE_BYTE == 0xc3 and runtime.BASE_NAME == "!b00000c3"

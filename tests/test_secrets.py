@@ -5,7 +5,7 @@ import sys
 
 from meshtastic.protobuf import localonly_pb2
 
-import server
+import store as store_mod
 import sync
 from conftest import ROOT
 
@@ -17,22 +17,22 @@ def test_logged_settings_have_no_keys_pins_or_passwords():
     cfg.bluetooth.fixed_pin = 424242
     cfg.network.wifi_psk = "hunter22"
     cfg.lora.hop_limit = 3
-    r = server.redacted_config(cfg)
+    r = store_mod.redacted_config(cfg)
     assert not r.security.private_key and not r.security.admin_key and not r.bluetooth.fixed_pin and not r.network.wifi_psk
     assert r.lora.hop_limit == 3  # everything else is kept
     mod = localonly_pb2.LocalModuleConfig()
     mod.mqtt.password = "secret"
     mod.mqtt.address = "broker.example.com"
-    m = server.redacted_module_config(mod)
+    m = store_mod.redacted_module_config(mod)
     assert not m.mqtt.password and m.mqtt.address == "broker.example.com"
 
 
 def test_older_snapshots_are_scrubbed(tmp_path):
-    store = server.Store(tmp_path / "mesh.db")
+    store = store_mod.Store(tmp_path / "mesh.db")
     detail = {"config": {"bluetooth": {"fixedPin": 424242, "mode": "FIXED_PIN"}, "network": {"wifiPsk": "x"}},
               "module_config": {"mqtt": {"password": "y", "address": "z"}}}
     store.insert("events", ts=1, kind="connected", detail=json.dumps(detail))
-    server.scrub_logged_secrets(store)
+    store_mod.scrub_logged_secrets(store)
     d = json.loads(store.query("SELECT detail FROM events")[0]["detail"])
     assert "fixedPin" not in d["config"]["bluetooth"] and d["config"]["bluetooth"]["mode"] == "FIXED_PIN"
     assert "wifiPsk" not in d["config"]["network"] and "password" not in d["module_config"]["mqtt"]

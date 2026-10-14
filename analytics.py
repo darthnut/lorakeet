@@ -9,11 +9,11 @@ gaps (null), never zeros, and rates are computed over covered hours only.
 """
 import json
 import math
-import re
 import sqlite3
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+import radioid
 
 RANGES = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400, "all": None}
 CONVERSATION_GAP_S = 45 * 60
@@ -70,7 +70,6 @@ def port_group(port):
 # Tables whose rows were logged by a listening station (server.py tags them; see STATION_TABLES there).
 STATION_TABLES = ("packets", "rx_hops", "tx_log", "messages", "traceroutes", "events", "links", "telemetry",
                   "telemetry_full", "positions", "node_info", "nodedb_snapshots")
-STATION_RE = re.compile(r"^![0-9a-f]{8}$")
 ALL_STATIONS = "*"   # ?station=* : every station combined
 HOME = {"id": None}  # this server's own radio; server.py sets it on connect
 # Listening stations' configured antenna locations, {node id: (lat, lon, alt or None)}: from this server's
@@ -227,7 +226,7 @@ def _connect(path, station=None):
     station's rows only: unqualified table names resolve to temp first, so every query in the analytics
     modules is scoped to one listening station without being rewritten. rowid passes through (the anatomy
     links use it) and the (station, ts) indexes keep the views fast."""
-    if station and station != ALL_STATIONS and not STATION_RE.match(station):
+    if station and station != ALL_STATIONS and not radioid.is_radio_id(station):
         raise ValueError(f"not a station id: {station!r}")
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
     db.row_factory = sqlite3.Row
