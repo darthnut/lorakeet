@@ -1,0 +1,10 @@
+[Unit]
+Description=Lorakeet data drive watch (deploy/lorakeet-datadir.sh): fall back to the SD card if the USB drive fails
+After=lorakeet.service
+
+[Service]
+Type=oneshot
+# systemd logs a few lines every time a unit runs; once a minute that adds up on the SD card. Notice and above
+# still get through, which includes every switch the script makes.
+LogLevelMax=notice
+ExecStart=/usr/local/sbin/lorakeet-datadir watch

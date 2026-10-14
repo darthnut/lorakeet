@@ -136,6 +136,7 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | POST | `/api/radio/channel` | Create, add or copy a channel. |  |
 | POST | `/api/radio/station` | This station's name and location. |  |
 | POST | `/api/radio/restart` | Restart Lorakeet from the Radio / Stations pages. |  |
+| POST | `/api/radio/use` | Log from this radio: remembered by its USB serial number and found again on any port. | `device`: a USB port with a radio |
 | GET | `/api/hub` | The Stations page: hub mode, addresses, pairings, peers. |  |
 | POST | `/api/hub/mode` | Make this computer a hub (or stop). |  |
 | POST | `/api/hub/pair` | Make a station pairing code. |  |

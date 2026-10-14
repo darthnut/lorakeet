@@ -847,6 +847,10 @@ class ExclusiveHTTPServer(ThreadingHTTPServer):
     # minute) failed with "address in use" until the old connections' TIME_WAIT ran out. It never lets two
     # processes listen on one port there (that's SO_REUSEPORT), so a second instance still fails fast.
     allow_reuse_address = os.name != "nt"
+    # How many connections may wait to be accepted. Python's default is 5, and a page opens more than that at once:
+    # Windows refuses the overflow outright ("connection refused"; Linux makes them retry), which showed up as an
+    # occasional failed request on a busy page and a browser test that failed now and then.
+    request_queue_size = 128
 
     def __init__(self, *a, **k):
         self._conn_lock, self._conns, self._remote = threading.Lock(), {}, 0

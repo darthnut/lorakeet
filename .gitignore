@@ -34,3 +34,6 @@ private/
 .coverage
 .coverage.*
 htmlcov/
+
+# release downloads built by tools/build_release.py
+dist/

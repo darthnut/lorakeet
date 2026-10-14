@@ -3,6 +3,8 @@ reception, live state for the pages, sending text and traceroutes.
 """
 import json
 import logging
+import os
+import re
 import threading
 import time
 
@@ -146,26 +148,61 @@ def node_status_text(payload):
         return ""
 
 
-# USB vendors of Meshtastic radios, in order of preference. Espressif first, so a desk Heltec is always
-# picked as before; then Adafruit's ID, used by most nRF52 boards' firmware (RAK4631, T-Echo, SenseCAP
-# T1000-E: 239a:8029); then Seeed Studio's own. The meshtastic library whitelists the first two.
+# USB vendors of Meshtastic radios: Espressif (ESP32 boards like the Heltec V4), Adafruit's ID, used by most nRF52
+# boards' firmware (RAK4631, T-Echo, SenseCAP T1000-E: 239a:8029), and Seeed Studio's own. The meshtastic library
+# whitelists the first two. Which one we log from: pick_usb_port.
 RADIO_VIDS = (ESPRESSIF_VID, 0x239A, 0x2886)
+
+
+RADIO_USB_KEY = "radio_usb"   # settings: the USB serial number of the radio we log from, to find it on any port
+_MAC = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def usb_node_id(serial):
+    """The Meshtastic id a radio will have, from its USB serial number where that's its MAC (ESP32-S3 boards with
+    native USB, like the Heltec V4: the id is the MAC's last four bytes). None when it can't be told."""
+    if not serial or not _MAC.match(serial):
+        return None
+    return "!" + "".join(serial.split(":")[2:]).lower()
 
 
 def serial_ports():
     """USB serial ports for the setup page, likely radios first."""
     out = [{"device": p.device, "description": p.description or "", "radio": p.vid in RADIO_VIDS,
-            "vid": f"{p.vid:04x}" if p.vid else None} for p in list_ports.comports()]
+            "vid": f"{p.vid:04x}" if p.vid else None, "serial": p.serial_number,
+            "nodeId": usb_node_id(p.serial_number) if p.vid in RADIO_VIDS else None} for p in list_ports.comports()]
     return sorted(out, key=lambda x: (not x["radio"], x["device"]))
 
 
-def find_port():
-    ports = list_ports.comports()
-    for vid in RADIO_VIDS:
-        for p in sorted(ports, key=lambda p: p.device):
-            if p.vid == vid:
-                return p.device
-    return None
+def radio_ports():
+    """[(device, USB serial number)] for the ports that look like radios."""
+    return [(p.device, p.serial_number) for p in sorted(list_ports.comports(), key=lambda p: p.device)
+            if p.vid in RADIO_VIDS]
+
+
+def resolve_port(hint):
+    """A configured port, as the device it is now: a plain name (COM7, /dev/ttyACM0) or a stable link to one
+    (/dev/serial/by-id/..., which names the radio itself and survives replugging into another port)."""
+    devices = {p.device for p in list_ports.comports()}
+    if hint in devices:
+        return hint
+    real = os.path.realpath(hint)
+    return real if real in devices else None
+
+
+def pick_usb_port(remembered, ports, claimed=()):
+    """Which radio port to log from: (device, None), or (None, "several") when there's more than one to choose
+    from and none is the remembered radio. The remembered radio is found on whatever port it's in. Without it, a
+    single radio is taken (a radio swapped for another just works), but several are never guessed between: two
+    identical radios get their port names in either order at boot. `claimed`: ports another link uses."""
+    free = [(d, s) for d, s in ports if d not in claimed]
+    if remembered:
+        hit = next((d for d, s in free if s == remembered), None)
+        if hit:
+            return hit, None
+    if len(free) == 1:
+        return free[0][0], None
+    return None, ("several" if free else None)
 
 
 class Mesh(RadioLink):
@@ -180,6 +217,7 @@ class Mesh(RadioLink):
         self.port_hint = port_hint
         self.host, self.tcp_port = host or None, tcp_port
         self.iface = None
+        self.needs_choice = False  # several radios on USB and none of them the remembered one
         self.rx = {}  # node id -> {"rssi","snr","ts","count"} as heard by our radio
         # firmware debug-log records received / RX-TX header lines mined from them (alerts.py watches the
         # pair: lines still arriving but nothing mined means the firmware's log format changed)
@@ -246,12 +284,28 @@ class Mesh(RadioLink):
             runtime.follow_base()
             self._last_follow = time.time()
 
+    def remembered_radio(self):
+        r = self.store.query("SELECT value FROM settings WHERE key = ?", RADIO_USB_KEY)
+        return r[0]["value"] if r else None
+
+    def remember_radio(self, serial):
+        self.store.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", RADIO_USB_KEY, serial)
+
     def _pick_port(self):
+        self.needs_choice = False
         if self.host:  # a network radio: the "port" is its address, shown wherever the COM port would be
             return f"{self.host}:{self.tcp_port}"
         if self.port_hint:  # a configured port is used strictly: with several radios on USB, never pick another
-            return self.port_hint if self.port_hint in {p.device for p in list_ports.comports()} else None
-        return find_port()  # auto-detect (the COM number can change after a replug)
+            return resolve_port(self.port_hint)
+        port, problem = pick_usb_port(self.remembered_radio(), radio_ports())
+        if problem:
+            self.needs_choice = True
+            err = "several radios are plugged in: choose the one to log from on the Radio page"
+            if err != self.last_connect_error:
+                log.warning(err)
+                self.event("connect_failed", port=None, error=err)
+            self.last_connect_error = err
+        return port
 
     def _connect(self, SerialInterface):  # noqa: N803
         port = self._pick_port()
@@ -295,6 +349,10 @@ class Mesh(RadioLink):
                 self.connected = True
                 self.connected_at = time.time()
             log.info("connected: %s on %s, %d nodes", self.local_id, port, len(self.node_cache))
+            serial = dict(radio_ports()).get(port) if not self.host else None
+            if serial and serial != self.remembered_radio():
+                self.remember_radio(serial)  # found on any port from now on
+                log.info("remembering radio %s (USB serial %s)", self.local_id, serial)
             self.last_connect_error = None
             self.event("connected", port=port, local=self.local_id, nodes=len(self.node_cache),
                        my_info=iface.myInfo, metadata=iface.metadata,

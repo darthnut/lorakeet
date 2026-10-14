@@ -43,11 +43,27 @@ function schedule() {
   }, 15000);
 }
 
+const radioName = (p) => `${esc(p.device)}${p.nodeId ? ` (${esc(p.nodeId)})` : ""}`;
+const useBtn = (p) => `<button type="button" class="usebtn" data-device="${esc(p.device)}">Log from ${radioName(p)}</button>`;
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest(".usebtn"); if (!b) return;
+  b.disabled = true;
+  const r = await fetch("/api/radio/use", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({device: b.dataset.device})}).then((x) => x.json()).catch(() => ({error: "Lorakeet isn't answering"}));
+  if (r.error) { b.disabled = false; alert(r.error); return; }
+  b.textContent = "Connecting…"; setTimeout(load, 4000);
+});
 function renderConnect() {
   const r = R.radio;
   if (R.connected) {
     $("connect").innerHTML = `<p class="live ok">Connected: <b>${esc(r.longName || r.id)}</b> <span class="muted">(${esc(r.id)})</span>, ${esc((r.hw || "radio").replace(/_/g, " "))}, firmware ${esc(r.firmware || "?")}, on ${esc(R.port)}.</p>
-      ${R.otherRadios.length ? `<p class="note">Also plugged in: ${R.otherRadios.map((p) => esc(p.device)).join(", ")}. Lorakeet logs from one radio; set <code>[radio] port</code> in lorakeet.toml to choose which.</p>` : ""}`;
+      ${R.otherRadios.length ? `<p class="note">Also plugged in: ${R.otherRadios.map(radioName).join(", ")}. Lorakeet logs from one radio and remembers it, on whichever USB port it's in.${R.portSet ? "" : ` ${R.otherRadios.map(useBtn).join(" ")}`}</p>` : ""}`;
+    return;
+  }
+  if (R.choose) {
+    $("connect").innerHTML = `<p class="live wait">Several radios are plugged in. Which one should Lorakeet log from?</p>
+      <p>${R.choose.map(useBtn).join(" ")}</p>
+      <p class="note">Lorakeet remembers your choice and finds that radio again on any USB port.</p>`;
     return;
   }
   const lines = [`<p class="live wait">No radio connected yet${R.port ? ` (trying ${esc(R.port)})` : ""}. This page updates by itself.</p>`];
