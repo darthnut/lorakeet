@@ -87,7 +87,8 @@ jobs:
         run: python tools/release_check.py
 
   install:
-    # The install scripts, end to end on fresh machines, autostart included (these runners are thrown away).
+    # The install scripts, end to end on fresh machines, autostart included (these runners are thrown away), run
+    # from the release zip (tools/build_release.py) rather than the checkout: what people actually download.
     name: Install script on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -99,10 +100,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Build the release zip
+        run: python tools/build_release.py --out dist
       - name: install.sh --autostart, the launcher, then --uninstall
         if: runner.os == 'Linux'
         run: |
-          ./install.sh --autostart
+          unzip -q dist/Lorakeet-*.zip -d "$RUNNER_TEMP/zip" && cd "$RUNNER_TEMP"/zip/Lorakeet-*
+          ./install.sh --autostart                      # also checks the zip kept install.sh executable
           ./install.sh                                  # running it again (an update) is harmless
           for i in $(seq 30); do curl -sf http://127.0.0.1:5190/api/version && break; sleep 2; done
           systemctl is-active lorakeet
@@ -114,6 +118,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          Expand-Archive (Get-Item dist\Lorakeet-*.zip) "$env:RUNNER_TEMP\zip"   # what Extract All does
+          Set-Location (Get-Item "$env:RUNNER_TEMP\zip\Lorakeet-*").FullName
           powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Yes -Autostart -NoOpen
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ScheduledTask -TaskName Lorakeet | Format-List TaskName, State

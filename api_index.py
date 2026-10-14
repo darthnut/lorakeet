@@ -152,6 +152,8 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/radio/channel", "tier": "page", "summary": "Create, add or copy a channel."},
     {"method": "POST", "path": "/api/radio/station", "tier": "page", "summary": "This station's name and location."},
     {"method": "POST", "path": "/api/radio/restart", "tier": "page", "summary": "Restart Lorakeet from the Radio / Stations pages."},
+    {"method": "POST", "path": "/api/radio/use", "tier": "page", "body": {"device": "a USB port with a radio"},
+     "summary": "Log from this radio: remembered by its USB serial number and found again on any port."},
     {"method": "GET", "path": "/api/hub", "tier": "page", "summary": "The Stations page: hub mode, addresses, pairings, peers."},
     {"method": "POST", "path": "/api/hub/mode", "tier": "page", "summary": "Make this computer a hub (or stop)."},
     {"method": "POST", "path": "/api/hub/pair", "tier": "page", "summary": "Make a station pairing code."},

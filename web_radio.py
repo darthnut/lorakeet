@@ -10,7 +10,7 @@ import time
 
 from channels import _preset_name
 from config import CFG
-from mesh import CONNECT_TIMEOUT_S, Mesh, serial_ports
+from mesh import CONNECT_TIMEOUT_S, Mesh, radio_ports, serial_ports
 import radio_advanced
 import radio_setup
 import runtime
@@ -37,6 +37,8 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                 out = {"connected": bool(mesh.connected and iface), "port": mesh.port, "network": bool(mesh.host),
                        "connectedAt": mesh.connected_at, "ports": ports,
                        "otherRadios": [p for p in ports if p["radio"] and p["device"] != mesh.port],
+                       "choose": [p for p in ports if p["radio"]] if mesh.needs_choice else None,
+                       "portSet": bool(mesh.port_hint),
                        "error": mesh.last_connect_error, "hint": radio_setup.connect_hint(mesh.last_connect_error),
                        "noPortHint": None if mesh.host or any(p["radio"] for p in ports) else radio_setup.NO_PORT_HINT,
                        "backupDir": str(runtime.RADIO_BACKUPS), "mobile": CFG["station"]["mobile"],
@@ -154,6 +156,17 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                     return self._json({"error": str(e)}, 400)
                 log.info("station settings saved to %s (name %r, location %s)", path_, body.get("name"), "set" if loc else "none")
                 return self._json({"ok": True, "path": str(path_), "station": station_settings(mesh)})
+            if path == "/api/radio/use":  # "Log from this one": which of several USB radios is ours
+                if mesh.host or mesh.port_hint:
+                    return self._json({"error": "lorakeet.toml names the radio ([radio] port or host): clear it on the "
+                                                "Settings page to choose here"}, 409)
+                serial = dict(radio_ports()).get(body.get("device"))
+                if not serial:
+                    return self._json({"error": "that radio isn't plugged in (or has no USB serial number to know it by)"}, 400)
+                mesh.remember_radio(serial)
+                log.info("radio: %s chosen on the Radio page (USB serial %s)", body.get("device"), serial)
+                mesh.drop_link()  # the reconnect loop picks the remembered radio within seconds
+                return self._json({"ok": True})
             if path == "/api/radio/restart":
                 if not supervised_now():
                     return self._json({"error": "Lorakeet isn't running under its background runner, so it can't restart "

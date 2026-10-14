@@ -161,8 +161,9 @@ nonexistent radio.port).
   Tested end to end on a Heltec V4 over Wi-Fi: connects in ~2 s, stable. **The firmware sends its debug log only
   over USB** (0 lines over TCP vs ~96/min over USB from the same radio), so a network radio gives decoded
   packets and telemetry but no rx_hops / tx_log (no duplicate copies, airtime or per-hop replay detail).
-- **Disconnects** recover on their own: the radio thread polls every 5 s, auto-detects the port
-  (`find_port`: Espressif, Adafruit nRF52, Seeed USB ids), connects with a 45 s timeout, and a 10-minute
+- **Disconnects** recover on their own: the radio thread polls every 5 s, picks the radio (`pick_usb_port`: the one
+  remembered by USB serial number, settings `radio_usb`, on whichever port it's in; else a single radio; several
+  and none remembered = the Radio page asks), connects with a 45 s timeout, and a 10-minute
   watchdog forces a reconnect if the radio goes silent. While unplugged, the last node DB is served.
 
 ## Data (`mesh.db`, in the configured data folder)

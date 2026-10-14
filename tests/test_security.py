@@ -253,6 +253,22 @@ def test_one_device_cant_take_every_connection(monkeypatch):
         srv.server_close()
 
 
+
+def test_a_burst_of_connections_waits_its_turn():
+    """A page opens many connections at once. Windows refuses the ones that don't fit in the listen queue (it was
+    Python's default of 5: a browser test failed now and then with "connection refused"); they must wait instead."""
+    import socket
+    srv = web_mod.ExclusiveHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)  # listening, not accepting yet
+    socks = []
+    try:
+        for _ in range(40):
+            socks.append(socket.create_connection(srv.server_address, timeout=3))
+    finally:
+        for s in socks:
+            s.close()
+        srv.server_close()
+    assert len(socks) == 40
+
 def test_csv_cells_never_run_as_formulas():
     import packetsearch
     cell = packetsearch.csv_cell

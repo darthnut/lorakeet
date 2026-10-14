@@ -6,6 +6,27 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.4.1 (2026-10-14)
+
+**New**
+- **A proper download.** Each release now has a `Lorakeet-x.y.z.zip`: one folder with only what's needed to
+  run Lorakeet (no tests or developer files), and a `SHA256SUMS.txt` to check the download. CI builds and
+  attaches them, and the install tests run from that zip, so what's tested is what people download.
+- **A USB drive for a station's data** (Linux stations): `deploy/data-drive-setup.sh` formats a thumb drive, mounts
+  it at every boot and moves Lorakeet's data onto it, so the SD card takes almost no writes. If the drive is missing
+  or fails, Lorakeet carries on logging to the card within a minute and moves back once the drive is healthy and
+  the card's rows have reached the hub. See "A USB drive for the data" in docs/PI-SETUP.md.
+
+**Fixed**
+- **Two identical radios on one computer.** Lorakeet now remembers the radio it logs from by its USB serial number
+  and finds it on whichever USB port it's in, so two Heltec V4s (say, one for Meshtastic and one for MeshCore) can
+  go in any ports, in any order. With several radios plugged in and none of them the remembered one, it no longer
+  takes the first it finds: the Radio page lists them (with each Heltec's radio id) and asks which one to log
+  from. A radio swapped for another, with nothing else plugged in, is still picked up by itself. `[radio] port`
+  can now also be a stable name like `/dev/serial/by-id/...`.
+- **An occasional failed request on Windows** when a page opened many connections at once: Windows refused
+  the ones that didn't fit in the server's queue of 5 waiting connections (now 128).
+
 ## 0.4.0 (2026-10-13)
 
 **New**

@@ -45,12 +45,12 @@ firmware 2.7.26. No radio yet? Install it anyway and choose **Explore a demo** o
 ### On Windows
 
 1. **Download it.** Open the [latest release](https://github.com/darthnut/lorakeet/releases/latest), scroll to the
-   **Assets** list at the bottom of it, and click **Source code (zip)**.
+   **Assets** list at the bottom of it, and click **Lorakeet-x.y.z.zip** (for example `Lorakeet-0.4.0.zip`; not
+   "Source code", which is for developers).
 2. **Unzip it somewhere it can stay.** Lorakeet runs from this folder. Right-click the downloaded zip, choose
    **Extract All...**, and pick a lasting place such as your Documents folder.
-3. **Run the installer.** Open the extracted folder (if it holds a single folder such as `lorakeet-0.4.0`, open
-   that one) and double-click **Install Lorakeet**. If Windows asks whether to run it, choose **Run** (or
-   **More info**, then **Run anyway**).
+3. **Run the installer.** Open the extracted folder, then the `Lorakeet-x.y.z` folder inside it, and double-click
+   **Install Lorakeet**. If Windows asks whether to run it, choose **Run** (or **More info**, then **Run anyway**).
 4. **Answer its questions.** It explains each step and asks before doing it: installing Python if you don't have
    it, adding a **Lorakeet** shortcut to the desktop and Start menu, starting Lorakeet when you sign in, and
    opening it now.
@@ -241,7 +241,7 @@ code waiting to be used, and a peer hub in each direction. (Demo stations; addre
 ## Updating
 
 1. **Get the new version.** `git pull`, or download the new zip: it unpacks into a new folder
-   (`lorakeet-x.y.z`), so copy its *contents* over your existing Lorakeet folder (your `lorakeet.toml` and
+   (`Lorakeet-x.y.z`), so copy its *contents* over your existing Lorakeet folder (your `lorakeet.toml` and
    shortcuts stay with the old folder; nothing of yours is overwritten).
 2. **Run the installer again** (Windows: double-click **Install Lorakeet**; elsewhere `./install.sh`). It only
    installs what changed.

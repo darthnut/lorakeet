@@ -30,7 +30,7 @@ def default_data_dir():
 
 DEFAULTS = {
     "radio": {
-        "port": "",               # serial port, e.g. "COM7" or "/dev/ttyACM0"; empty = auto-detect
+        "port": "",               # serial port, e.g. "COM7", "/dev/ttyACM0" or /dev/serial/by-id/...; empty = auto-detect
         "host": "",               # a radio on the network instead (Wi-Fi / Ethernet): IP or name, e.g.
                                   # "192.168.1.50" or "meshtastic.local"; set = no USB auto-detect
         "tcp_port": 4403,         # the radio's API port (Meshtastic's default)
@@ -332,7 +332,7 @@ def write_setup(answers):
     _validate(_merge(DEFAULTS, user))  # raises ValueError with the same messages a hand-edited file gets
 
     notes = {
-        "radio": "# The radio. Empty = auto-detect a USB radio. port = a specific serial port; host = a radio on your network.",
+        "radio": "# The radio. Empty = auto-detect a USB radio (and remember it, to find it on any port). port = a specific serial port; host = a radio on your network.",
         "storage": "# Where the database, logs and backups live. Empty = the per-OS default folder.",
         "http": '# "off": the dashboard only answers on this computer. "view": also read-only from your local network.',
         "logging": "# Record the recipients of other people's addressed packets (what your radio hears on the air).",

@@ -133,6 +133,21 @@ From the hub (a Linux or macOS shell, or Git Bash on Windows, with SSH access to
 parse, installs new requirements, and keeps `lorakeet.toml`, the data and the venv. Database changes are applied
 when it starts. Or on the Pi: `git pull && ./install.sh && sudo systemctl restart lorakeet`.
 
+## A USB drive for the data
+
+SD cards wear out from writes, and a busy station writes 20 to 30 MB an hour. A USB thumb drive takes them instead.
+Plug it in, then on the Pi, from the checkout's `deploy` folder (this **erases the drive**; `lsblk` shows which
+device it is, usually `/dev/sda`):
+
+    sudo bash data-drive-setup.sh /dev/sda --erase
+
+It formats the drive (ext4, label `LKDATA`), mounts it at `/mnt/lkdata` at every boot (a missing drive never stops
+the Pi booting) and moves Lorakeet's data folder onto it; the old folder stays on the card, renamed, as a safety
+copy you can delete once you're happy. Lorakeet's data folder becomes a link to the drive. If the drive is missing
+at boot or fails while running, `lorakeet-datadir` switches Lorakeet to a folder on the card within a minute
+(its own database, so nothing mixes up at the hub), and back to the drive once the drive is healthy again and
+everything logged on the card has synced. `/run/lorakeet-datadir/current` says which it's using.
+
 ## Lessons from the first stations
 
 - **Power:** a computer's USB port can't run a Pi 3 (under-voltage under any load). With a proper supply,
