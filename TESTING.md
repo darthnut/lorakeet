@@ -10,7 +10,7 @@ back, and what to keep to yourself.
   made-up mesh around Portland, Oregon, with every view filled in. Nothing you do there touches a radio.
 - **With a radio:** a Meshtastic radio on USB (tested: Heltec V4, Heltec Mesh Node T1, SenseCAP T1000-E) on firmware
   **2.7.x**. Firmware 2.8 should work but hasn't been tested on a real radio yet; reports from 2.8 are very welcome.
-- **Install:** follow the README's [Quick start](README.md#quick-start). On Windows, double-click **Install Lorakeet**.
+- **Install:** follow the README's [Install](README.md#install) steps. On Windows, double-click **Install Lorakeet**.
 - **Your data stays on your computer.** Lorakeet sends nothing anywhere unless you set up peering or a station. The
   pages load map tiles (OpenStreetMap and OpenTopoMap, or Esri if you choose it) and two page libraries from
   cdnjs.cloudflare.com; installing fetches packages from PyPI (and Python itself, if you let it).

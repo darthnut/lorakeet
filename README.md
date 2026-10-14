@@ -12,6 +12,8 @@ analytics, the mesh's real topology, packet-level detail and an animated replay 
 > **Preview.** It works and runs every day, but it's young: expect rough edges. Feedback and bug reports are
 > welcome. No radio yet? The setup page's **Explore a demo** shows every view on a made-up mesh.
 
+**Install it:** [on Windows](#on-windows) · [on a Mac, Linux or a Raspberry Pi](#on-a-mac-linux-or-a-raspberry-pi)
+
 The videos and most screenshots here come from a real mesh, anonymized the way Lorakeet does it for sharing
 (`?anon=1`): every radio is renamed by role (Station 1, Node 14...), message text is hidden, and on maps the
 whole picture is moved onto substitute map tiles of a different place, keeping its shape and distances. The live
@@ -33,6 +35,65 @@ route). Anonymized: names replaced, and the real map swapped for substitute tile
 ![Traffic replay on the network graph](docs/screenshots/replay.png)
 
 *Traffic replay with the Key and the packet log, mid-playback. Names anonymized.*
+
+## Install
+
+**What you need:** a Windows, Mac or Linux computer (or a Raspberry Pi), and a Meshtastic radio with a USB cable
+that carries data (some cables only charge). Tested with Heltec V4, Heltec Mesh Node T1 and SenseCAP T1000-E on
+firmware 2.7.26. No radio yet? Install it anyway and choose **Explore a demo** on the first page.
+
+### On Windows
+
+1. **Download it.** Open the [releases page](https://github.com/darthnut/lorakeet/releases). The newest release
+   is at the top: scroll to the **Assets** list at the bottom of it and click **Source code (zip)**.
+2. **Unzip it somewhere it can stay.** Lorakeet runs from this folder. Right-click the downloaded zip, choose
+   **Extract All...**, and pick a lasting place such as your Documents folder.
+3. **Run the installer.** Open the extracted folder (if it holds a single folder such as `lorakeet-0.4.0`, open
+   that one) and double-click **Install Lorakeet**. If Windows asks whether to run it, choose **Run** (or
+   **More info**, then **Run anyway**).
+4. **Answer its questions.** It explains each step and asks before doing it: installing Python if you don't have
+   it, adding a **Lorakeet** shortcut to the desktop and Start menu, starting Lorakeet when you sign in, and
+   opening it now.
+5. **Plug in your radio** and open Lorakeet with the shortcut. It opens in your browser on a short setup page:
+   see [First run](#first-run).
+
+A Lorakeet icon in the notification area (by the clock) shows what it's doing. To remove Lorakeet, double-click
+**Uninstall Lorakeet** in the same folder; your logged data is kept unless you choose otherwise.
+
+### On a Mac, Linux or a Raspberry Pi
+
+1. **Get Python 3.11 or newer, and git.** Mac: from [python.org](https://www.python.org/downloads/), or
+   `brew install python git`. Debian, Ubuntu and Raspberry Pi OS: `sudo apt install python3 python3-venv git`.
+2. **Download and install it,** in a terminal:
+
+   ```sh
+   git clone https://github.com/darthnut/lorakeet.git
+   cd lorakeet
+   ./install.sh
+   ```
+
+3. **Linux only: allow yourself to use the radio's USB port** with `sudo usermod -aG dialout $USER` (`uucp` on
+   Arch), then log out and back in.
+4. **Start it** with `venv/bin/python lorakeet.pyw`. It opens in your browser on a short setup page: see
+   [First run](#first-run). On Linux, `install.sh` also adds a Lorakeet launcher to your app menu, and
+   `./install.sh --autostart` makes it a service that starts at boot. (There's no autostart on a Mac yet.)
+
+**A Pi or another computer with no screen:** the setup and Radio pages only answer on Lorakeet's own computer.
+Reach them over SSH: `ssh -L 5199:127.0.0.1:5190 you@that-computer`, then open http://127.0.0.1:5199. For a
+listening station that sends to your main Lorakeet, [docs/PI-SETUP.md](docs/PI-SETUP.md) does it all with one
+script.
+
+### First run
+
+1. **The setup page** asks a few questions (your radio, this station, privacy and access, storage and maps) and
+   saves your answers. Or choose **Explore a demo** to look around a made-up mesh first.
+2. **The Radio page** opens next. It checks your radio's settings for logging, explains each one, and changes
+   what you choose after backing up the radio's settings.
+3. **That's it.** The live map fills in as your radio hears the mesh, and the other pages build up over the
+   hours and days.
+
+More about each step, network radios and listening stations: [Setting it up](#setting-it-up). Updating later:
+[Updating](#updating).
 
 ## What it does
 
@@ -129,38 +190,9 @@ Anonymized: names replaced and every message shown only as "a text message".*
 *Packet anatomy: one packet rebuilt layer by layer, from the radio signal and the on-air header through the
 encryption to the decoded text. Not anonymized, so it's one of our own test messages, between our own radios.*
 
-## Quick start
+## Setting it up
 
-You need a Meshtastic radio connected over **USB** or reachable on your **network** (tested with Heltec V4,
-Heltec Mesh Node T1 and SenseCAP T1000-E on firmware **2.7.26**), and Python 3.11 to 3.14 (on Windows the installer
-offers to install it for you).
-
-**Windows:** download the source zip from the [releases page](https://github.com/darthnut/lorakeet/releases),
-extract it somewhere it can stay (e.g. your Documents folder; Windows' *Extract All* adds an extra folder level,
-which is fine), and double-click **Install Lorakeet**. It
-explains each step and asks before changing anything: installing Python if you don't have it, a **Lorakeet**
-shortcut on the desktop and in the Start menu, starting Lorakeet whenever you sign in, and opening it now.
-Windows may ask you to confirm before running a downloaded file. Afterwards, the Lorakeet shortcut starts it
-(if it isn't running) and opens it in your browser, and its icon in the notification area (by the clock) shows
-what it's doing. **Uninstall Lorakeet** in the same folder removes it again (your logged data is kept unless
-you choose otherwise).
-
-**Linux, macOS, Raspberry Pi:**
-
-```sh
-git clone https://github.com/darthnut/lorakeet.git
-cd lorakeet
-./install.sh                # adds a Lorakeet launcher; --autostart makes it a service that starts at boot
-venv/bin/python lorakeet.pyw   # starts Lorakeet and opens it in your browser
-```
-
-- **Linux:** to use a USB radio your user needs the serial ports: `sudo usermod -aG dialout $USER` (`uucp` on
-  Arch), then log out and back in. `--autostart` does this for the service.
-- **macOS:** it ships an older Python and no git: install Python 3.11 to 3.14 first (python.org, or
-  `brew install python git`). There's no autostart on macOS yet.
-- **A Pi or another computer with no screen:** the setup and Radio pages only answer on Lorakeet's own computer.
-  Reach them through SSH: `ssh -L 5199:127.0.0.1:5190 you@that-computer`, then open http://127.0.0.1:5199. For a
-  station that sends to a hub, [docs/PI-SETUP.md](docs/PI-SETUP.md) does it all with one script.
+A radio on USB is the usual way; one reachable on your **network** works too (below). Python 3.11 to 3.14.
 
 The first time, Lorakeet opens on a **setup page** that asks a few questions (your radio, this station,
 privacy and access, storage and maps) and writes `lorakeet.toml` for you; every other option is explained
