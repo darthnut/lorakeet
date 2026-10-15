@@ -24,6 +24,9 @@ def compute(db_path, range_key, a, b, describe):
     for s in (a, b):
         if not radioid.is_radio_id(s):
             raise ValueError(f"not a station id: {s!r}")
+        if not radioid.is_meshtastic(s):
+            # it compares Meshtastic receptions (rx_hops); a MeshCore station would only look "not logging"
+            raise ValueError("station comparison is for Meshtastic stations (a MeshCore station hears another mesh)")
     if a == b:
         raise ValueError("pick two different stations")
     db = _connect(db_path)
@@ -163,7 +166,9 @@ def matrix(db_path, range_key, describe, stations=None):
     number of stations. "Only heard by S" likewise needs the others to have been listening and missed it."""
     db = _connect(db_path)
     try:
-        all_st = [r[0] for r in db.execute("SELECT DISTINCT station FROM packets WHERE station IS NOT NULL ORDER BY station")]
+        # Meshtastic stations: capture is worked out from Meshtastic receptions (a MeshCore station hears another mesh)
+        all_st = [r[0] for r in db.execute("SELECT DISTINCT station FROM packets WHERE station IS NOT NULL ORDER BY station")
+                  if radioid.is_meshtastic(r[0])]
         sts = [s for s in (stations or all_st) if s in all_st]
         return _matrix(db, range_key, sts, describe)
     finally:

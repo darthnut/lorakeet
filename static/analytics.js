@@ -384,6 +384,7 @@ async function renderAirtime(range) {
     } catch (e) { $("airSummary").textContent = `Couldn't load airtime: ${e.message}`; return; }
   }
   const d = AIR.data, t = d.totals;
+  if (d.unsupported) { $("airSummary").textContent = d.unsupported; ["airChart", "airTx", "airOrig", "airLegend"].forEach((id) => ($(id).innerHTML = "")); return; }
   if (!t.loggedS) { $("airSummary").textContent = "No receptions logged in this range yet."; ["airChart", "airTx", "airOrig", "airLegend"].forEach((id) => ($(id).innerHTML = "")); return; }
   $("airSummary").innerHTML = `Transmissions our radio heard used <b>${secs(t.heardS)}</b> of airtime: <b>${fmt(t.heardPct, 2)} %</b> of the ${fmt(t.loggedS / 3600, 0)} logged hours ${prov("inferred", "Calculated from each frame's length and the LoRa settings.")}. ` +
     `Our own radio transmitted for ${secs(t.oursS)} (${fmt(t.oursPct, 2)} %). Our radio measured the channel busy <b>${fmt(t.chUtilAvg, 2)} %</b> of the time ${prov("reported", "Our radio's channel utilization, from its once-a-minute device metrics.")}` +

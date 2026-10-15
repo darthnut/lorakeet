@@ -6,6 +6,50 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.0 (2026-10-14)
+
+**New**
+- **MeshCore stations.** Lorakeet can log a MeshCore mesh as well as Meshtastic: plug in a MeshCore companion radio
+  (USB companion firmware) and it records every reception (with the path of repeaters it came through, its signal and
+  the packet hash, so repeats of one transmission are recognised), the radios' adverts (names, types, places), the
+  messages it can read and the radio's own counters. It only listens: it never makes a MeshCore radio transmit.
+  Everything that only makes sense for Meshtastic (sending, traceroutes, relay bytes, airtime, station comparison)
+  is kept to Meshtastic radios, and a peer hub gets MeshCore data under the same rules as Meshtastic's: rounded
+  locations, and a packet's raw bytes only when the share allows. New guide: docs/MESHCORE-GUIDE.md.
+- **Setting up a MeshCore station:** the setup page has a radio type choice (Meshtastic or MeshCore), and the
+  installers ask whether to add the MeshCore library (`install.ps1 -MeshCore`, `install.sh --meshcore`; kept up to
+  date once installed). A Pi station gets it from deploy/update-station.sh when its lorakeet.toml names a MeshCore
+  radio.
+- **Several radios, one Lorakeet.** `[[radios]]` entries in lorakeet.toml add more radios to one Lorakeet, each
+  logged as a station of its own: a Meshtastic and a MeshCore radio in one box, say. Each has its own port, name and
+  pairing with the hub; the live map and Radio page are the main radio's. Pausing logging lets go of them all. The
+  radios open their ports at least 20 s apart: opening a port restarts a radio, and two restarting together tripped a
+  Raspberry Pi 4's USB current limit, which cut every port, the data drive included.
+- **Meshtastic and MeshCore on one map.** Where one Lorakeet has both kinds of radio, MeshCore radios carry an "MC"
+  tag and the map gets a Meshtastic / MeshCore / Both switch (remembered per browser). Their channel messages are
+  separate conversations, and the Messages tab shows a MeshCore station's under "MeshCore channel n".
+- **MeshCore in the packet browser:** every reception with its route, the repeaters it came through, signal and
+  packet hash, filtered by payload type or by a repeater anywhere in the path; a **Network** filter on Packets
+  (Meshtastic, MeshCore or both), with MeshCore packets tagged.
+- **MeshCore packet anatomy.** Any MeshCore packet, byte by byte from the bytes its radio received: the radio
+  settings and time on air, the header, region codes, the path of repeaters (named where known), the payload by type
+  (an advert's key, clock, place and name; a message's hashes and MAC), the hash that recognises it, and every time
+  it was heard, by which path. Public channel messages are decrypted, and a hashtag channel's when you type its
+  name; the MAC proves the key, so nothing is shown decrypted by guesswork.
+- **Rename a pairing** on the Stations page (stations and peer hubs): only its name changes; the station or hub
+  keeps sending on the same code.
+
+**Fixed**
+- **A USB data drive that resets comes back by itself.** When the drive dropped off the bus and came back under a
+  new name (sda1 became sdb1), the old mount stayed and Lorakeet stayed on the SD card. The drive watch now clears a
+  dead or unreadable mount, checks the drive (fsck) and mounts it again; a drive that fails the check is left
+  unmounted for a person to look at.
+- **No needless reconnect after a Pi boots.** A Pi has no clock battery: it boots on its shutdown time and network
+  time then jumps it forward, which the radio watchdog read as that long a silence and reconnected the radio. The
+  watchdog now measures silence on a clock that time changes don't move.
+- **Scheduled traceroutes and messages go only to Meshtastic radios,** whatever else the database holds: an id the
+  Meshtastic library can't address is refused rather than turned into some other radio's number.
+
 ## 0.4.1 (2026-10-14)
 
 **New**

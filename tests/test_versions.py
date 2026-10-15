@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_version_is_in_the_changelog():
     v = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    assert re.fullmatch(r"\d+\.\d+\.\d+(-dev)?", v)
+    assert re.fullmatch(r"\d+\.\d+\.\d+(-dev|-(beta|rc)\.\d+)?", v)   # -beta.N / -rc.N: a test build
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     # a development version collects changes under "Unreleased"; a release has its own heading
     assert "## Unreleased" in log if v.endswith("-dev") else f"## {v} (" in log

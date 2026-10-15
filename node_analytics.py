@@ -24,11 +24,10 @@ def compute_node(db_path, nid, range_key, local_id, describe):
 
 
 def _relay_candidates(db, byte, local):
-    hexb = f"{byte:02x}"
     ids = {r[0] for r in db.execute(
         "SELECT from_id FROM packets UNION SELECT node FROM node_info UNION SELECT a FROM links UNION SELECT b FROM links")}
     ids |= set(alias_map(db))  # pre-2.8 numbers: relay bytes logged before an upgrade end in them
-    return sorted(i for i in ids if i and i.endswith(hexb) and i != local)
+    return sorted(i for i in ids if radioid.relay_byte(i) == byte and i != local)   # Meshtastic radios only
 
 
 def _longest_silence(stamps, until, covered_hours):

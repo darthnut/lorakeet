@@ -69,7 +69,7 @@ def port_group(port):
 
 # Tables whose rows were logged by a listening station (server.py tags them; see STATION_TABLES there).
 STATION_TABLES = ("packets", "rx_hops", "tx_log", "messages", "traceroutes", "events", "links", "telemetry",
-                  "telemetry_full", "positions", "node_info", "nodedb_snapshots")
+                  "telemetry_full", "positions", "node_info", "nodedb_snapshots", "mc_rx")
 ALL_STATIONS = "*"   # ?station=* : every station combined
 HOME = {"id": None}  # this server's own radio; server.py sets it on connect
 # Listening stations' configured antenna locations, {node id: (lat, lon, alt or None)}: from this server's
@@ -140,7 +140,8 @@ def station_position(db, station, ts, max_age_s=TRACK_MAX_AGE_S):
 
 # "One station hearing another station's own radio": internal traffic between our stations, left out of
 # the combined view (each station's own view still shows it: from there the other station is just a node).
-_OTHER_STATION = "(from_id IN (SELECT id FROM _stations) AND from_id != station)"
+# (A MeshCore packet often names no sender: from_id NULL is never another station, and must not turn the test NULL.)
+_OTHER_STATION = "(from_id IS NOT NULL AND from_id IN (SELECT id FROM _stations) AND from_id != station)"
 
 
 # Packets imported from a phone's data log (import_datalog.py): no packet id, so they can't be matched with
@@ -161,7 +162,7 @@ def _first(table, partition, where="1"):
 # within two minutes, since they carry no packet id. Approximation: a pair straddling a 2-minute bucket
 # boundary counts twice.
 _COMBINED = [
-    _first("packets", "CASE WHEN pkt_id IS NULL THEN rowid ELSE from_id || ':' || pkt_id END",
+    _first("packets", "CASE WHEN pkt_id IS NULL THEN rowid ELSE COALESCE(from_id, '') || ':' || pkt_id END",
            f"NOT {_OTHER_STATION} AND NOT {_IMPORTED}"),
     f"CREATE TEMP VIEW rx_hops AS SELECT {{SEL}} FROM {{SRC}} WHERE NOT {_OTHER_STATION}",
     _first("messages", "CASE WHEN outgoing = 1 OR pkt_id IS NULL THEN rowid ELSE from_id || ':' || pkt_id END"),
@@ -324,17 +325,18 @@ def _coverage(db, since, local):
     if is_combined(db):
         hours = {r[0] for r in db.execute(
             "SELECT strftime('%Y-%m-%d %H', ts, 'unixepoch', 'localtime') FROM telemetry_full "
-            "WHERE kind='localStats' AND node IN (SELECT id FROM _stations) AND ts >= ? GROUP BY 1", (since,))}
+            "WHERE (kind='localStats' OR kind LIKE 'meshcore_%') AND node IN (SELECT id FROM _stations) AND ts >= ? GROUP BY 1",
+            (since,))}
         hours |= {r[0] for r in db.execute(
             "SELECT strftime('%Y-%m-%d %H', ts, 'unixepoch', 'localtime') FROM packets "
-            "WHERE ts >= ? AND from_id NOT IN (SELECT id FROM _stations) GROUP BY 1", (since,))}
+            "WHERE ts >= ? AND (from_id IS NULL OR from_id NOT IN (SELECT id FROM _stations)) GROUP BY 1", (since,))}
         return hours
     hours = {r[0] for r in db.execute(
         "SELECT strftime('%Y-%m-%d %H', ts, 'unixepoch', 'localtime') FROM telemetry_full "
-        "WHERE kind='localStats' AND node=? AND ts >= ? GROUP BY 1", (local, since))}
+        "WHERE (kind='localStats' OR kind LIKE 'meshcore_%') AND node=? AND ts >= ? GROUP BY 1", (local, since))}
     hours |= {r[0] for r in db.execute(
         "SELECT strftime('%Y-%m-%d %H', ts, 'unixepoch', 'localtime') FROM packets "
-        "WHERE ts >= ? AND from_id != ? GROUP BY 1", (since, local))}
+        "WHERE ts >= ? AND from_id IS NOT ? GROUP BY 1", (since, local))}
     return hours
 
 
@@ -348,8 +350,8 @@ def _covered(start, bucket, covered_hours):
 def _compute(db, range_key, local, describe):
     since, until, first_ever, bucket, fmt = _window(db, range_key)
     q = lambda sql, *a: db.execute(sql, a).fetchall()  # noqa: E731
-    # packets "heard": everything except our own radio's output
-    P = "FROM packets WHERE ts >= ? AND from_id != ?"
+    # packets "heard": everything except our own radio's output (MeshCore packets that name no sender included)
+    P = "FROM packets WHERE ts >= ? AND from_id IS NOT ?"
 
     # ---- coverage (hourly, always — the heatmap and presence need hour resolution)
     covered_hours = _coverage(db, since, local)
@@ -403,9 +405,9 @@ def _compute(db, range_key, local, describe):
     heat_cov = [{"dow": k[0], "hour": k[1], "hours": v} for k, v in slot_hours.items()]
 
     # ---- nodes
-    first_seen_ever = {r[0]: r[1] for r in q("SELECT from_id, MIN(ts) FROM packets GROUP BY from_id")}
+    first_seen_ever = {r[0]: r[1] for r in q("SELECT from_id, MIN(ts) FROM packets WHERE from_id IS NOT NULL GROUP BY from_id")}
     groups_by_node = defaultdict(Counter)
-    for r in q(f"SELECT from_id, portnum, COUNT(*) {P} GROUP BY 1, 2", since, local):
+    for r in q(f"SELECT from_id, portnum, COUNT(*) {P} AND from_id IS NOT NULL GROUP BY 1, 2", since, local):
         groups_by_node[r[0]][port_group(r[1])] += r[2]
     nodes = []
     for r in q(f"""SELECT from_id, COUNT(*) AS n, MIN(ts) AS first, MAX(ts) AS last,
@@ -413,7 +415,7 @@ def _compute(db, range_key, local, describe):
                  AVG(CASE WHEN hops = 0 THEN snr END) AS snr0, AVG(CASE WHEN hops = 0 THEN rssi END) AS rssi0,
                  SUM(hops = 0) AS direct, MIN(hops) AS min_hops, AVG(hops) AS avg_hops, MAX(hops) AS max_hops,
                  SUM(via_mqtt) AS mqtt, GROUP_CONCAT(DISTINCT portnum) AS ports
-                 {P} GROUP BY from_id""", since, local):
+                 {P} AND from_id IS NOT NULL GROUP BY from_id""", since, local):
         d = describe(r["from_id"])
         nodes.append({
             "id": r["from_id"], **d, "packets": r["n"], "byGroup": dict(groups_by_node[r["from_id"]]),
@@ -442,14 +444,15 @@ def _compute(db, range_key, local, describe):
     for r in q(f"SELECT relay, COUNT(*) {P} AND hops > 0 AND relay IS NOT NULL GROUP BY 1 ORDER BY 2 DESC",
                since, local):
         hexb = f"{r[0]:02x}"
-        cands = sorted(i for i in known_ids if i.endswith(hexb) and i != local)
+        # Meshtastic radios only: a MeshCore id (or a MeshCore packet's empty sender) is never a relay byte's owner
+        cands = sorted(i for i in known_ids if radioid.relay_byte(i) == r[0] and i != local)
         chosen, how = resolve_relay(cands, neighbors, aliases)
         # list the resolved node first (alone) so the UI shows it; keep the full set for the tooltip
         relays.append({"byte": hexb, "count": r[1], "resolvedBy": how, "allCandidates": len(cands),
                        "candidates": [{"id": c, **describe(c)} for c in ([chosen] if chosen else cands)]})
 
     # ---- conversations
-    msgs = q("""SELECT m.ts, m.from_id, m.to_id, m.text, m.outgoing, m.encrypted, m.pkt_id, m.status,
+    msgs = q("""SELECT m.ts, m.from_id, m.to_id, m.text, m.outgoing, m.encrypted, m.pkt_id, m.status, m.station,
                        json_extract(p.raw, '$.decoded.replyId') AS reply_id,
                        json_extract(p.raw, '$.decoded.emoji') AS emoji,
                        p.hops AS hops, p.snr AS snr
@@ -462,11 +465,14 @@ def _compute(db, range_key, local, describe):
     talkers = Counter()
     for m in msgs:
         broadcast = m["to_id"] in ("^all", "!ffffffff") or not m["to_id"]
-        key = "^all" if broadcast else "|".join(sorted((m["from_id"], m["to_id"])))
+        # MeshCore and Meshtastic channel messages are different meshes: never one thread. A MeshCore channel message
+        # names its sender only in its text ("Name: text"), and a direct one may not name it at all.
+        mc = radioid.is_meshcore(m["station"])
+        key = ("mc:^all" if mc else "^all") if broadcast else "|".join(sorted((m["from_id"] or "", m["to_id"] or "")))
         th = open_thread.get(key)
         if th is None or m["ts"] - th["end"] > CONVERSATION_GAP_S:
             th = {"key": key, "kind": "channel" if broadcast else "direct", "start": m["ts"], "end": m["ts"],
-                  "messages": [], "people": Counter()}
+                  "messages": [], "people": Counter(), "protocol": "meshcore" if mc else "meshtastic"}
             threads.append(th)
             open_thread[key] = th
         sender = m["from_id"]
@@ -480,19 +486,22 @@ def _compute(db, range_key, local, describe):
             by_pkt[m["pkt_id"]] = item
         th["messages"].append(item)
         th["end"] = m["ts"]
-        th["people"][sender] += 1
-        if not m["encrypted"]:
-            talkers[sender] += 1
+        if sender:
+            th["people"][sender] += 1
+            if not m["encrypted"]:
+                talkers[sender] += 1
     conversations = []
     for th in reversed(threads):  # newest first
         conversations.append({
-            "kind": th["kind"], "start": th["start"], "end": th["end"], "count": len(th["messages"]),
+            "kind": th["kind"], "protocol": th["protocol"], "start": th["start"], "end": th["end"],
+            "count": len(th["messages"]),
             "people": [{"id": i, "name": describe(i)["name"], "count": c} for i, c in th["people"].most_common()],
             "messages": th["messages"][-300:],
         })
 
     # ---- headline numbers
-    total = sum(n["packets"] for n in nodes)
+    # every packet heard, MeshCore ones that name no sender included (the node list leaves those out)
+    total = q(f"SELECT COUNT(*) {P}", since, local)[0][0]
     ch = [s["chUtil"] for s in series if s["chUtil"] is not None]
     new_nodes = [n for n in nodes if n["firstEver"] and n["firstEver"] >= since]
     kpis = {

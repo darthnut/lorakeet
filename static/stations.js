@@ -110,7 +110,8 @@ function renderStations() {
   const rows = H.stations.map((s) => {
     const stale = s.lastContact && Date.now() / 1000 - s.lastContact > 600;
     const p = s.pairing;
-    const how = s.here ? "this computer" : s.via ? `from peer: ${esc(s.via.label)}` : p ? (p.revoked ? `<span class="bad">revoked</span> (${esc(p.label)})` : `paired: ${esc(p.label)}`)
+    const relabel = p ? ` <button class="linkbtn" data-act="relabel" data-p="${esc(p.id)}" title="Rename this pairing">rename</button>` : "";
+    const how = s.here ? "this computer" : s.via ? `from peer: ${esc(s.via.label)}` : p ? (p.revoked ? `<span class="bad">revoked</span> (${esc(p.label)})${relabel}` : `paired: ${esc(p.label)}${relabel}`)
       : s.sharedToken ? '<span title="Set up by hand with the shared [sync] token. It keeps working; pair it again to give it its own token you can revoke.">shared token</span>' : "—";
     const loc = s.location ? `${(+s.location[0]).toFixed(4)}, ${(+s.location[1]).toFixed(4)}${s.override.location ? " <span class=\"muted\">(set here)</span>" : ""}` : '<span class="muted">not set</span>';
     const acts = s.here ? '<span class="muted">see Radio</span>' : [
@@ -124,7 +125,7 @@ function renderStations() {
   });
   const waiting = H.pairings.filter((e) => e.kind !== "peer" && !e.station && !e.revoked);
   $("stationList").innerHTML = `<table class="chans"><thead><tr><th>Station</th><th>Last contact</th><th>Version</th><th class="num">Backlog</th><th>Location</th><th>Connected by</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>
-    ${waiting.length ? `<p class="note">Waiting for their first contact: ${waiting.map((e) => `${esc(e.label)} <button class="linkbtn" data-act="revoke" data-p="${esc(e.id)}">Revoke</button>`).join(", ")}</p>` : ""}
+    ${waiting.length ? `<p class="note">Waiting for their first contact: ${waiting.map((e) => `${esc(e.label)} <button class="linkbtn" data-act="relabel" data-p="${esc(e.id)}">Rename</button> · <button class="linkbtn" data-act="revoke" data-p="${esc(e.id)}">Revoke</button>`).join(", ")}</p>` : ""}
     <p class="note"><b>Revoke</b> stops a station sending (its code no longer works; give it a new one to resume). <b>Forget</b> removes it from this list and the maps; everything it logged stays in the database.</p>`;
 }
 $("stationList").addEventListener("click", async (e) => {
@@ -141,6 +142,9 @@ $("stationList").addEventListener("click", async (e) => {
     const m = v.trim() ? v.split(/[,\s]+/).filter(Boolean).map(Number) : [];
     if (m.length && (m.length !== 2 || m.some((x) => !Number.isFinite(x)))) { $("err").textContent = "Type it as latitude, longitude"; return; }
     body.location = m;
+  } else if (act === "relabel") {
+    relabelPairing(body.pairing);
+    return;
   } else if (act === "revoke") {
     if (!confirm("Revoke this pairing? The station can no longer send to this hub until it's paired again.")) return;
   } else if (act === "forget") {
@@ -208,12 +212,24 @@ function renderPeers() {
   }).join("")}</tbody></table><div id="peerTest"></div>` : '<p class="muted">None yet.</p>';
   $("peerInBox").hidden = H.mode !== "hub";
   const incoming = H.pairings.filter((e) => e.kind === "peer");
-  $("peersIn").innerHTML = incoming.length ? `<ul class="bklist">${incoming.map((e) => `<li><b>${esc(e.label)}</b> · ${e.revoked ? '<span class="bad">revoked</span>'
+  $("peersIn").innerHTML = incoming.length ? `<ul class="bklist">${incoming.map((e) => `<li><b>${esc(e.label)}</b> <button class="linkbtn" data-relabel="${esc(e.id)}" title="Rename this pairing">rename</button> · ${e.revoked ? '<span class="bad">revoked</span>'
     : `${e.paused ? '<span class="paused">paused</span> (what it sends waits on their side)' : e.hub ? `last contact ${esc(ago(e.lastContact))}` : "waiting for its first contact"} · <button class="linkbtn" data-pause="${esc(e.id)}" data-paused="${e.paused ? 1 : ""}">${e.paused ? "Resume" : "Pause"}</button> · <button class="linkbtn" data-act="revoke" data-p="${esc(e.id)}">Revoke</button>`}${e.hub
     ? ` · <button class="linkbtn danger" data-forget="${esc(e.id)}">${e.revoked ? "Delete what it sent" : "Revoke and delete what it sent"}</button>` : ""}</li>`).join("")}</ul>`
     : '<p class="muted">None yet.</p>';
 }
+// a pairing's name (a station's or a peer hub's): only what this page calls it; its token and binding don't change
+async function relabelPairing(id) {
+  const cur = H.pairings.find((x) => x.id === id);
+  const label = prompt("Name for this pairing (only shown on this page; it keeps working):", cur?.label || "");
+  if (label === null) return;
+  if (!label.trim()) { $("err").textContent = "A pairing needs a name"; return; }
+  const r = await post("/api/hub/station", { action: "relabel", pairing: id, label });
+  if (r.error) { $("err").textContent = r.error; return; }
+  H = r; render();
+}
 $("peersIn").addEventListener("click", async (e) => {
+  const rl = e.target.closest("[data-relabel]");
+  if (rl) { relabelPairing(rl.dataset.relabel); return; }
   const pz = e.target.closest("[data-pause]");
   if (pz) {
     const r = await post("/api/hub/station", { action: pz.dataset.paused ? "resume" : "pause", pairing: pz.dataset.pause });

@@ -39,18 +39,28 @@
   <form id="setupForm" hidden autocomplete="off">
     <section class="card">
       <h2>1. Your radio</h2>
+      <fieldset class="inline">
+        <legend>Radio type</legend>
+        <label class="opt"><input type="radio" name="protocol" value="meshtastic" checked> <span><b>Meshtastic</b> <span class="muted">(most mesh radios)</span></span></label>
+        <label class="opt"><input type="radio" name="protocol" value="meshcore"> <span><b>MeshCore</b> <span class="muted">(a companion radio on USB; Lorakeet only listens)</span></span></label>
+      </fieldset>
+      <p class="mcmissing" id="mcMissing" hidden>
+        <b>MeshCore support isn't installed yet.</b> You can still save these settings, but Lorakeet can't log the radio until it is.
+        Run the installer again and answer yes to the MeshCore question, or run <code id="mcInstall"></code>, then restart Lorakeet.
+      </p>
       <p class="live" id="live">Checking for a radio…</p>
       <fieldset>
-        <label class="opt"><input type="radio" name="radioMode" value="auto" checked> <span><b>Find it automatically</b> on USB <span class="muted">(recommended with one radio plugged in)</span></span></label>
+        <label class="opt" data-mt><input type="radio" name="radioMode" value="auto" checked> <span><b>Find it automatically</b> on USB <span class="muted">(recommended with one radio plugged in)</span></span></label>
         <label class="opt"><input type="radio" name="radioMode" value="port"> <span><b>A specific USB port</b></span></label>
         <div class="sub" data-for="port"><select id="port"></select> <span class="muted" id="portHint"></span></div>
-        <label class="opt"><input type="radio" name="radioMode" value="host"> <span><b>A radio on my network</b> (Wi-Fi or Ethernet boards)</span></label>
+        <label class="opt" data-mt><input type="radio" name="radioMode" value="host"> <span><b>A radio on my network</b> (Wi-Fi or Ethernet boards)</span></label>
         <div class="sub" data-for="host">
           <input id="host" placeholder="192.168.1.50 or meshtastic.local" size="28"> port <input id="tcpPort" value="4403" size="5" inputmode="numeric">
           <p class="note">Over the network you get every decoded packet, but not the per-reception detail (duplicate copies, relays, airtime): radios send their debug log only over USB.</p>
         </div>
       </fieldset>
-      <p class="note">After saving, the Radio page checks your radio's settings (region, per-reception detail and more), sets up channels and confirms logging.</p>
+      <p class="note" data-mt>After saving, the Radio page checks your radio's settings (region, per-reception detail and more), sets up channels and confirms logging.</p>
+      <p class="note" data-mc hidden>A MeshCore radio is always on a USB port: choose it above. After saving, the Radio page shows what the radio reports.</p>
     </section>
 
     <section class="card">

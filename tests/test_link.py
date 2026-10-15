@@ -27,7 +27,7 @@ class _Link(link.RadioLink):
 
     def connect(self):
         self.calls.append("connect")
-        self.connected, self.last_rx = True, time.time()
+        self.connected, self.last_rx = True, time.monotonic()
 
     def drop_link(self):
         self.calls.append("drop")
@@ -45,11 +45,21 @@ def test_connects_then_ticks_and_the_watchdog_drops_a_silent_radio():
     with pytest.raises(_Stop):
         lk.run()
     assert lk.calls == ["connect", "tick", "tick"]
-    lk.passes, lk.calls, lk.last_rx = 1, [], time.time() - lk.WATCHDOG_S - 1
+    lk.passes, lk.calls, lk.last_rx = 1, [], time.monotonic() - lk.WATCHDOG_S - 1
     with pytest.raises(_Stop):
         lk.run()
     assert lk.calls == ["drop", "connect", "tick"] and "watchdog" in lk.store.events
 
+
+def test_a_clock_jump_isnt_silence(monkeypatch):
+    # a Pi boots on its shutdown time; network time then moved it forward 67 min, which read as 67 min of silence
+    lk = _Link(passes=1)
+    lk.connected, lk.last_rx = True, time.monotonic()
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() + 4 * 3600)
+    with pytest.raises(_Stop):
+        lk.run()
+    assert lk.calls == ["tick"] and "watchdog" not in lk.store.events
 
 def test_paused_lets_go_and_stays_disconnected():
     lk = _Link(passes=1)

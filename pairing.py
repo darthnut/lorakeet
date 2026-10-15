@@ -188,6 +188,19 @@ class Pairings:
                     return True
         return False
 
+    def relabel(self, pid, label):
+        """Rename a pairing (what the Stations page calls it). Its token and the station it's bound to don't change."""
+        label = (label or "").strip()[:60]
+        if not label:
+            raise ValueError("a pairing needs a name")
+        with self.lock:
+            for e in self.entries:
+                if e["id"] == pid:
+                    e["label"] = label
+                    self._save()
+                    return True
+        return False
+
     def revoke(self, pid):
         with self.lock:
             for e in self.entries:

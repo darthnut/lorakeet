@@ -625,6 +625,7 @@ function animate(now) {
 function describeEvent(e) {
   const t = new Date(e.ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
   const type = e.group === "Unknown" ? "type not logged" : e.group;
+  const mc = String(e.portnum || "").startsWith("MC_") || String(e.from || "").startsWith("mc:");  // MeshCore: no 1-byte relay
   let path;
   if (e.kind === "trace") {
     const hop = (route, snrs) => route.map((id, i) => `${id ? esc(nameOf(id)) : "unknown hop"}${i && snrs[i] != null ? ` <span class="muted">${esc(snrs[i])} dB</span>` : ""}`).join(" → ");
@@ -637,7 +638,7 @@ function describeEvent(e) {
     const from = esc(nameOf(e.from)) + keyBadge(flagOf(e.from), { short: true });
     if (e.hops === 0) path = `${from} → ${us}, heard directly (0 hops)`;
     else if (e.hops == null) path = `${from} → ${us}, hops unknown`;
-    else path = `${from} → ${e.hops > 1 ? `${e.hops - 1} unknown hop${e.hops > 2 ? "s" : ""} → ` : ""}${e.relay ? esc(nameOf(e.relay)) : `relay 0x${(e.relayByte ?? 0).toString(16).padStart(2, "0")} (unresolved)`} → ${us}`;
+    else path = `${from} → ${e.hops > 1 && !mc ? `${e.hops - 1} unknown hop${e.hops > 2 ? "s" : ""} → ` : ""}${e.relay ? `${esc(nameOf(e.relay))} → ` : e.relayByte != null ? `relay 0x${e.relayByte.toString(16).padStart(2, "0")} (unresolved) → ` : ""}${us}${mc ? ` (${e.hops} hop${e.hops === 1 ? "" : "s"})` : ""}`;
   }
   const anat = e.row ? ` <a class="anat-link" href="/packets.html#packet=${e.row}" target="_blank" rel="noopener" title="Packet anatomy: bytes on air, encryption, decoded fields">bytes ↗</a>` : "";
   return `<li><span class="t">${esc(t)}</span><i style="${e.group === "Unknown" ? `border:2px solid ${rcol(e.group)}` : `background:${rcol(e.group)}`}"></i><b>${esc(type)}</b> ${path}${anat}</li>`;

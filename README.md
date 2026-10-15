@@ -352,8 +352,9 @@ check in `tools/release_check.py`. [CONTRIBUTING.md](CONTRIBUTING.md) has the re
 ## Status and support
 
 A hobby project, maintained on a best-effort basis. Issues and pull requests are welcome, but there are
-no promises about response times. Next up: logging **MeshCore** meshes too, alongside Meshtastic
-([the plan](docs/MESHCORE.md), issue [#10](https://github.com/darthnut/lorakeet/issues/10)).
+no promises about response times. Logging **MeshCore** meshes too, alongside Meshtastic, is new in 0.5.0:
+see [Running a MeshCore station](docs/MESHCORE-GUIDE.md) ([the plan](docs/MESHCORE.md), issue
+[#10](https://github.com/darthnut/lorakeet/issues/10)).
 
 Something broken? **Settings → Help and diagnostics** saves a file for your bug report with personal details taken
 out (`python diagnostics.py` does the same if Lorakeet won't start). Trying it out? [TESTING.md](TESTING.md) says

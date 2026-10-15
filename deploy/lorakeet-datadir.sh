@@ -22,10 +22,30 @@ BACK_AFTER_S=600   # the drive has to look healthy this long before Lorakeet mov
 log() { logger -t lorakeet-datadir -p "$1" "$2"; }
 
 drive_ok() {
-  # pulled out (or died off the bus): clear the dead mount, so the drive can mount again when it's plugged back in
-  if mountpoint -q "$MNT" && [ ! -e /dev/disk/by-label/LKDATA ]; then umount -l "$MNT" 2>/dev/null; fi
-  # a drive plugged back in after boot isn't mounted by anything else
-  if ! mountpoint -q "$MNT" && [ -e /dev/disk/by-label/LKDATA ]; then mount "$MNT" 2>/dev/null; fi
+  local dev src rc
+  dev=$(readlink -f /dev/disk/by-label/LKDATA 2>/dev/null)
+  [ -e "$dev" ] || dev=""
+  if mountpoint -q "$MNT"; then
+    src=$(readlink -f "$(findmnt -no SOURCE "$MNT")" 2>/dev/null)
+    # a dead mount: pulled out, back under a new name (a USB reset: sda1 -> sdb1, the mount still on sda1), or
+    # unreadable (the filesystem shut itself down after a write error). Clear it, so the drive can mount again.
+    if [ -z "$dev" ] || [ "$src" != "$dev" ] || ! ls "$MNT" >/dev/null 2>&1; then
+      umount -l "$MNT" 2>/dev/null
+      log warning "cleared a dead mount of the USB drive (${src:-?})"
+    fi
+  fi
+  # a drive plugged back in (or back from a reset) isn't mounted by anything else. Check it first: one that
+  # dropped off the bus mid-write has an unfinished journal. One that fails the check stays off until a person looks.
+  if ! mountpoint -q "$MNT" && [ -n "$dev" ] && [ "$(cat "$STATE/fsck-failed" 2>/dev/null)" != "$dev" ]; then
+    fsck -p "$dev" >/dev/null 2>&1; rc=$?
+    if [ $rc -le 1 ]; then
+      [ $rc = 1 ] && log notice "USB drive checked: errors fixed on $dev"
+      mount "$MNT" 2>/dev/null
+    else
+      mkdir -p "$STATE" && echo "$dev" > "$STATE/fsck-failed"
+      log err "USB drive $dev failed its filesystem check (fsck exit $rc): left unmounted; check it by hand"
+    fi
+  fi
   mountpoint -q "$MNT" || return 1
   install -d -o "$USER_" -g "$USER_" "$DRIVE" 2>/dev/null || return 1
   local t="$DRIVE/.write-test"

@@ -14,19 +14,15 @@ def test_meshtastic_ids():
     assert radioid.protocol_of("!a0000001") == "meshtastic"
 
 
-def test_meshcore_ids_are_recognised_but_not_yet_accepted():
+def test_meshcore_ids():
     mc = radioid.from_meshcore_key("a0000017c2be" + "00" * 26)
     assert mc == "mc:a0000017c2be" and radioid.from_meshcore_key(bytes.fromhex("a0000017c2be")) == mc
     assert radioid.is_meshcore(mc) and radioid.protocol_of(mc) == "meshcore"
     assert radioid.relay_byte(mc) is None and radioid.node_num(mc) is None   # no relay byte: MeshCore paths are key prefixes (MESHCORE.md, decision 3)
-    assert not radioid.is_radio_id(mc)            # until the MeshCore link lands (ACCEPTED, step 4)
+    assert radioid.is_radio_id(mc) and radioid.is_radio_id("!a0000001")   # both accepted since the MeshCore link
+    assert not radioid.is_radio_id("mc:a0000017c2b") and not radioid.is_radio_id("MC:a0000017c2be")
     with pytest.raises(ValueError):
         radioid.from_meshcore_key("not hex")
-
-
-def test_accepting_meshcore_is_one_line(monkeypatch):
-    monkeypatch.setattr(radioid, "ACCEPTED", (radioid.MESHTASTIC_RE, radioid.MESHCORE_RE))
-    assert radioid.is_radio_id("mc:a0000017c2be") and radioid.is_radio_id("!a0000001")
 
 
 def test_station_tokens_split_at_the_last_colon():

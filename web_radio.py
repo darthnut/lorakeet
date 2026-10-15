@@ -32,6 +32,16 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
         # ---- the Radio page (radio_setup.py)
         def _radio_get(self, path, qs):
             iface = mesh.iface
+            if path == "/api/radio" and getattr(mesh, "PROTOCOL", "meshtastic") == "meshcore":
+                # what the radio says about itself; MeshCore settings can't be changed here yet (MESHCORE.md, step 7)
+                info = mesh.self_info or {}
+                return self._json({"protocol": "meshcore", "connected": bool(mesh.connected), "port": mesh.port,
+                                   "error": mesh.last_connect_error, "station": station_settings(mesh),
+                                   "mobile": CFG["station"]["mobile"],
+                                   "radio": {"id": mesh.local_id, "name": info.get("name"),
+                                             "freq": info.get("radio_freq"), "bw": info.get("radio_bw"),
+                                             "sf": info.get("radio_sf"), "cr": info.get("radio_cr"),
+                                             "txPower": info.get("tx_power"), "maxTxPower": info.get("max_tx_power")}})
             if path == "/api/radio":
                 ports = serial_ports()
                 out = {"connected": bool(mesh.connected and iface), "port": mesh.port, "network": bool(mesh.host),

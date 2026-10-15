@@ -13,6 +13,7 @@ from collections import deque
 
 import insights
 import nodeids
+import radioid
 from config import CFG
 from storage import notify
 
@@ -162,10 +163,16 @@ class Alerts:
                              "UNION ALL SELECT MAX(ts) FROM rx_hops WHERE from_id = ?)", nid, nid)
         return r[0]["t"] if r else None
 
+    @staticmethod
+    def _silence_limit_s(s, nid):
+        # a MeshCore radio is only ever named by its adverts, which most send every 12-24 h: anything shorter than a
+        # day would call it silent between two of them
+        return max(s["silenceHours"], 26 if radioid.is_meshcore(nid) else 0) * 3600
+
     def _check_silence(self, s):
-        limit = s["silenceHours"] * 3600
         open_ = self.state.setdefault("silent", {})
         for nid in self._watched(s):
+            limit = self._silence_limit_s(s, nid)
             heard = self._last_heard(nid) or 0
             name = self.mesh.describe(nid)["name"]
             listening_since = max(heard, self.connected_since or time.time())
@@ -174,7 +181,7 @@ class Alerts:
                 hrs = (time.time() - heard) / 3600 if heard else None
                 open_[nid] = self.raise_alert(
                     "silent", f"{name} has gone quiet",
-                    f"Not heard for {s['silenceHours']:g} h while the dashboard was listening"
+                    f"Not heard for {limit / 3600:g} h while the dashboard was listening"
                     + (f" (last heard {hrs:.1f} h ago)." if hrs else "."), nid, "warn", s["notifySilence"])
             elif nid in open_ and heard > time.time() - 120:
                 rowid = open_.pop(nid)
@@ -254,7 +261,8 @@ class Alerts:
         st = self.state
         since = st.get("new_since") or time.time() - 120
         st["new_since"] = time.time()
-        rows = self.store.query("SELECT from_id, MIN(ts) AS first FROM packets GROUP BY from_id HAVING first >= ?", since)
+        rows = self.store.query("SELECT from_id, MIN(ts) AS first FROM packets WHERE from_id IS NOT NULL GROUP BY from_id "
+                                "HAVING first >= ?", since)   # (a MeshCore packet often names no sender)
         for r in rows:
             name = self.mesh.describe(r["from_id"])["name"]
             self.raise_alert("new-node", f"New node: {name}", "First time this node has been heard.", r["from_id"], "info")
@@ -316,6 +324,8 @@ class Alerts:
             traces[r["target"]] = r
         best, best_score, best_why = None, None, "no candidates heard in the last 24 h"
         for r in heard:
+            if not radioid.is_meshtastic(r["from_id"]):
+                continue  # a MeshCore radio (a MeshCore station's rows, synced here): a Meshtastic traceroute can't reach it
             t = traces.get(r["from_id"])
             if t:
                 age_h = (now - t["ts"]) / 3600

@@ -2,7 +2,7 @@
 
 Lorakeet logs Meshtastic today. [MeshCore](https://github.com/meshcore-dev/MeshCore) is a second LoRa mesh firmware with
 its own protocol: a Meshtastic radio and a MeshCore radio can't hear each other, so a station logs one or the other.
-This is the plan for logging MeshCore too (issue #10). Status: groundwork (steps 1–3) done; the MeshCore link (step 4) is next.
+This is the plan for logging MeshCore too (issue #10). Status: steps 1–4 done: a station with `[radio] protocol = "meshcore"` logs a MeshCore radio. Checking it against real traffic, then the pages (step 5), are next.
 
 ## What a MeshCore radio gives us
 
@@ -63,7 +63,17 @@ short prefix of the repeater's public key, though, not its id, so a path still h
    accepted once `ACCEPTED` includes them. Done.
 3. **`link.RadioLink`:** the protocol-neutral part of `mesh.Mesh` moves into a base class. A refactor: behaviour
    unchanged. Done.
-4. **MeshCore link** (`meshcore_link.py`). Started: `meshcore_packet.py` parses the raw packets (route, region
+4. **MeshCore link** (`meshcore_link.py`). The link logs: every reception to `mc_rx` (a table of its own, database
+   layout 3: MeshCore packets have no packet id and usually no sender in the clear, so they don't fit `rx_hops`), the
+   first hearing of each packet (by packet hash) to `packets`, adverts to `node_info` (a row per change) and
+   `positions`, direct and channel messages to `messages`, the radio's counters to `telemetry_full`; the station id
+   comes from the radio's own key (SELF_INFO). Tested with made-up frames played through the library's own reader
+   (tests/test_meshcore_link.py); `tools/meshcore_record.py` records a real radio's frames for checking against.
+   A station runs it with `[radio] protocol = "meshcore"` and `[radio] port` set: `MeshCoreLink` is a `mesh.Mesh`
+   with the radio connection swapped, so the pages, alerts and station reports work unchanged and its live caches
+   (names, positions, last receptions) stay current; sending and traceroutes say they aren't available yet. Run
+   against the test radio on 2026-10-14: connects, takes its id from the radio's key, logs its counters, every page
+   loads. Still to do: check it against real MeshCore traffic (none in range of the first test). Earlier: `meshcore_packet.py` parses the raw packets (route, region
    transport codes, path prefixes, payload) and computes the firmware's packet hash, checked against meshcore-bot's
    implementation (the library's own `pkt_hash` is a different, 4-byte hash); `radioid.path_prefix_matches` says
    which radios a hop could be. Still to do: the library's events mapped to Lorakeet's tables (receptions with their
@@ -77,8 +87,17 @@ short prefix of the repeater's public key, though, not its id, so a path still h
    limited to a region (a region-limited flood carries a transport code), per channel per day, counted from what
    is heard (nothing transmitted), and only where the reception was matched to the message (decision 8).
 6. **Several radios, one Lorakeet:** one process logging several radios, each its own station (Meshtastic and
-   MeshCore, or Long Fast and Long Turbo, on one Pi).
-7. **Later:** MeshCore packet anatomy, airtime for its presets, a settings page, sending messages and traces.
+   MeshCore, or Long Fast and Long Turbo, on one Pi). Done: `[radio]` is the main radio (the live map, the Radio
+   page) and each `[[radios]]` entry another, with its own port, name and sync pairing. Each extra link writes
+   through a `store.StationStore` (the same database, its rows tagged with its own station); the collector sends
+   each station on its own token with its own bookmark; a hub refuses rows for any of its radios; the library's
+   process-wide Meshtastic events only reach the link whose radio sent them. Known limit: two Meshtastic radios
+   share the "this radio's channels" settings record, so per-radio channel analytics follow whichever connected
+   last.
+7. **Packet anatomy** (`meshcore_anatomy.py`): done. A packet laid out from its own logged bytes (nothing rebuilt):
+   radio (the station radio's settings, 16-symbol preamble, sync word 0x12), header, transport codes, path, payload by
+   type, the packet hash, every hearing; Public and hashtag channel messages decrypted, proven by the MAC.
+8. **Later:** airtime for its presets, a settings page, sending messages and traces.
    Zero-hop neighbour discovery (one request, then a minute's listening: nearby repeaters answer with full keys and
    SNR, the best link evidence there is), opt-in like drive pings since it transmits.
 

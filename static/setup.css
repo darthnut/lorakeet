@@ -10,7 +10,8 @@ body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; ov
 .setup .opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; cursor: pointer; line-height: 1.4; }
 .setup .opt input { margin-top: 3px; }
 .setup .sub { margin: 0 0 6px 26px; }
-.setup .sub[hidden] { display: none; }
+.setup .sub[hidden], .setup .opt[hidden] { display: none; }
+.setup .mcmissing { background: var(--surface-2); border-left: 3px solid var(--warning, #c98a00); padding: 8px 10px; border-radius: 4px; font-size: 13px; margin: 6px 0 10px; line-height: 1.45; }
 .setup .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0; }
 .setup .row > span { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .setup input, .setup textarea { max-width: 100%; }
@@ -119,3 +120,8 @@ body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; ov
 .settings details.diag pre { max-height: 360px; overflow: auto; margin: 6px 0; padding: 8px 10px; font-size: 12px; line-height: 1.4;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings a.btn { text-decoration: none; color: inherit; }
+
+/* the Radio page on a MeshCore station: what the radio reports, read-only */
+table.kv { border-collapse: collapse; margin: 6px 0 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.kv th { text-align: left; font-weight: 500; color: var(--text-secondary); padding: 3px 18px 3px 0; }
+table.kv td { padding: 3px 0; }

@@ -13,15 +13,21 @@ const ANAT_PROV = {  // anatomy provenance -> page-wide badge kind + wording
 const anatBadge = (k, note) => prov((ANAT_PROV[k] || ANAT_PROV.unknown)[0], note);
 const anatPill = (k) => { const p = ANAT_PROV[k] || ANAT_PROV.unknown; return `<span class="anat-pill anat-${k}" title="${esc(p[2])}">${esc(p[1])}</span>`; };
 
-async function openAnatomy(el, rowid) {
+async function openAnatomy(el, rowid, channel) {
   el.innerHTML = '<p class="muted">Rebuilding the packet…</p>';
   let a;
   try {
-    a = await fetch(`/api/packet/${rowid}/anatomy`).then((r) => r.json());
+    a = await fetch(`/api/packet/${rowid}/anatomy${channel ? `?channel=${encodeURIComponent(channel)}` : ""}`).then((r) => r.json());
     if (a.error) throw new Error(a.error);
   } catch (e) { el.innerHTML = `<p class="muted">Couldn't build the anatomy: ${esc(e.message)}</p>`; return; }
-  el.innerHTML = renderAnatomy(a);
+  el.innerHTML = a.protocol === "meshcore" ? renderMeshCoreAnatomy(a) : renderAnatomy(a);
   wireAnatomy(el);
+  // MeshCore: try a hashtag channel's name on a channel message (its key comes from the name)
+  el.querySelector("form.anat-try")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = e.target.elements.channel.value.trim();
+    if (v) openAnatomy(el, rowid, v);
+  });
 }
 
 /* ---------------------------------------------------------------- hex dump with linked fields */
@@ -124,6 +130,83 @@ function renderAnatomy(a) {
   return `<div class="anat-wrap"><div class="anat">${html}</div>
     <aside class="anat-jsonpane" aria-label="Logged JSON">
       <div class="anat-jh"><b>Logged JSON</b><span>the library's decode, as stored. Hover a line to find its bytes.</span></div>
+      <div class="anat-jtree">${jsonLines(a.json)}</div>
+    </aside></div>`;
+}
+
+/* ---------------------------------------------------------------- MeshCore (meshcore_anatomy.py) */
+
+// a field's bits, for any field that has them (MeshCore: the header and path-length bytes, an advert's flags)
+function bitsList(fields, hex) {
+  const bytes = hex.match(/../g) || [];
+  return fields.filter((f) => f.bits).map((f) => `<div class="anat-bitlg"><span class="muted">${esc(f.name)} (byte ${f.start}) =
+    <span class="mono">${parseInt(bytes[f.start] || "0", 16).toString(2).padStart(8, "0")}</span>:</span>
+    ${f.bits.map((b) => `<span>bit${b.bits.length > 1 ? "s" : ""} ${esc(b.bits)} ${esc(b.name)} = <b>${esc(b.value ?? "?")}</b></span>`).join("")}</div>`).join("");
+}
+
+const MC_EXPLAIN = {
+  ADVERT: "A radio announcing itself to everyone: its whole public key, the time by its clock, a signature over it all, then its type, place and name. Sent in the clear by design.",
+  GRP_TXT: "A channel message: a one-byte channel hash so radios know which of their keys to try, a short MAC, then the encrypted message.",
+  GRP_DATA: "Channel data: like a channel message, but bytes for an app rather than text.",
+  ACK: "An acknowledgement: just the checksum of the message it confirms.",
+  TRACE: "A trace: it follows a fixed route of repeaters, and each one adds its reception SNR to the path.",
+  ANON_REQ: "A request from a radio the recipient doesn't know yet: it carries the sender's whole public key.",
+};
+
+function renderMeshCoreAnatomy(a) {
+  const r = a.radio, fr = a.frame, pl = a.payload, c = a.crypto;
+  let n = 0, html = "";
+  html += a.checks.length ? `<ul class="anat-checks">${a.checks.map((x) => `<li class="${x.ok ? "ok" : "bad"}"><span aria-hidden="true">${x.ok ? "✓" : "✗"}</span> ${esc(x.text)}</li>`).join("")}</ul>` : "";
+
+  const pre = r.preambleMs, pay = r.payloadMs;
+  html += layer(++n, "Radio signal (LoRa)", anatPill(r.presetAssumed ? "unknown" : "logged"),
+    `Sent as LoRa chirps across ${r.bwKHz} kHz, each carrying ${r.bitsPerSymbol} bits, with the settings the station's radio reported. MeshCore uses a ${r.preambleSymbols}-symbol preamble and its own sync word, so a Meshtastic radio on the same frequency doesn't hear it at all.`,
+    `<div class="anat-kv">
+      <span><b>${r.freqMHz != null ? `${esc(r.freqMHz)} MHz` : "—"}</b>frequency</span>
+      <span><b>SF${r.sf} · ${r.bwKHz} kHz</b>CR ${esc(r.cr)}</span>
+      <span><b>${r.airtimeMs} ms</b>time on air</span>
+      <span><b>${r.onAirBytes} B</b>packet + 2 B CRC</span>
+      ${a.rssi != null ? `<span><b>${esc(a.rssi)} dBm</b>RSSI ${prov("observed", "The station's reading of its first hearing.")}</span>` : ""}
+      ${a.snr != null ? `<span><b>${esc(a.snr)} dB</b>SNR ${prov("observed", "The station's reading of its first hearing.")}</span>` : ""}
+    </div>
+    <div class="anat-air" role="img" aria-label="Time on air: preamble ${pre} ms, packet ${pay} ms">
+      <span class="pre" style="flex:${pre}">preamble · ${r.preambleSymbols} + 4.25 symbols · ${pre} ms</span>
+      <span class="pay" style="flex:${pay}">sync ${esc(r.syncWord)} · PHY header · ${r.onAirBytes}-byte packet · CRC — ${pay} ms</span>
+    </div>${r.presetAssumed ? `<p class="muted small">The radio's settings weren't recorded: the US MeshCore settings (SF 7, 62.5 kHz, CR 4/5) are assumed.</p>` : ""}`);
+
+  html += layer(++n, "On-air packet", anatPill("received"),
+    "Exactly the bytes the station's radio received: a header byte (how it's routed, what it carries), region codes on a region-limited flood, then the path: one key prefix per repeater it came through, added as it travelled. Everything after the path is the payload.",
+    `<div class="anat-split">${hexdump(fr.hex, fr.fields)}${fieldTable(fr.fields, { showProv: true })}</div>${bitsList(fr.fields, fr.hex)}`);
+
+  html += layer(++n, `Payload (${pl.type})`, anatPill("received"),
+    MC_EXPLAIN[pl.type] || "An addressed packet: the first byte of the recipient's and the sender's public keys, a MAC, then what's encrypted between the two of them.",
+    `<div class="anat-split">${hexdump(pl.hex, pl.fields)}${fieldTable(pl.fields)}</div>${bitsList(pl.fields, pl.hex)}`);
+
+  if (c) {
+    const form = c.canTryHashtag && !c.plain ? `<form class="anat-try"><label>Hashtag channel <input name="channel" placeholder="#name" maxlength="32" autocomplete="off" value="${esc(c.hashtagTried ? `#${c.hashtagTried}` : "")}"></label> <button class="btn">Try</button>
+      <span class="muted small">Its key is worked out from the name; the MAC says whether it's the right one.</span></form>` : "";
+    html += layer(++n, c.plain ? `Decrypted (${c.channel} channel)` : "Encryption", anatPill(c.plain ? "received" : "unknown"),
+      c.plain ? `${esc(c.scheme)}. The ${esc(c.key)} is known to anyone, so Lorakeet reads it as any radio on the channel would. The MAC checks out, so this is the message as it was sent.`
+        : esc(c.note || c.scheme),
+      c.plain ? `<div class="anat-split">${hexdump(c.plain.hex, c.plain.fields)}${fieldTable(c.plain.fields)}</div>${bitsList(c.plain.fields, c.plain.hex)}` : form);
+  }
+
+  const h = a.hash;
+  html += layer(++n, "Packet hash", anatPill("received"),
+    `The firmware's fingerprint of a packet: the first 8 bytes of the SHA-256 of the payload type${h.trace ? ", the path length (only a trace's)," : ""} and the payload. The path isn't in it, so every repeat of one packet, by whatever route, has the same hash: that's how Lorakeet recognises one packet heard many times.`,
+    `<p class="mono small" style="word-break:break-all">SHA-256(${esc(h.inputHex.slice(0, 2))} ${esc(h.inputHex.slice(2, 66))}${h.inputHex.length > 66 ? "…" : ""}) → <b>${esc(h.value)}</b>…</p>`);
+
+  html += layer(++n, `Every hearing (${a.hearings.length})`, anatPill("received"),
+    "MeshCore floods: repeaters pass a packet on, so one packet often arrives several times, by different paths. Each row is one reception, at the station that logged it.",
+    a.hearings.length ? `<table class="anat-fields"><thead><tr><th>When</th><th>Station</th><th>Path</th><th class="num">SNR</th><th class="num">RSSI</th></tr></thead><tbody>${a.hearings.map((x) => `<tr>
+      <td>${esc(new Date(x.ts * 1000).toLocaleTimeString())}</td><td class="mono">${esc(x.station || "")}</td>
+      <td>${x.path.length ? x.path.map((p) => `<span class="mono" title="${esc(p.who.map((w) => w.name).join(", ") || "not a radio we know")}">${esc(p.prefix)}${p.who.length === 1 ? ` <span class="muted">${esc(p.who[0].name)}</span>` : ""}</span>`).join(" › ") : `<span class="muted">${x.hops ? `${x.hops} hops` : "straight from the sender"}</span>`}</td>
+      <td class="num">${x.snr ?? "—"}</td><td class="num">${x.rssi ?? "—"}</td></tr>`).join("")}</tbody></table>` : '<p class="muted">No reception rows for it.</p>');
+
+  if (a.notes.length) html += `<p class="muted small">${a.notes.map(esc).join(" ")}</p>`;
+  return `<div class="anat-wrap"><div class="anat">${html}</div>
+    <aside class="anat-jsonpane" aria-label="Logged JSON">
+      <div class="anat-jh"><b>Logged JSON</b><span>what Lorakeet stored for it. Hover a line to find its bytes.</span></div>
       <div class="anat-jtree">${jsonLines(a.json)}</div>
     </aside></div>`;
 }

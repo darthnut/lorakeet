@@ -13,7 +13,7 @@ MESHTASTIC_RE = re.compile(r"![0-9a-f]{8}")
 MESHCORE_RE = re.compile(r"mc:[0-9a-f]{12}")
 BROADCAST = ("^all", "!ffffffff")
 
-ACCEPTED = (MESHTASTIC_RE,)  # add MESHCORE_RE when the MeshCore link lands (step 4)
+ACCEPTED = (MESHTASTIC_RE, MESHCORE_RE)
 
 
 def is_radio_id(s):

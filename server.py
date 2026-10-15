@@ -35,7 +35,7 @@ import remote as remote_mod
 import runtime
 from station import HealthWatch, _pi_health, _uptime_s, station_overrides, station_report
 from storage import Storage
-from store import DebugLog, Store, scrub_logged_secrets
+from store import DebugLog, Store, scrub_logged_secrets, StationStore
 import sync as sync_mod
 from web import bind_server, make_handler
 
@@ -174,7 +174,22 @@ def main():
     debug_log = DebugLog(runtime.DATA_DIR / "debug.db")
     runtime.EXIT_HOOKS.append(debug_log.flush)
     runtime.follow_base()  # [base] id: the base station's current number if firmware 2.8 renumbered it
-    mesh = Mesh(store, args.port, debug_log, host=args.host, tcp_port=CFG["radio"]["tcp_port"])
+    if CFG["radio"]["protocol"] == "meshcore":   # a MeshCore companion radio (docs/MESHCORE.md)
+        from meshcore_link import MeshCoreLink
+        mesh = MeshCoreLink(store, args.port, debug_log)
+    else:
+        mesh = Mesh(store, args.port, debug_log, host=args.host, tcp_port=CFG["radio"]["tcp_port"])
+    # [[radios]]: more radios in this one Lorakeet, each its own station (MESHCORE.md step 6). They log and sync; the
+    # pages' live map and Radio page are the main radio's.
+    for x in CFG["radios"] if not runtime.DEMO else []:
+        if x.get("protocol") == "meshcore":
+            from meshcore_link import MeshCoreLink
+            link = MeshCoreLink(StationStore(store), x["port"], debug_log)
+        else:
+            link = Mesh(StationStore(store), x["port"], debug_log)
+        link.station_name = x.get("name") or ""
+        mesh.extras.append(link)
+    mesh.claimed_ports = {x["port"] for x in CFG["radios"]}   # auto-detect never takes one of theirs
     if runtime.DEMO:
         mesh.local_id = runtime.DEMO
     debug_log.on_batch = lambda rows: mesh.broadcast("debug", rows)
@@ -204,7 +219,10 @@ def main():
             bind = "0.0.0.0"
         elif CFG["sync"]["mode"] == "collector":
             syncer = sync_mod.Collector(store, CFG["sync"]["hub_url"], CFG["sync"]["token"], CFG["sync"]["interval_s"],
-                                        report=lambda: station_report(mesh))
+                                        report=lambda: station_report(mesh),
+                                        extra=[{"station": lambda lk=lk: lk.local_id, "token": x.get("sync_token", ""),
+                                                "report": lambda lk=lk: station_report(lk, name=lk.station_name)}
+                                               for lk, x in zip(mesh.extras, CFG["radios"])])
         login = login_mod.Login(runtime.DATA_DIR / "login.json")
         peering = PeerManager(store, mesh, pairing.install_id(runtime.DATA_DIR))
         srv = bind_server((bind, args.http), make_handler(mesh, store, storage, alert_engine, syncer, login, peering,
@@ -228,6 +246,9 @@ def main():
         srv.serve_forever()
         return
     threading.Thread(target=mesh.run, daemon=True, name="radio").start()
+    for i, link in enumerate(mesh.extras, 2):
+        threading.Thread(target=link.run, daemon=True, name=f"radio{i}").start()
+        log.info("also logging a %s radio on %s", link.PROTOCOL, link.port_hint)
     if sys.platform.startswith("linux"):
         HealthWatch(mesh.event).start()
     storage.start()
