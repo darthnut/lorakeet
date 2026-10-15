@@ -73,6 +73,32 @@ const circleLayer = L.layerGroup().addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 $("showLinks").addEventListener("change", (e) => (e.target.checked ? linkLayer.addTo(map) : map.removeLayer(linkLayer)));
 $("showStale").addEventListener("change", renderMarkers);
+// Meshtastic and MeshCore radios side by side (a hub, or a station that changed radios): which to show. Defaults to
+// the station's own kind on a MeshCore station and both on a Meshtastic one; the switch only appears with both.
+const protoOf = (n) => (n && n.protocol) || "meshtastic";
+function protoMode() {
+  let saved = null;
+  try { saved = localStorage.getItem("meshdash.proto"); } catch { /* storage blocked */ }
+  return saved || (S.status && S.status.protocol === "meshcore" ? "meshcore" : "both");
+}
+const shown = (n) => n && (protoMode() === "both" || protoOf(n) === protoMode() || n.isLocal);
+// A packet's kind: its sender's, else its id's; with no sender, MC_ ports are MeshCore. "" = our own radio, always shown.
+const pktProto = (p) => (p.from_id && p.from_id === S.status?.localId ? "" : S.nodes.get(p.from_id)?.protocol
+  || (p.from_id ? (String(p.from_id).startsWith("mc:") ? "meshcore" : "meshtastic") : String(p.portnum || "").startsWith("MC_") ? "meshcore" : "meshtastic"));
+function filterFeed(li) {
+  const m = protoMode();
+  for (const x of li ? [li] : $("feed").children) if (x.dataset.proto != null) x.hidden = !!x.dataset.proto && m !== "both" && x.dataset.proto !== m;
+}
+function renderProto() {
+  const kinds = new Set([...S.nodes.values()].map(protoOf));
+  $("proto").hidden = kinds.size < 2 && protoMode() === "both";
+  for (const b of $("proto").children) b.classList.toggle("on", b.dataset.p === protoMode());
+}
+$("proto").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-p]"); if (!b) return;
+  try { localStorage.setItem("meshdash.proto", b.dataset.p); } catch { /* storage blocked */ }
+  renderProto(); renderMarkers(); renderList(); renderStats(); filterFeed();
+});
 $("showEst").addEventListener("change", renderMarkers);
 S.est = new Map();
 async function loadEstimates() {
@@ -110,7 +136,7 @@ function renderMarkers() {
     let p = posOf(n);
     const e = !p && showEst && !n.isLocal ? S.est.get(n.id) : null;  // inferred, never reported
     if (e) p = [e.lat, e.lon];
-    if (!p || (!showStale && status(n) === "stale" && !n.isBase && !n.isLocal)) continue;
+    if (!p || !shown(n) || (!showStale && status(n) === "stale" && !n.isBase && !n.isLocal)) continue;
     if (n.isLocal && n.lat == null) continue; // drawn under the base marker; avoid a duplicate dot
     seen.add(n.id);
     const icon = L.divIcon({ className: "", html: markerHtml(n, !!e), iconSize: [0, 0] });
@@ -139,13 +165,14 @@ function renderMarkers() {
   for (const [id, m] of S.markers) if (!seen.has(id)) { map.removeLayer(m); S.markers.delete(id); }
   for (const [id, c] of S.circles) if (!seen.has(id)) { circleLayer.removeLayer(c); S.circles.delete(id); }
 
-  const missing = [...S.nodes.values()].filter((n) => !posOf(n)).length;
-  const estN = showEst ? [...S.nodes.values()].filter((n) => !posOf(n) && S.est.has(n.id)).length : 0;
+  const vis = [...S.nodes.values()].filter(shown);
+  const missing = vis.filter((n) => !posOf(n)).length;
+  const estN = showEst ? vis.filter((n) => !posOf(n) && S.est.has(n.id)).length : 0;
   $("nopos").hidden = missing === 0;
-  $("nopos").textContent = `${missing} of ${S.nodes.size} nodes haven't shared a position yet` + (estN ? ` · ${estN} shown at estimated positions (dashed)` : "");
+  $("nopos").textContent = `${missing} of ${vis.length} nodes haven't shared a position yet` + (estN ? ` · ${estN} shown at estimated positions (dashed)` : "");
 
   if (!S.fitted) {
-    const pts = [...S.nodes.values()].map(posOf).filter(Boolean);
+    const pts = vis.map(posOf).filter(Boolean);
     if (pts.length > 1) { map.fitBounds(pts, { padding: [60, 60], maxZoom: 13 }); S.fitted = true; }
     else if (pts.length === 1) { map.setView(pts[0], 12); S.fitted = true; }
   }
@@ -159,6 +186,7 @@ function renderLinks() {
   for (const l of S.links) {
     const key = [l.a, l.b].sort().join("|");
     if (done.has(key)) continue;
+    if (!shown(S.nodes.get(l.a)) || !shown(S.nodes.get(l.b))) continue;
     const a = posOf(S.nodes.get(l.a)), b = posOf(S.nodes.get(l.b));
     if (!a || !b || (a[0] === b[0] && a[1] === b[1])) continue;
     done.add(key);
@@ -229,7 +257,7 @@ function lineChart(el, rows, key, { title, unit = "", digits = 1, height = 90, y
 function tile(k, v, unit = "") { return `<div class="tile"><div class="k">${k}</div><div class="v">${v}${unit && v !== "—" ? `<small>${unit}</small>` : ""}</div></div>`; }
 
 function renderStats() {
-  const all = [...S.nodes.values()].filter((n) => !n.isLocal);
+  const all = [...S.nodes.values()].filter((n) => !n.isLocal && shown(n));
   const act = all.filter((n) => status(n) === "active").length;
   const day = all.filter((n) => status(n) !== "stale").length;
   const pos = all.filter((n) => n.lat != null).length;
@@ -246,12 +274,15 @@ function renderConn() {
 
 function renderList() {
   const q = $("search").value.trim().toLowerCase();
+  renderProto();
   const rows = [...S.nodes.values()]
+    .filter(shown)
     .filter((n) => !q || `${n.longName} ${n.shortName} ${n.id} ${n.hwModel}`.toLowerCase().includes(q))
     .sort((a, b) => (b.isBase - a.isBase) || (b.isLocal - a.isLocal) || ((b.lastHeard || 0) - (a.lastHeard || 0)));
   if (!rows.length) { $("nodelist").innerHTML = `<li class="emptystate" style="display:block">${q ? "No matches" : "No nodes heard yet"}</li>`; return; }
   $("nodelist").innerHTML = rows.map((n) => {
-    const tags = [n.isBase ? '<span class="tag base">base</span>' : "", n.isLocal ? '<span class="tag">this radio</span>' : "",
+    const tags = [n.protocol === "meshcore" ? '<span class="tag mc" title="A MeshCore radio">MC</span>' : "",
+      n.isBase ? '<span class="tag base">base</span>' : "", n.isLocal ? '<span class="tag">this radio</span>' : "",
       n.isStation ? '<span class="tag">station</span>' : "", n.remote && !n.heardHere ? `<span class="tag" title="Heard only by the listening station ${esc(n.remote.stationName)}">via ${esc(n.remote.stationName)}</span>` : "",
       n.battery != null && n.battery <= 20 ? '<span class="tag low">⚠ low batt</span>' : "", keyBadge(n.keyFlag), v28Tag(n.v28), n.lat == null && !n.isLocal ? '<span class="tag">no position</span>' : ""].join("");
     const sig = n.isLocal ? "" : n.hopsAway === 0 ? `SNR ${fmt(n.snr, 1)} dB` : n.hopsAway != null ? `${n.hopsAway} hop${n.hopsAway === 1 ? "" : "s"}` : "";
@@ -264,10 +295,12 @@ $("nodelist").addEventListener("click", (e) => { const li = e.target.closest("li
 $("search").addEventListener("input", renderList);
 
 // Packets carry only the last byte of the relaying node's number; resolve it when unambiguous.
+// Meshtastic radios only: a MeshCore id has no relay byte (radioid.py relay_byte)
+const isMeshtasticId = (s) => /^![0-9a-f]{8}$/.test(String(s ?? ""));
 function relayName(b) {
   const hex = b.toString(16).padStart(2, "0");
-  if (S.status.baseId && S.status.baseId.endsWith(hex)) return `${S.status.baseName} (base)`;
-  const m = [...S.nodes.values()].filter((n) => n.id.endsWith(hex) && !n.isLocal);
+  if (isMeshtasticId(S.status.baseId) && S.status.baseId.endsWith(hex)) return `${S.status.baseName} (base)`;
+  const m = [...S.nodes.values()].filter((n) => isMeshtasticId(n.id) && n.id.endsWith(hex) && !n.isLocal);
   return m.length === 1 ? m[0].shortName : `…${hex}`;
 }
 // Which other listening stations heard a packet (sync hub). Ours isn't badged; a packet only another
@@ -281,12 +314,16 @@ function stationBadges(p) {
   return others.map((s) => `<span class="arr st" data-st="${esc(s)}" title="${only ? "Heard only by" : "Also heard by"} the listening station ${esc(names[s] || s)}">${only ? "heard by" : "+"} ${esc(names[s] || s)}</span>`).join("");
 }
 
+// Dedupe key across stations; a pkt_id past 2^53 has lost precision in JSON.parse, so fall back to the row
+const pktKey = (p) => (p.pkt_id == null ? null : Number.isSafeInteger(Number(p.pkt_id)) ? `${p.from_id}:${p.pkt_id}` : p.rowid != null ? `row:${p.rowid}` : null);
 function feedItem(p, flash) {
   const sig = [p.hops != null ? `${p.hops} hop${p.hops === 1 ? "" : "s"}` : "", p.snr != null ? `SNR ${fmt(p.snr, 1)}` : "", p.rssi != null ? `RSSI ${p.rssi}` : "", p.hops > 0 && p.relay ? `via ${relayName(p.relay)}` : "", p.via_mqtt ? "MQTT" : "", p.pki ? "🔒 PKI" : ""].filter(Boolean).join(" · ");
-  const name = p.name || S.nodes.get(p.from_id)?.longName || p.from_id;
+  const mc = String(p.portnum || "").startsWith("MC_");
+  const name = p.name || S.nodes.get(p.from_id)?.longName || p.from_id || (mc ? "MeshCore radio" : "unknown sender");
+  const key = pktKey(p), row = p.rowid != null;
   const local = p.arrival === "local"
     ? '<span class="arr" title="The radio reported this to the dashboard itself; it never went over the air (no transport, no signal reading).">local · not over the air</span>' : "";
-  return `<li class="${flash ? "flash" : ""} ${local ? "local" : ""}" data-row="${p.rowid ?? ""}" data-key="${p.pkt_id != null ? esc(`${p.from_id}:${p.pkt_id}`) : ""}" title="Click for the full packet"><div class="row1"><span class="who" data-id="${esc(p.from_id)}">${esc(name)}${keyBadge(S.nodes.get(p.from_id)?.keyFlag, { short: true })}${local}${stationBadges(p)}</span><span class="when">${clock(p.ts)}</span></div>
+  return `<li class="${flash ? "flash" : ""} ${local ? "local" : ""}"${row ? ` data-row="${esc(p.rowid)}" title="Click for the full packet"` : ""} data-proto="${esc(pktProto(p))}" data-key="${key ? esc(key) : ""}"><div class="row1"><span class="who"${p.from_id ? ` data-id="${esc(p.from_id)}"` : ""}>${esc(name)}${keyBadge(S.nodes.get(p.from_id)?.keyFlag, { short: true })}${local}${stationBadges(p)}</span><span class="when">${clock(p.ts)}</span></div>
     <div class="row2"><span class="port">${esc((p.portnum || "").replace(/_APP$/, ""))}</span><span>${esc(sig)}</span></div>
     ${p.summary ? `<div class="row2">${esc(p.summary)}</div>` : ""}</li>`;
 }
@@ -303,7 +340,7 @@ ${esc(JSON.stringify(raw, null, 2))}</pre>`);
 for (const id of ["feed", "dFeed"]) {
   document.addEventListener("click", (e) => {
     const list = e.target.closest(`#${id}`); if (!list) return;
-    const w = e.target.closest(".who"); if (w) { selectNode(w.dataset.id, true); return; }
+    const w = e.target.closest(".who[data-id]"); if (w) { selectNode(w.dataset.id, true); return; }
     if (e.target.closest("pre.raw")) return; // let people select text in the JSON
     const li = e.target.closest("li[data-row]"); if (li) toggleRaw(li);
   });
@@ -392,7 +429,7 @@ function renderChat() {
     const mine = m.outgoing && (!m.station || !S.status.localId || m.station === S.status.localId);
     const [st, cls] = mine ? statusLabel(m.status) : ["", ""];
     return `<li class="${mine ? "out" : ""}">
-      <div class="meta">${mine ? "You" : `<b data-id="${esc(m.from_id)}">${esc(m.name || nodeName(m.from_id))}</b>`} · ${when}</div>
+      <div class="meta">${mine ? "You" : m.from_id ? `<b data-id="${esc(m.from_id)}">${esc(m.name || nodeName(m.from_id))}</b>` : `<span style="color:var(--text-muted)">${m.name ? esc(m.name) : "MeshCore channel (name in text)"}</span>`} · ${when}</div>
       ${m.encrypted
         ? `<div class="bubble locked">🔒 Couldn't decrypt this direct message. This radio doesn't have the sender's public key yet. Keys are exchanged automatically after a failed DM, so a resend usually works.</div>`
         : `<div class="bubble">${esc(m.text)}</div>`}${st ? `<div class="st ${cls}">${esc(st)}</div>` : ""}</li>`;
@@ -418,10 +455,12 @@ $("convs").addEventListener("click", (e) => {
 $("chat").addEventListener("click", (e) => { const b = e.target.closest("b[data-id]"); if (b) selectNode(b.dataset.id, true); });
 
 function updateCount() {
-  const n = bytes($("msgText").value);
+  const n = bytes($("msgText").value), mcSt = S.status.protocol === "meshcore";
+  $("msgText").disabled = mcSt;
+  $("msgText").placeholder = mcSt ? "Sending from a MeshCore station isn't available yet" : "Write a message…";
   $("msgCount").textContent = `${n} / ${MAX_BYTES}`;
   $("msgCount").classList.toggle("over", n > MAX_BYTES);
-  $("sendBtn").disabled = !$("msgText").value.trim() || n > MAX_BYTES || !S.status.connected;
+  $("sendBtn").disabled = !$("msgText").value.trim() || n > MAX_BYTES || !S.status.connected || mcSt;
 }
 $("msgText").addEventListener("input", updateCount);
 $("msgText").addEventListener("keydown", (e) => {
@@ -781,12 +820,15 @@ async function renderDetail(id) {
   if (!n || S.selected !== id) return;
   const el = $("panel-detail");
   const prec = precisionMeters(n.precisionBits);
+  // MeshCore radios lack Meshtastic's role/ch. util/airtime fields, and we can't message or traceroute them (or anyone, from a MeshCore station)
+  const mc = n.protocol === "meshcore", act = !n.isLocal && !mc && S.status.protocol !== "meshcore";
+  const hw = mc && (!n.hwModel || /^unknown$/i.test(n.hwModel)) ? "" : prettyHw(n.hwModel);
   el.innerHTML = `<button class="back" id="back">← All nodes</button>
     <h2>${esc(n.longName)} ${n.isBase ? '<span class="tag base">base</span>' : ""}${keyBadge(n.keyFlag)} ${v28Tag(n.v28)}</h2>
-    <div class="hw">${esc([n.shortName, prettyHw(n.hwModel), prettyRole(n.role)].filter(Boolean).join(" · "))} · <span class="num">${esc(n.id)}</span></div>
+    <div class="hw">${esc([n.shortName, hw, mc && !n.role ? "" : prettyRole(n.role)].filter(Boolean).join(" · "))} · <span class="num">${esc(n.id)}</span></div>
     ${n.keyFlag ? `<p class="kf-note">⚠ ${esc(keyFlagText(n.keyFlag))}${n.keyFlag.with.length ? ` Same key: ${n.keyFlag.with.map((o, i) => esc(n.keyFlag.withNames?.[i] || S.nodes.get(o)?.longName || o)).join(", ")}.` : ""}</p>` : ""}
-    ${n.isLocal ? "" : `<div class="actions"><button class="btn" id="dMsg">Message</button><button class="btn" id="dTrace">Traceroute</button><button class="star ${window.meshWatch?.isWatched(n.id) ? "on" : ""}" id="dStar" title="Watch: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(n.id) ? "★" : "☆"}</button><a class="btn" href="/analytics.html#node=${encodeURIComponent(n.id)}" style="text-decoration:none;color:inherit">Analytics</a><span class="err" id="dErr"></span></div>`}
-    <div class="tiles">${tile("Battery", n.battery == null ? "—" : n.battery > 100 ? "Ext" : fmt(n.battery, 0), n.battery > 100 ? "" : "%")}${tile("Voltage", fmt(n.voltage, 2), "V")}${tile("Ch. util", fmt(n.chUtil, 1), "%")}</div>
+    ${n.isLocal ? "" : `<div class="actions">${act ? '<button class="btn" id="dMsg">Message</button><button class="btn" id="dTrace">Traceroute</button>' : ""}<button class="star ${window.meshWatch?.isWatched(n.id) ? "on" : ""}" id="dStar" title="Watch: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(n.id) ? "★" : "☆"}</button><a class="btn" href="/analytics.html#node=${encodeURIComponent(n.id)}" style="text-decoration:none;color:inherit">Analytics</a><span class="err" id="dErr"></span></div>`}
+    <div class="tiles">${tile("Battery", n.battery == null ? "—" : n.battery > 100 ? "Ext" : fmt(n.battery, 0), n.battery > 100 ? "" : "%")}${tile("Voltage", fmt(n.voltage, 2), "V")}${mc ? "" : tile("Ch. util", fmt(n.chUtil, 1), "%")}</div>
     <dl class="kv">
       <dt>Last heard</dt><dd>${n.isLocal ? "connected by USB" : ago(n.lastHeard)}</dd>
       ${n.positionFromStation ? '<dt>Position</dt><dd>listening station\'s configured antenna location</dd>' : ""}
@@ -794,26 +836,25 @@ async function renderDetail(id) {
       ${n.remote ? `<dt>${n.heardHere ? "Also heard by" : "Heard only by"}</dt><dd>${esc(n.remote.stationName)}: ${ago(n.remote.ts)}${n.remote.hops === 0 ? ", direct" : n.remote.hops != null ? `, ${esc(n.remote.hops)} hop${n.remote.hops === 1 ? "" : "s"}` : ""}${n.remote.snr != null ? ` · SNR ${fmt(n.remote.snr, 2)} dB` : ""}${n.remote.rssi != null ? ` · RSSI ${esc(n.remote.rssi)} dBm` : ""}</dd>` : ""}
       <dt>${n.hopsAway ? "Last-hop signal" : "Signal"}</dt><dd>${n.snr != null ? `SNR ${fmt(n.snr, 2)} dB` : "—"}${n.rssi != null ? ` · RSSI ${esc(n.rssi)} dBm` : ""}</dd>
       <dt>Position</dt><dd>${n.lat == null && S.est.get(n.id) ? `estimated ${prov("inferred")} ${S.est.get(n.id).lat.toFixed(4)}, ${S.est.get(n.id).lon.toFixed(4)} ±${S.est.get(n.id).radiusKm.toFixed(1)} km<br><span style="color:var(--text-muted)">${esc(S.est.get(n.id).method)}; never reported its own</span>` : n.lat != null ? `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}${n.alt != null ? ` · ${esc(n.alt)} m` : ""}${prec ? `<br><span style="color:var(--text-muted)">±${prec >= 1000 ? (prec / 2000).toFixed(1) + " km" : Math.round(prec / 2) + " m"} (shared at reduced precision)</span>` : ""}` : "not shared"}</dd>
-      <dt>Airtime TX</dt><dd>${fmt(n.airUtil, 2, "%")}</dd>
+      ${mc ? "" : `<dt>Airtime TX</dt><dd>${fmt(n.airUtil, 2, "%")}</dd>`}
       <dt>Uptime</dt><dd>${n.uptime != null ? `${(n.uptime / 3600).toFixed(1)} h` : "—"}</dd>
       ${n.temperature != null ? `<dt>Temperature</dt><dd>${fmt(n.temperature, 1, " °C")}</dd>` : ""}
       <dt>Packets</dt><dd>${n.rxCount} heard this session</dd>
     </dl>
-    ${n.isLocal ? "" : '<h3>Route</h3><div class="route" id="dRoute"><span class="when">No traceroute yet. It sends one small packet and shows the path both ways.</span></div>'}
+    ${!act ? "" : '<h3>Route</h3><div class="route" id="dRoute"><span class="when">No traceroute yet. It sends one small packet and shows the path both ways.</span></div>'}
     <h3>Last 72 hours</h3>
-    <div class="chart" id="dVolt"></div><div class="chart" id="dBatt"></div><div class="chart" id="dUtil"></div>
+    <div class="chart" id="dVolt"></div><div class="chart" id="dBatt"></div>${mc ? "" : '<div class="chart" id="dUtil"></div>'}
     <h3>Recent packets</h3><ul class="feed" id="dFeed"></ul>`;
   $("back").onclick = () => { S.selected = null; renderMarkers(); setTab("nodes"); };
   if (!n.isLocal) {
-    $("dMsg").onclick = () => openConversation(id);
-    $("dTrace").onclick = () => runTraceroute(id);
+    if (act) { $("dMsg").onclick = () => openConversation(id); $("dTrace").onclick = () => runTraceroute(id); }
     $("dStar").onclick = async (ev) => { const on = await window.meshWatch.toggle(id); ev.target.classList.toggle("on", on); ev.target.textContent = on ? "★" : "☆"; };
-    const tr = S.traces.get(id) || (await fetch(`/api/traceroutes?node=${encodeURIComponent(id)}`).then((r) => r.json()))[0];
+    const tr = act && (S.traces.get(id) || (await fetch(`/api/traceroutes?node=${encodeURIComponent(id)}`).then((r) => r.json()))[0]);
     if (tr && S.selected === id) { S.traces.set(id, tr); renderRoute(tr); }
   }
   lineChart($("dVolt"), res.telemetry, "voltage", { title: "Voltage (V)", unit: " V", digits: 2 });
   lineChart($("dBatt"), res.telemetry, "battery", { title: "Battery (%)", unit: "%", digits: 0, yMin: 0, yMax: 100 });
-  lineChart($("dUtil"), res.telemetry, "ch_util", { title: "Channel utilization (%)", unit: "%", digits: 1, yMin: 0 });
+  if (!mc) lineChart($("dUtil"), res.telemetry, "ch_util", { title: "Channel utilization (%)", unit: "%", digits: 1, yMin: 0 });
   $("dFeed").innerHTML = res.packets.length ? res.packets.map((p) => feedItem(p)).join("") : '<li class="emptystate">Nothing heard from this node since the dashboard started</li>';
 }
 
@@ -846,6 +887,7 @@ async function load() {
   S.links = await fetch("/api/links?hours=24").then((r) => r.json());
   const pk = await fetch("/api/packets?limit=200").then((r) => r.json());
   $("feed").innerHTML = pk.length ? pk.map((p) => feedItem(p)).join("") : '<li class="emptystate">Waiting for packets…</li>';
+  filterFeed();
   S.msgs = (await fetch("/api/messages").then((r) => r.json())).reverse();
   loadChannels();
   renderMessages();
@@ -865,7 +907,7 @@ function connectEvents() {
     const feed = $("feed");
     feed.querySelector(".emptystate")?.remove();
     // already in the feed from another station: add this station to it rather than listing it twice
-    const key = p.pkt_id != null ? `${p.from_id}:${p.pkt_id}` : null;
+    const key = pktKey(p);
     const same = key && feed.querySelector(`li[data-key="${CSS.escape(key)}"]`);
     if (same) {
       if (p.station && !same.querySelector(`.st[data-st="${CSS.escape(p.station)}"]`) && p.station !== S.status?.localId) {
@@ -875,10 +917,10 @@ function connectEvents() {
       return;
     }
     feed.insertAdjacentHTML("afterbegin", feedItem(p, true));
+    filterFeed(feed.firstElementChild);
     while (feed.children.length > 300) feed.lastElementChild.remove();
     if (p.hops === 0 || ["NEIGHBORINFO_APP", "TRACEROUTE_APP"].includes(p.portnum)) refreshLinks();
-    setTimeout(() => ping(p.from_id), 50);
-    if (S.selected === p.from_id) renderDetail(p.from_id);
+    if (p.from_id) { setTimeout(() => ping(p.from_id), 50); if (S.selected === p.from_id) renderDetail(p.from_id); }
   });
   es.addEventListener("message", (e) => {
     const m = JSON.parse(e.data);

@@ -378,6 +378,8 @@ def _event(r, portnum, resolve, local, kind, row=None):
         e["relayHow"] = how
     if r["snr"] is not None:
         e["snr"] = r["snr"]
+    if portnum and portnum.startswith("MC_"):
+        e["portnum"] = portnum   # a MeshCore packet (often no sender): the replay log mustn't read it as Meshtastic
     if row is not None:
         e["row"] = row
     return e

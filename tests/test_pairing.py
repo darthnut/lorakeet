@@ -110,6 +110,12 @@ def test_pair_test_send_claim_and_revoke(hub):
     assert row["pairing"]["label"] == "Garage Pi" and row["name"] == "Garage"
     req("POST", "/api/hub/station", {"action": "rename", "station": "!a0000001", "name": "Workshop"})
     assert next(s for s in req("GET", "/api/hub")[1]["stations"] if s["id"] == "!a0000001")["name"] == "Workshop"
+    # renaming the pairing changes only its label: the same code keeps working
+    req("POST", "/api/hub/station", {"action": "relabel", "pairing": row["pairing"]["id"], "label": " Workshop Pi "})
+    assert next(s for s in req("GET", "/api/hub")[1]["stations"] if s["id"] == "!a0000001")["pairing"]["label"] == "Workshop Pi"
+    assert _report(req, c["token"], "!a0000001") == (200, {"ok": True})
+    st, d = req("POST", "/api/hub/station", {"action": "relabel", "pairing": row["pairing"]["id"], "label": "  "})
+    assert st == 400 and "name" in d["error"]
     req("POST", "/api/hub/station", {"action": "revoke", "pairing": row["pairing"]["id"]})
     assert _report(req, c["token"], "!a0000001")[0] == 401
     bad = pairing.hello(f"http://{host}", c["token"], "!a0000001")

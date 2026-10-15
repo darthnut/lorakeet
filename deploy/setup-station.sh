@@ -23,6 +23,9 @@ echo "== Python environment"
 [ -x venv/bin/python ] || python3 -m venv venv
 venv/bin/pip install -q --upgrade pip
 venv/bin/pip install -q --prefer-binary -r requirements.txt
+# a MeshCore radio (lorakeet.toml protocol = "meshcore", main or [[radios]]) needs the optional meshcore package;
+# re-run after setting one up (deploy/update-station.sh adds it too)
+if grep -Eqs '^[[:space:]]*protocol[[:space:]]*=[[:space:]]*"meshcore"' lorakeet.toml; then venv/bin/pip install -q --prefer-binary -r requirements-meshcore.txt; fi
 
 echo "== serial access"
 id -nG | grep -qw dialout || sudo usermod -aG dialout "$USER"

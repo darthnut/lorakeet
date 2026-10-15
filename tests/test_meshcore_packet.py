@@ -67,3 +67,16 @@ def test_path_hops_match_radios_by_prefix():
     assert radioid.path_prefix_matches(mc, "a1") and radioid.path_prefix_matches(mc, "A1B2C3")
     assert not radioid.path_prefix_matches(mc, "b2") and not radioid.path_prefix_matches(mc, "a")
     assert not radioid.path_prefix_matches(mc, "a1b2c30000") and not radioid.path_prefix_matches("!a0000001", "a0")
+
+
+def test_adverts_name_type_and_place():
+    from meshcore_frames import KEY_A, SEATTLE, advert_payload, packet
+    a = mp.parse_advert(advert_payload(KEY_A))
+    assert a["publicKey"] == KEY_A.hex() and a["type"] == "repeater" and a["name"] == "Hilltop Rpt"
+    assert (round(a["lat"], 4), round(a["lon"], 4)) == SEATTLE and a["timestamp"] == 1791000000
+    bare = mp.parse_advert(advert_payload(KEY_A, kind=1, name=None, where=None))
+    assert bare["type"] == "chat" and bare["name"] is None and bare["lat"] is None
+    assert mp.parse_advert(advert_payload(KEY_A, where=(0, 0)))["lat"] is None   # 0,0 = no position
+    assert mp.parse_advert(b"\x01" * 50) is None
+    p = mp.parse(packet(4, advert_payload(KEY_A), path=["a0"]))
+    assert p["payloadName"] == "ADVERT" and p["hops"] == ["a0"]

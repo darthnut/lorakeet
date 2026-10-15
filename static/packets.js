@@ -1,5 +1,5 @@
 "use strict";
-/* Packet browser: filtered, paged view over packets / rx_hops / tx_log, with CSV export. */
+/* Packet browser: filtered, paged view over packets / rx_hops / tx_log / mc_rx, with CSV export. */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PAGE = 200;
@@ -8,11 +8,16 @@ const NOTES = {
   packets: "Packets the radio decoded and handed to the dashboard: the first copy of each, mostly broadcasts and traffic to us. Click a row for its anatomy: the bytes on air, the encryption and every decoded field.",
   rx_hops: "Every over-the-air reception, duplicates included, from the radio's debug log: full header (incl. recipient) and our signal reading, no contents.",
   tx_log: "Every transmission by our own radio, from its debug log.",
+  mc_rx: "Every reception by a MeshCore station, duplicates included: its route, the repeaters it came through (each a short prefix of its public key, so a 1-byte one can match several radios), our signal reading, and the packet hash that's the same for every copy of one transmission.",
 };
 const LABEL = { ts: "Time", from_id: "From", to_id: "To", portnum: "Type", channel: "Ch", hops: "Hops", hop_start: "Hop start",
   hop_limit: "Hop lim", snr: "SNR", rssi: "RSSI", relay: "Relay", next_hop: "Next hop", via_mqtt: "MQTT", pki: "PKI",
   pkt_id: "Packet ID", summary: "Summary", directed: "Addressed", want_ack: "Want ACK", length: "Len", encrypted: "Enc",
-  transport: "Transport", priority: "Prio", station: "Station" };
+  transport: "Transport", priority: "Prio", station: "Station", payload_name: "Payload", route: "Route", path: "Path",
+  packet_hash: "Packet hash", transport1: "Region 1", transport2: "Region 2", version: "Ver" };
+// a MeshCore station's packets are typed MC_<payload>: shown as the payload, tagged with the mesh
+const isMC = (p) => String(p || "").startsWith("MC_");
+const portLabel = (p) => (isMC(p) ? `MeshCore: ${p.slice(3)}` : p);
 const hex = (v, w = 2) => (v == null ? "" : `0x${Number(v).toString(16).padStart(w, "0")}`);
 
 function filters() {
@@ -31,8 +36,9 @@ async function load() {
   P.data = r;
   if (!P.facets || P.facets.source !== P.source) {
     P.facets = { source: P.source, ...r.facets };
-    const port = $("filters").portnum, ch = $("filters").channel;
-    port.innerHTML = '<option value="">Any</option>' + (r.facets.portnum || []).map((p) => `<option>${esc(p)}</option>`).join("");
+    const port = $("filters").portnum, ch = $("filters").channel, pay = $("filters").payload;
+    pay.innerHTML = '<option value="">Any</option>' + (r.facets.payload || []).map((p) => `<option>${esc(p)}</option>`).join("");
+    port.innerHTML = '<option value="">Any</option>' + (r.facets.portnum || []).map((p) => `<option value="${esc(p)}">${esc(portLabel(p))}</option>`).join("");
     ch.innerHTML = '<option value="">Any</option>' + (r.facets.channel || []).map((c) => `<option value="${esc(c)}">${esc(P.source === "packets" ? c : hex(c))}</option>`).join("");
   }
   render();
@@ -48,6 +54,8 @@ function cell(col, row) {
     if (row.arrival && row.arrival !== "lora") return `${t}<span class="arr">via ${esc(row.arrival.toUpperCase())}</span>`;
     return t;
   }
+  if (col === "portnum" && isMC(v)) return `${esc(v.slice(3))}<span class="tag mc" title="Heard on a MeshCore mesh">MeshCore</span>`;
+  if (col === "from_id" && v == null && isMC(row.portnum)) return '<span class="muted" title="Most MeshCore packets carry only a 1-byte hash of the sender, or nothing">not named</span>';
   if (col === "from_id" || col === "to_id") {
     const name = row[col.replace("_id", "_name")];
     const kf = col === "from_id" ? keyBadge(row.from_keyflag, { short: true }) : "";
@@ -55,7 +63,8 @@ function cell(col, row) {
   }
   if (col === "relay" || col === "next_hop") return hex(v);
   if (col === "channel") return esc(P.source === "packets" ? (v ?? "") : hex(v));
-  if (col === "pkt_id") return v == null ? "" : hex(v, 8);
+  if (col === "pkt_id") return v == null ? "" : !Number.isSafeInteger(Number(v)) ? '<span class="muted" title="Too large to show exactly in a browser; see the CSV">—</span>' : hex(v, 8);
+  if (col === "path") return v ? esc(String(v).split(",").join(" › ")) : '<span class="muted" title="Heard from the sender itself, through no repeater">none</span>';
   if (col === "snr") return v == null ? "" : Number(v).toFixed(2);
   return esc(v);
 }
@@ -63,7 +72,7 @@ function cell(col, row) {
 function render() {
   const r = P.data, cols = r.columns;
   $("ptable").innerHTML = `<thead><tr>${cols.map((c) => `<th>${esc(LABEL[c] || c)}</th>`).join("")}</tr></thead><tbody>${r.rows.map((row) =>
-    `<tr class="${row.has_raw ? "has-raw" : ""} ${row.arrival === "local" ? "local" : ""}" data-rowid="${row.rowid}">${cols.map((c) => `<td class="${["pkt_id", "relay", "next_hop", "channel"].includes(c) ? "mono" : ""}">${cell(c, row)}</td>`).join("")}</tr>`).join("")
+    `<tr class="${row.has_raw ? "has-raw" : ""} ${row.arrival === "local" ? "local" : ""}" data-rowid="${row.rowid}">${cols.map((c) => `<td class="${["pkt_id", "relay", "next_hop", "channel", "path", "packet_hash"].includes(c) ? "mono" : ""}">${cell(c, row)}</td>`).join("")}</tr>`).join("")
     || `<tr><td colspan="${cols.length}" class="muted">No rows match.</td></tr>`}</tbody>`;
   const from = r.total ? P.offset + 1 : 0, to = Math.min(P.offset + PAGE, r.total);
   $("count").textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${r.total.toLocaleString()} rows · ${r.ms} ms`;
@@ -73,8 +82,8 @@ function render() {
 function setSource(s) {
   P.source = s; P.offset = 0; P.facets = null;
   for (const b of $("source").children) b.classList.toggle("on", b.dataset.s === s);
-  for (const el of document.querySelectorAll("[data-only]")) el.hidden = el.dataset.only !== s;
-  for (const el of document.querySelectorAll("[data-not]")) el.hidden = el.dataset.not === s;
+  for (const el of document.querySelectorAll("[data-only]")) el.hidden = !el.dataset.only.split(" ").includes(s);
+  for (const el of document.querySelectorAll("[data-not]")) el.hidden = el.dataset.not.split(" ").includes(s);
   $("srcnote").textContent = NOTES[s];
   load();
 }

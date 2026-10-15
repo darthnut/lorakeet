@@ -1,16 +1,19 @@
 # Lorakeet installer for Windows. The easy way: double-click "Install Lorakeet.cmd" in the Lorakeet folder.
 #
 # It checks for Python 3.11+ (and offers to install it), creates the virtual environment in .\venv, installs the
-# requirements, then asks whether to add "Lorakeet" shortcuts (desktop and Start menu), to start Lorakeet at every
-# sign-in, and to open it now. Safe to run again after updating: it only installs what changed. No admin rights.
+# requirements (plus the MeshCore library if this Lorakeet will log a MeshCore radio), then asks whether to add
+# "Lorakeet" shortcuts (desktop and Start menu), to start Lorakeet at every sign-in, and to open it now. Safe to run
+# again after updating: it only installs what changed. No admin rights.
 #
 #   powershell -ExecutionPolicy Bypass -File install.ps1               # asks as it goes
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Yes          # no questions: the defaults (no autostart)
 #   ... -Autostart / -NoAutostart / -NoShortcuts / -NoOpen / -NoPython  answer a question up front
+#   ... -MeshCore / -NoMeshCore                                        # (MeshCore: default no)
 #   ... -Uninstall                                                     # remove shortcuts, autostart and venv
 #                                                                      # (asks before touching logged data)
 param([switch]$Yes, [switch]$Autostart, [switch]$NoAutostart, [switch]$NoShortcuts, [switch]$NoOpen,
-      [switch]$NoPython, [switch]$Uninstall, [switch]$Start, [string]$TaskName = "Lorakeet")
+      [switch]$NoPython, [switch]$MeshCore, [switch]$NoMeshCore, [switch]$Uninstall, [switch]$Start,
+      [string]$TaskName = "Lorakeet")
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 $Here = $PSScriptRoot
@@ -172,6 +175,24 @@ if (-not (Test-Path $venvPy)) {
 Write-Host "Installing what Lorakeet needs (a minute the first time)..."
 & $venvPy -m pip install --disable-pip-version-check --prefer-binary -q -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "pip couldn't install the requirements (see above)." }
+# The MeshCore library: only a MeshCore station needs it. Already installed, or the settings name a MeshCore radio
+# (a venv made afresh): keep it, and up to date, without asking.
+$check = @'
+import importlib.util
+n = importlib.util.find_spec("meshcore") is not None
+try:
+    from config import CFG
+    n = n or "meshcore" in [CFG["radio"]["protocol"]] + [r.get("protocol") for r in CFG["radios"]]
+except Exception:
+    pass
+print("yes" if n else "no")
+'@
+$hasMeshCore = Invoke-Quiet { $check | & $venvPy - 2>$null } | Select-Object -Last 1
+if ($MeshCore -or $hasMeshCore -eq "yes" -or (-not $NoMeshCore -and (Ask "Will this Lorakeet log a MeshCore radio? (Most mesh radios run Meshtastic: say no unless yours runs MeshCore.)" $false))) {
+    Write-Host "Installing the MeshCore library..."
+    & $venvPy -m pip install --disable-pip-version-check --prefer-binary -q -U -r requirements-meshcore.txt
+    if ($LASTEXITCODE -ne 0) { throw "pip couldn't install the MeshCore library (see above)." }
+}
 $version = & $venvPy server.py --version
 if ($LASTEXITCODE -ne 0) { throw "Lorakeet didn't start (see above)." }
 Write-Host "$version is installed."

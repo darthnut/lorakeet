@@ -70,7 +70,7 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | GET | `/api/state` | Live view: connection status and every known radio (name, hardware, role, position, last heard, hops, SNR, battery, key warnings, reception at other stations). |  |
 | GET | `/api/packets` | The live feed: newest packets of the last 3 days, one entry per packet with every station that heard it. | `limit`: max entries (default 200, max 2000) |
 | GET | `/api/packet/{rowid}` | One packet's full logged JSON (packets.raw). |  |
-| GET | `/api/packet/{rowid}/anatomy` | One packet rebuilt layer by layer as bytes (radio, header, encryption, envelope, payload), each field labelled with where its value came from. |  |
+| GET | `/api/packet/{rowid}/anatomy` | One packet rebuilt layer by layer as bytes (radio, header, encryption, envelope, payload), each field labelled with where its value came from. A MeshCore packet: its logged bytes laid out, every hearing of it, and the text of a Public or hashtag channel message. | `channel`: MeshCore: a hashtag channel name to try on a channel message (its key comes from the name) |
 | GET | `/api/node/{id}` | One radio: live details, its telemetry and positions in the window, its newest 50 packets. | `hours`: history window (default 72) |
 | GET | `/api/messages` | Text messages (channels and direct), each once across stations, with delivery status for our own. |  |
 | GET | `/api/channels` | This radio's enabled channels: index, role, name, encrypted, public key (never the keys). |  |
@@ -96,7 +96,7 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | GET | `/api/insights/estimates` | Estimated positions for radios that never share one. | `station`: station: a listening station's radio id (!xxxxxxxx), * for every station combined; default this computer's radio |
 | GET | `/api/insights/coverage` | Where position packets were heard from. | `range`: range: 24h, 7d, 30d, 90d or all (default 7d)<br>`node`: only this sender<br>`relayed`: 1 = include relayed<br>`station`: station: a listening station's radio id (!xxxxxxxx), * for every station combined; default this computer's radio |
 | GET | `/api/insights/traceroutes` | Traceroute results. | `range`: range: 24h, 7d, 30d, 90d or all (default 7d)<br>`station`: station: a listening station's radio id (!xxxxxxxx), * for every station combined; default this computer's radio |
-| GET | `/api/packets/search` | Filter and page through the logged packets, receptions or transmissions. | `source`: packets (default), rx_hops (every reception) or tx_log (our transmissions)<br>`node`: either end<br>`from_id`: sender<br>`to_id`: recipient<br>`portnum`: e.g. TEXT_MESSAGE_APP<br>`channel`: channel index (packets) or hash (rx_hops)<br>`hopsMin`<br>`hopsMax`<br>`snrMin`<br>`kind`: broadcast or directed<br>`q`: text in the summary<br>`since`: unix time<br>`until`: unix time<br>`keyflag`: any, compromised or shared<br>`arrival`: air, lora, mqtt, udp, api, local or unknown<br>`limit`: default 200<br>`offset`<br>`station`: station: a listening station's radio id (!xxxxxxxx), * for every station combined; default this computer's radio |
+| GET | `/api/packets/search` | Filter and page through the logged packets, receptions or transmissions. | `source`: packets (default), rx_hops (every reception), tx_log (our transmissions) or mc_rx (a MeshCore station's receptions)<br>`node`: either end<br>`from_id`: sender<br>`to_id`: recipient<br>`portnum`: e.g. TEXT_MESSAGE_APP<br>`network`: meshtastic or meshcore (packets: which mesh it was heard on)<br>`channel`: channel index (packets) or hash (rx_hops)<br>`hopsMin`<br>`hopsMax`<br>`snrMin`<br>`kind`: broadcast or directed<br>`q`: text in the summary<br>`since`: unix time<br>`until`: unix time<br>`keyflag`: any, compromised or shared<br>`payload`: mc_rx: payload type, e.g. ADVERT<br>`path`: mc_rx: came through a repeater whose public key starts with these hex digits<br>`arrival`: air, lora, mqtt, udp, api, local or unknown<br>`limit`: default 200<br>`offset`<br>`station`: station: a listening station's radio id (!xxxxxxxx), * for every station combined; default this computer's radio |
 | GET | `/api/packets/search.csv` | The whole filtered set as CSV. | `(same as /api/packets/search)` |
 
 ## Changing Lorakeet (`[mcp] allow_changes`)
@@ -140,7 +140,7 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | GET | `/api/hub` | The Stations page: hub mode, addresses, pairings, peers. |  |
 | POST | `/api/hub/mode` | Make this computer a hub (or stop). |  |
 | POST | `/api/hub/pair` | Make a station pairing code. |  |
-| POST | `/api/hub/station` | Rename, place, revoke or forget a station. |  |
+| POST | `/api/hub/station` | Rename, place, revoke or forget a station; rename a pairing. |  |
 | POST | `/api/hub/test` | Test a pairing code's hub addresses. |  |
 | POST | `/api/hub/join` | Send this station's log to a hub. |  |
 | POST | `/api/hub/leave` | Stop sending to the hub. |  |

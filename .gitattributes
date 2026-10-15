@@ -24,3 +24,5 @@ tools/build_release.py export-ignore
 tools/release_check.py export-ignore
 tools/api_docs.py export-ignore
 tools/screenshots.mjs export-ignore
+tools/release.py export-ignore
+tools/meshcore_record.py export-ignore

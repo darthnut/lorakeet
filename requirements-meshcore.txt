@@ -1,0 +1,3 @@
+# The MeshCore link (meshcore_link.py). MIT. Only a station logging a MeshCore radio needs it; the installers ask.
+# 2.3.16 uses Python 3.12-only syntax while declaring 3.10+: it doesn't even import on 3.11.
+meshcore>=2.3.14,!=2.3.16,<3

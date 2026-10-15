@@ -38,9 +38,12 @@ PROTOCOL = 1
 # ---------------------------------------------------------------- collector
 
 class Collector:
-    def __init__(self, store, hub_url, token, interval_s, report=None):
+    def __init__(self, store, hub_url, token, interval_s, report=None, extra=()):
         self.store, self.url, self.token, self.interval = store, hub_url.rstrip("/") + "/api/ingest", token, interval_s
         self.report = report  # () -> station report dict (name, location, health); sent every pass
+        # the [[radios]] stations (several radios, one Lorakeet): [{"station": () -> id or None, "token", "report"}].
+        # Each is its own station at the hub, paired on its own, with its own bookmark.
+        self.extra = list(extra)
         self.status = {"mode": "collector", "hub": hub_url, "lastOk": None, "lastError": None, "lastErrorAt": None,
                        "sent": 0, "backlog": None}
         self._wake = threading.Event()
@@ -61,22 +64,43 @@ class Collector:
             self._wake.wait(self.interval)
             self._wake.clear()
 
-    def _progress(self):
-        r = self.store.query("SELECT value FROM settings WHERE key='sync_progress'")
+    @staticmethod
+    def _key(station):
+        # the main radio keeps the original bookmark; each [[radios]] station has its own
+        return "sync_progress" if station is None else f"sync_progress:{station}"
+
+    def _progress(self, station=None):
+        r = self.store.query("SELECT value FROM settings WHERE key = ?", self._key(station))
         return json.loads(r[0]["value"]) if r else {}
 
-    def _save_progress(self, p):
-        self.store.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('sync_progress', ?)", json.dumps(p))
+    def _save_progress(self, p, station=None):
+        self.store.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", self._key(station), json.dumps(p))
 
     def _error(self, msg):
         self.status.update(lastError=msg, lastErrorAt=time.time())
 
     def sync_once(self):
-        """Send every table's unsent rows. Returns rows sent this pass."""
-        station = self.store.station
-        if not station:
-            return 0  # radio not connected yet: we don't know who we are
-        progress, sent = self._progress(), 0
+        """Send every table's unsent rows, for the main radio and each [[radios]] one. Returns rows sent this pass."""
+        sent, byst = 0, {}
+        if self.store.station:   # (not connected yet: we don't know who we are)
+            n, backlog = self._sync_station(self.store.station, self.token, self.report, None)
+            sent += n
+            byst[self.store.station] = sum(backlog.values())
+            self.status["backlog"] = backlog
+        for x in self.extra:
+            sid = x["station"]()
+            if sid:
+                n, backlog = self._sync_station(sid, x["token"], x.get("report"), sid)
+                sent += n
+                byst[sid] = sum(backlog.values())
+        if not byst:
+            return 0
+        self.status.update(lastOk=time.time(), lastError=None, sent=self.status["sent"] + sent, stations=byst)
+        return sent
+
+    def _sync_station(self, station, token, report, key):
+        """One station's unsent rows, then its report. Returns (rows sent, backlog by table)."""
+        progress, sent = self._progress(key), 0
         for table in STATION_TABLES:
             while True:
                 last = progress.get(table, 0)
@@ -86,17 +110,17 @@ class Collector:
                     break
                 for r in rows:
                     r.pop("received_via", None)
-                acked = self._send(station, table, rows)
+                acked = self._send(station, table, rows, token)
                 progress[table] = acked
-                self._save_progress(progress)
+                self._save_progress(progress, key)
                 sent += len(rows)
                 if len(rows) < BATCH_ROWS:
                     break
         backlog = self.backlog(progress, station)
-        if self.report:  # every pass, rows or not: the station report doubles as a heartbeat
-            self._post({"protocol": PROTOCOL, "station": station, "meta": {**self.report(), "backlog": sum(backlog.values())}})
-        self.status.update(lastOk=time.time(), lastError=None, sent=self.status["sent"] + sent, backlog=backlog)
-        return sent
+        if report:  # every pass, rows or not: the station report doubles as a heartbeat
+            self._post({"protocol": PROTOCOL, "station": station, "meta": {**report(), "backlog": sum(backlog.values())}},
+                       token=token)
+        return sent, backlog
 
     def backlog(self, progress=None, station=None):
         progress, station = progress or self._progress(), station or self.store.station
@@ -104,17 +128,18 @@ class Collector:
                 if (n := self.store.query(f"SELECT COUNT(*) AS n FROM {t} WHERE rowid > ? AND station = ?",
                                           progress.get(t, 0), station)[0]["n"])}
 
-    def _send(self, station, table, rows):
-        reply = self._post({"protocol": PROTOCOL, "station": station, "table": table, "rows": rows}, f"{table} batch")
+    def _send(self, station, table, rows, token=None):
+        reply = self._post({"protocol": PROTOCOL, "station": station, "table": table, "rows": rows}, f"{table} batch",
+                           token=token)
         acked = reply.get("acked")
         if acked != rows[-1]["src_rowid"]:
             raise RuntimeError(f"hub acknowledged {acked!r}, expected {rows[-1]['src_rowid']}")
         return acked
 
-    def _post(self, payload, what="station report"):
+    def _post(self, payload, what="station report", token=None):
         body = gzip.compress(json.dumps(payload).encode())
         req = urllib.request.Request(self.url, data=body, method="POST", headers={
-            "Content-Type": "application/json", "Content-Encoding": "gzip", "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json", "Content-Encoding": "gzip", "Authorization": f"Bearer {token or self.token}",
             "X-Lorakeet-Station": payload.get("station") or ""})
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -179,10 +204,13 @@ def _coarse_row(table, row):
             if r.get(k) is not None:
                 r[k] = coarse(r[k])
         r["precision_bits"] = min(r.get("precision_bits") or 32, PEER_PRECISION_BITS)
+    elif table == "mc_rx" and r.get("payload_name") == "ADVERT":
+        r["frame"] = None   # a MeshCore advert's own bytes: its exact location (the parsed advert is rounded)
     elif table == "packets":
         if r.get("raw"):
             try:
                 d = coarsen(json.loads(r["raw"]))
+                d.pop("frame", None)   # a MeshCore packet's own bytes (hex): an advert's exact location
                 # the payload is the packet's own bytes, base64: a position's exact coordinates are still in there
                 # (and a waypoint's, or a range test's text). The decoded fields above carry everything else.
                 dec = d.get("decoded")
@@ -258,6 +286,7 @@ def _withhold(row, text):
     r = dict(row)
     try:
         d = json.loads(r.get("raw") or "{}")
+        d.pop("frame", None)   # a MeshCore packet's own bytes: a channel message's ciphertext (Public's key is well known)
         dec = d.get("decoded") or {}
         d["decoded"] = {"portnum": dec.get("portnum"), ("textWithheld" if text else "payloadWithheld"): True} if dec else {}
         r["raw"] = json.dumps(d)
@@ -289,13 +318,19 @@ def _share_text(store, table, rows, level, public_hashes):
         out = []
         for r in rows:
             port, proven = r.get("portnum"), (r.get("from_id"), r.get("pkt_id")) in public
-            if port in TEXT_PORTS:
+            if port == "MC_ADVERT":
+                out.append(r)   # a MeshCore radio announcing itself to everyone: name, type, place (rounded below)
+            elif port in TEXT_PORTS:
                 out.append(r if proven and rule["text"] == "public" else _withhold(r, True))
             elif port in OPEN_PORTS and proven:
                 out.append(r)
             else:
                 out.append(_withhold(r, False))
         return out
+    if table == "mc_rx":
+        # a reception's frame is the whole packet: for a channel message, ciphertext anyone with the channel's key (the
+        # Public channel's is well known) can read. Nothing here proves a MeshCore channel public, so only adverts keep it.
+        return [r if r.get("payload_name") == "ADVERT" else {**r, "frame": None} for r in rows]
     if table == "messages":
         public = public_keys(store, public_hashes, rows) if rule["text"] == "public" else set()
         return [r for r in rows if r.get("to_id") == "^all" and (r.get("from_id"), r.get("pkt_id")) in public]
@@ -624,8 +659,7 @@ class Hub:
     def own_stations(self):
         """This hub's own radio: the connected one, and the last one it had (persisted, so it's protected right after
         a restart or while the radio is unplugged)."""
-        r = self.store.query("SELECT value FROM settings WHERE key='own_station'")
-        return {x for x in (self.store.station, r[0]["value"] if r else None) if x}
+        return self.store.own_stations()   # the main radio, its last one, and any [[radios]] ones
 
     def _logged_here(self, station):
         """A radio this hub logged from itself at some point (rows without src_rowid: not synced, not imported). An
@@ -676,7 +710,7 @@ class Hub:
     def _report(self, station, meta, via=None):
         """A station report: name, location, note and health. Whitelisted, typed and bounded; doubles as a
         heartbeat for the station-silence alert."""
-        if self.store.station and station == self.store.station:
+        if station in self.store.own_stations():
             raise IngestError(409, "that station is this hub's own radio")
         clean = clean_report(meta)
         with self.lock, self.store.lock:
@@ -768,7 +802,7 @@ class Hub:
             raise IngestError(400, f"table {table!r} does not sync")
         if not isinstance(rows, list) or not rows or len(rows) > 5 * BATCH_ROWS:
             raise IngestError(400, "rows must be a non-empty list")
-        if self.store.station and station == self.store.station:
+        if station in self.store.own_stations():
             raise IngestError(409, "that station is this hub's own radio")
         cols = self._columns(table) - {"src_rowid", "station", "received_via"}
         types = self.cols[table]

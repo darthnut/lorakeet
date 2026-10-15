@@ -19,7 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MUST_HAVE = ["README.md", "LICENSE", "CHANGELOG.md", "VERSION", "requirements.txt", "server.py", "install.sh",
              "install.ps1", "Install Lorakeet.cmd", "Uninstall Lorakeet.cmd", "lorakeet.pyw", "supervise.pyw",
-             "lorakeet.example.toml", "static/index.html", "deploy/setup-station.sh", "docs/PI-SETUP.md"]
+             "lorakeet.example.toml", "static/index.html", "deploy/setup-station.sh", "docs/PI-SETUP.md",
+             "requirements-meshcore.txt", "docs/MESHCORE-GUIDE.md"]
 MUST_NOT = ["tests/", ".github/", "CLAUDE.md", "requirements-dev.txt", "tools/release_check.py", "tools/build_release.py"]
 CRLF = (".cmd", ".ps1")
 LF = (".sh", ".service", ".timer", ".conf")

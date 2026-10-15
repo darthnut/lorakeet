@@ -42,7 +42,7 @@
   <div class="brand"><img class="logo" src="favicon.svg" alt="" width="22" height="22">Lorakeet</div>
   <nav class="pagenav"><a href="/">Map</a><a href="/analytics.html">Analytics</a><a href="/visualizations.html">Visualizations</a><a href="/packets.html" aria-current="page">Packets</a></nav>
   <div class="seg" id="source" role="group" aria-label="Source table">
-    <button data-s="packets" class="on">Packets</button><button data-s="rx_hops">Receptions</button><button data-s="tx_log">Our transmissions</button>
+    <button data-s="packets" class="on">Packets</button><button data-s="rx_hops">Receptions</button><button data-s="tx_log">Our transmissions</button><button data-s="mc_rx">MeshCore receptions</button>
   </div>
 </header>
 <main class="wrap">
@@ -55,12 +55,15 @@
     <label>Time<select name="range"><option value="3600">Last hour</option><option value="86400" selected>Last 24 h</option><option value="604800">Last 7 days</option><option value="2592000">Last 30 days</option><option value="">All</option></select></label>
     <label>Node (either end)<input name="node" placeholder="!1234abcd" size="11"></label>
     <label>From<input name="from_id" placeholder="!id" size="10"></label>
-    <label>To<input name="to_id" placeholder="!id or ^all" size="10"></label>
+    <label data-not="mc_rx">To<input name="to_id" placeholder="!id or ^all" size="10"></label>
+    <label data-only="mc_rx">Payload<select name="payload"><option value="">Any</option></select></label>
+    <label data-only="mc_rx" title="Came through a repeater whose public key starts with these hex digits (a hop in its path)">Through repeater<input name="path" placeholder="a0" size="6"></label>
+    <label data-only="packets" title="Which mesh: Meshtastic, or a MeshCore station's packets">Network<select name="network"><option value="">Both</option><option value="meshtastic">Meshtastic</option><option value="meshcore">MeshCore</option></select></label>
     <label data-only="packets">Type<select name="portnum"><option value="">Any</option></select></label>
     <label data-only="packets" title="How the packet reached the dashboard, from fields the radio reported">Arrival<select name="arrival"><option value="">Any</option><option value="air">Over the air</option><option value="local">Local (not over the air)</option><option value="unknown">Unknown</option></select></label>
-    <label>Channel<select name="channel"><option value="">Any</option></select></label>
-    <label title="Packets from radios whose public key is on Meshtastic's known-weak list, or shared with other radios">Sender key<select name="keyflag"><option value="">Any</option><option value="any">Compromised or shared</option><option value="compromised">Compromised</option><option value="shared">Shared</option></select></label>
-    <label>Kind<select name="kind"><option value="">Any</option><option value="broadcast">Broadcast</option><option value="directed">Addressed</option></select></label>
+    <label data-not="mc_rx">Channel<select name="channel"><option value="">Any</option></select></label>
+    <label data-not="mc_rx" title="Packets from radios whose public key is on Meshtastic's known-weak list, or shared with other radios">Sender key<select name="keyflag"><option value="">Any</option><option value="any">Compromised or shared</option><option value="compromised">Compromised</option><option value="shared">Shared</option></select></label>
+    <label data-not="mc_rx">Kind<select name="kind"><option value="">Any</option><option value="broadcast">Broadcast</option><option value="directed">Addressed</option></select></label>
     <label>Hops ≥<input type="number" name="hopsMin" min="0" max="7"></label>
     <label>Hops ≤<input type="number" name="hopsMax" min="0" max="7"></label>
     <label data-not="tx_log">SNR ≥<input type="number" name="snrMin" step="0.5"></label>

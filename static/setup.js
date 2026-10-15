@@ -25,8 +25,10 @@ async function load() {
   $("port").innerHTML = info.ports.length
     ? info.ports.map((p) => `<option value="${esc(p.device)}">${esc(p.device)}${p.description ? ` · ${esc(p.description)}` : ""}${p.radio ? " · looks like a radio" : ""}</option>`).join("")
     : '<option value="">no USB serial ports found</option>';
+  $("mcInstall").textContent = info.meshcoreInstall || "";
   showLive();
   showRadioGps();
+  syncProtocol();
   $("setupForm").hidden = false;
   setInterval(refreshLive, 3000);
 }
@@ -52,6 +54,23 @@ function syncRadio() {
 }
 document.querySelectorAll('input[name="radioMode"]').forEach((r) => r.addEventListener("change", syncRadio));
 syncRadio();
+
+// Radio type. MeshCore: a USB port only (no auto-detect, no network radio); the live line is about the Meshtastic
+// auto-detect, so it's hidden. Switching back restores the Meshtastic choice as it was.
+let mtMode = "auto";
+function syncProtocol() {
+  const mc = document.querySelector('input[name="protocol"]:checked').value === "meshcore";
+  const mode = document.querySelector('input[name="radioMode"]:checked');
+  if (mc && mode.value !== "port") { mtMode = mode.value; document.querySelector('input[name="radioMode"][value="port"]').checked = true; }
+  if (!mc && mode.value === "port" && mtMode !== "port") document.querySelector(`input[name="radioMode"][value="${mtMode}"]`).checked = true;
+  for (const el of document.querySelectorAll("[data-mt]")) el.hidden = mc;
+  for (const el of document.querySelectorAll("[data-mc]")) el.hidden = !mc;
+  $("live").hidden = mc;
+  $("mcMissing").hidden = !(mc && info && !info.meshcoreAvailable);
+  syncRadio();
+}
+document.querySelectorAll('input[name="protocol"]').forEach((r) => r.addEventListener("change", syncProtocol));
+document.querySelectorAll('input[name="radioMode"]').forEach((r) => r.addEventListener("change", () => { mtMode = r.value; }));
 
 // Where's the antenna? Three ways in, each checked: typed coordinates, the radio's own GPS fix, or the browser's
 // location (which on a computer with no Wi-Fi is a guess from the internet connection: can be a whole country off).
@@ -109,11 +128,13 @@ $("setupForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("err").textContent = "";
   const mode = document.querySelector('input[name="radioMode"]:checked').value;
+  const protocol = document.querySelector('input[name="protocol"]:checked').value;
   const lat = $("lat").value.trim(), lon = $("lon").value.trim();
   if ((lat || lon) && !(Number.isFinite(+lat) && Number.isFinite(+lon) && lat && lon)) { $("err").textContent = "Enter both latitude and longitude as numbers, or leave both empty."; return; }
   if (mode === "host" && !$("host").value.trim()) { $("err").textContent = "Enter the network radio's address."; return; }
+  if (protocol === "meshcore" && !$("port").value) { $("err").textContent = "Choose the MeshCore radio's USB port. Not listed? Plug it in and reload this page."; return; }
   const body = {
-    port: mode === "port" ? $("port").value : "", host: mode === "host" ? $("host").value.trim() : "",
+    protocol, port: mode === "port" ? $("port").value : "", host: mode === "host" ? $("host").value.trim() : "",
     tcpPort: Number($("tcpPort").value) || 4403,
     stationName: $("stationName").value.trim(), location: lat && lon ? [+lat, +lon] : null,
     storeRecipients: $("storeRecipients").checked, lan: $("lanView").checked ? "view" : "off",

@@ -13,6 +13,20 @@ port = ""
 # (duplicates, relays, airtime) only over USB.
 host = ""
 tcp_port = 4403
+# The radio's firmware: "meshtastic", or "meshcore" for a MeshCore companion radio (USB firmware) on `port`, which
+# must be set. A MeshCore station only listens: it logs every reception, adverts, messages and the radio's counters
+# (docs/MESHCORE.md), and needs the meshcore package: pip install "meshcore>=2.3.14,!=2.3.16"
+protocol = "meshtastic"
+
+# More radios on this computer, each logged as a station of its own (say a Meshtastic radio and a MeshCore one in one
+# box): one [[radios]] entry each, after [radio]. port is required (use a permanent name like /dev/serial/by-id/...,
+# so the radios can't swap); name is the station's name; on a station that syncs to a hub, sync_token is this radio's
+# own pairing (make a pairing code for it on the hub's Stations page). The live map and Radio page are [radio]'s.
+# [[radios]]
+# protocol = "meshcore"
+# port = "/dev/serial/by-id/usb-Espressif_..."
+# name = "Hilltop (MeshCore)"
+# sync_token = "..."
 
 [storage]
 # Where the database and logs live. Empty = per-OS default:

@@ -22,6 +22,8 @@ from google.protobuf import descriptor as _d
 from google.protobuf import json_format
 from meshtastic.protobuf import mesh_pb2, portnums_pb2, storeforward_pb2, telemetry_pb2
 
+import radioid
+
 # ---------------------------------------------------------------- radio (LoRa) layer
 
 # preset -> (bandwidth kHz, spreading factor, coding rate denominator), firmware RadioInterface.cpp
@@ -298,7 +300,7 @@ def build(row, rx, channels, lora, keys, local=None):
         payload = base64.b64decode(d.get("payload") or "")
         # A traceroute to us carries one SNR entry our radio added on arrival: rebuild the on-air envelope
         # without it, and keep that only if it comes to exactly the length the radio logged on air.
-        if port == "TRACEROUTE_APP" and local and to == int(local[1:], 16) and not pki:
+        if port == "TRACEROUTE_APP" and radioid.is_meshtastic(local) and to == radioid.node_num(local) and not pki:
             try:
                 fix = _traceroute_on_air(payload, bool(d.get("requestId")))
             except Exception:  # noqa: BLE001  (unparseable payload: leave it as delivered)

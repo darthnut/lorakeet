@@ -42,6 +42,9 @@ FIELD_NOTES = [
                               "rxSnr/rxRssi = 'local', a report the radio sent the dashboard itself (e.g. a "
                               "MAX_RETRANSMIT NAK from our radio to our radio); no raw = unknown."),
     ("packets", "to_id", "'^all' means broadcast (on air 0xffffffff), the meshtastic library's convention."),
+    ("packets", "pkt_id", "Meshtastic: the packet id the sender chose (32 bits). MeshCore (portnum MC_*): the first 13 hex "
+     "digits of the packet hash (52 bits); rows logged before 2026-10-15 used 15 (60 bits, more than a browser shows "
+     "exactly)."),
     ("rx_hops", "*", "One row per over-the-air reception, duplicates included, parsed live from the firmware's "
                      "'Lora RX (' debug lines (all header fields as logged). Depends on the firmware's log "
                      "format; lines can be missed while the dashboard reconnects. No decoded contents."),
@@ -51,6 +54,17 @@ FIELD_NOTES = [
     ("rx_hops", "channel", "The 1-byte on-air channel hash (derived from channel name + key), not an index. LongFast "
                            "with the default key = 0x08. Different channels can share a hash."),
     ("rx_hops", "hops", "Derived convenience column: hop_start - hop_limit (both stored raw alongside)."),
+    ("mc_rx", "*", "MeshCore stations: one row per over-the-air reception (duplicates included), from the companion "
+                   "radio's RX_LOG_DATA reports. frame is the whole packet as hex; the other columns are parsed from "
+                   "it (meshcore_packet.parse) and from the radio's signal readings. docs/MESHCORE.md."),
+    ("mc_rx", "packet_hash", "The firmware's packet hash (first 8 bytes of SHA-256 over the payload type and payload), "
+                             "the same however the packet travelled: one transmission heard several times shares it. "
+                             "MeshCore has no packet id."),
+    ("mc_rx", "path", "The repeaters it came through, first first, as comma-separated public-key prefixes "
+                      "(hop_bytes bytes each). A 1-byte prefix can match several radios: a prefix, never a radio id."),
+    ("mc_rx", "from_id", "The sender, only where the packet itself says (adverts carry the full public key). Empty "
+                         "otherwise: most MeshCore packets don't name their sender in the clear."),
+    ("mc_rx", "transport1", "Region transport codes (transport routes only): a flood limited to a region carries them."),
     ("rx_hops", "relay", "Low byte of the last transmitter's node number, as logged (e.g. 0x22). Not unique: several nodes can share it."),
     ("rx_hops", "next_hop", "Low byte of the next hop the sender chose for a directed packet (next-hop routing); "
                             "0/NULL when not set."),
@@ -163,6 +177,13 @@ CREATE TABLE IF NOT EXISTS tx_log (ts REAL, from_id TEXT, to_id TEXT, pkt_id INT
   directed INTEGER, want_ack INTEGER, next_hop INTEGER, relay INTEGER, length INTEGER, encrypted INTEGER,
   transport INTEGER, hop_start INTEGER, hop_limit INTEGER, hops INTEGER, priority INTEGER);
 CREATE INDEX IF NOT EXISTS tx_log_pkt ON tx_log(pkt_id);
+-- MeshCore stations: one row per over-the-air reception, from the companion radio's RX_LOG_DATA (docs/MESHCORE.md).
+-- MeshCore packets have no packet id and usually no sender in the clear, so they don't fit rx_hops. frame (not raw:
+-- raw is JSON elsewhere) is the whole packet as hex; nothing parsed from it is stored without it.
+CREATE TABLE IF NOT EXISTS mc_rx (ts REAL, snr REAL, rssi INTEGER, length INTEGER, route TEXT, payload_type INTEGER,
+  payload_name TEXT, version INTEGER, transport1 INTEGER, transport2 INTEGER, hop_bytes INTEGER, hops INTEGER,
+  path TEXT, packet_hash TEXT, from_id TEXT, frame TEXT);
+CREATE INDEX IF NOT EXISTS mc_rx_hash ON mc_rx(packet_hash);
 """
 # Every table whose rows were logged by a listening station's radio. `station` = that radio's node id
 # (the desk Heltec at home; later a second station across town). Store.insert fills it in; the analytics
@@ -206,11 +227,14 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS positions_own ON positions(station, node, ts) WHERE source = 'own'",
     # 0.3.0 (database layout 2): how each row arrived, so what one route brought can be told apart and deleted
     *[f"ALTER TABLE {t} ADD COLUMN received_via TEXT" for t in STATION_TABLES],
+    # 0.5.0 (database layout 3): MeshCore receptions (mc_rx, in SCHEMA; station, src_rowid and received_via come from
+    # the loops above, which run over every station table)
+    "CREATE INDEX IF NOT EXISTS mc_rx_station_ts ON mc_rx(station, ts)",
 ]
 # The database's layout version, stored in the file (PRAGMA user_version). Updates only ever ADD tables, columns
 # and indexes (MIGRATIONS above), never remove or rewrite logged data. Bump it with each change to SCHEMA or
 # MIGRATIONS, so an older Lorakeet opening a newer database can say so.
-SCHEMA_VERSION = 2  # 2: received_via on every station table
+SCHEMA_VERSION = 3  # 2: received_via on every station table; 3: mc_rx (MeshCore receptions)
 DB_WAIT_S = 30        # how long a write or read waits for the database before giving up
 # Rows are committed together this often (or once COMMIT_MAX_ROWS are waiting), not one transaction each: on a Pi
 # every commit rewrites several 4 KB pages (the table and each index) and flushes them, which is what wore SD cards.
@@ -322,6 +346,27 @@ class Store:
                 self.db.execute(f"UPDATE {t} SET station = ? WHERE station IS NULL", (sid,))
             self.db.commit()
 
+    def add_own_station(self, sid):
+        """Another radio this Lorakeet logs from ([[radios]]): remembered with the main one, so a hub never takes
+        rows for it from anyone else. Doesn't change which radio is "ours" on the pages (claim_station does)."""
+        with self.lock:
+            r = self.db.execute("SELECT value FROM settings WHERE key = 'own_stations'").fetchone()
+            ids = set(json.loads(r[0])) if r else set()
+            if sid not in ids:
+                ids.add(sid)
+                self.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('own_stations', ?)",
+                                (json.dumps(sorted(ids)),))
+                self.db.commit()
+
+    def own_stations(self):
+        """Every radio this Lorakeet logs from: the main one and the [[radios]] ones it has seen."""
+        r = self.query("SELECT value FROM settings WHERE key IN ('own_station', 'own_stations')")
+        out = {self.station} if self.station else set()
+        for x in r:
+            v = x["value"]
+            out |= set(json.loads(v)) if v.startswith("[") else {v}
+        return out
+
     def insert(self, table, **row):
         if table in STATION_TABLES and "station" not in row and self.station:
             row["station"] = self.station
@@ -343,6 +388,28 @@ class Store:
     def query(self, sql, *args):
         with self.lock:
             return [dict(r) for r in self.db.execute(sql, args).fetchall()]
+
+
+class StationStore:
+    """One extra radio's view of the shared Store ([[radios]]: several radios, one Lorakeet, MESHCORE.md step 6).
+    Everything goes to the same database on the same connection; rows it inserts are tagged with its own station, and
+    claiming a station doesn't make it the main radio. A link takes it wherever it takes a Store."""
+
+    def __init__(self, store):
+        self._store = store
+        self.station = None
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def insert(self, table, **row):
+        if table in STATION_TABLES and "station" not in row and self.station:
+            row["station"] = self.station
+        return self._store.insert(table, **row)
+
+    def claim_station(self, sid):
+        self.station = sid
+        self._store.add_own_station(sid)
 
 
 class DebugLog:

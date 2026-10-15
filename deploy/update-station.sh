@@ -2,7 +2,8 @@
 # Push this checkout's COMMITTED code to a listening station and restart it, safely:
 # stage it beside the running copy, check every Python file parses with the station's own Python, then
 # swap it in (lorakeet.toml and venv are never touched) and restart. A broken file never reaches the
-# running copy. Reinstalls Python packages only if requirements.txt changed.
+# running copy. Reinstalls Python packages only if requirements.txt changed; a station whose lorakeet.toml names a
+# MeshCore radio also gets the optional meshcore package (requirements-meshcore.txt) when it's missing or changed.
 #   deploy/update-station.sh lorakeet@my-station
 set -euo pipefail
 TARGET=${1:?usage: deploy/update-station.sh user@station-host}
@@ -17,8 +18,13 @@ ssh "$TARGET" 'set -e
   for f in ~/stage/*.py; do ~/lorakeet/venv/bin/python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" \
     || { echo "PARSE ERROR in $f: not deployed"; exit 1; }; done
   cmp -s ~/stage/requirements.txt ~/lorakeet/requirements.txt && pip=0 || pip=1
+  cmp -s ~/stage/requirements-meshcore.txt ~/lorakeet/requirements-meshcore.txt && mcpip=0 || mcpip=1
   cp -r ~/stage/. ~/lorakeet/ && rm -rf ~/stage
   [ "$pip" = 1 ] && ~/lorakeet/venv/bin/pip install -q --prefer-binary -r ~/lorakeet/requirements.txt
+  if grep -Eqs "^[[:space:]]*protocol[[:space:]]*=[[:space:]]*\"meshcore\"" ~/lorakeet/lorakeet.toml; then
+    { [ "$mcpip" = 0 ] && ~/lorakeet/venv/bin/python -c "import meshcore" 2>/dev/null; } \
+      || ~/lorakeet/venv/bin/pip install -q --prefer-binary -r ~/lorakeet/requirements-meshcore.txt
+  fi
   sudo -n systemctl restart lorakeet && sleep 25
   echo "service: $(systemctl is-active lorakeet)"
   curl -s localhost:5190/api/sync; echo'

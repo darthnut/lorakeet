@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import airtime
 import analytics
 import anatomy
+import meshcore_anatomy
 import api_index
 import diagnostics
 from channels import DEFAULT_PSK, _xor, channel_keys
@@ -61,11 +62,15 @@ PREFS_EDITABLE = {
 SLOW_REQUEST_S = 5    # requests slower than this are logged (with the path), to find what holds the database
 
 
-def packet_anatomy(store, mesh, rowid):
-    """One logged packet rebuilt layer by layer (anatomy.py), matched with the radio's own RX log line."""
-    rows = store.query("SELECT rowid, ts, from_id, pkt_id, hops, relay, pki, raw, station FROM packets WHERE rowid=?", rowid)
+def packet_anatomy(store, mesh, rowid, hashtag=None):
+    """One logged packet rebuilt layer by layer (anatomy.py), matched with the radio's own RX log line. A MeshCore
+    packet is laid out from its own logged bytes instead (meshcore_anatomy.py); `hashtag` is a channel name to try."""
+    rows = store.query("SELECT rowid, ts, from_id, pkt_id, hops, relay, pki, raw, station, portnum FROM packets "
+                       "WHERE rowid=?", rowid)
     if not rows or not rows[0]["raw"]:
         raise ValueError("no such packet")
+    if str(rows[0]["portnum"] or "").startswith("MC_"):
+        return meshcore_packet_anatomy(store, mesh, dict(rows[0]), hashtag)
     row = dict(rows[0])
     row["raw"] = json.loads(row["raw"])
     # the reception of this same copy in the debug log: same sender + packet id, preferring the same
@@ -92,10 +97,33 @@ def packet_anatomy(store, mesh, rowid):
     return out
 
 
+def meshcore_packet_anatomy(store, mesh, row, hashtag=None):
+    row["raw"] = json.loads(row["raw"])
+    h = (row["raw"].get("meshcore") or {}).get("hash")
+    receptions = store.query("SELECT * FROM mc_rx WHERE packet_hash = ? ORDER BY ts", h) if h else []
+    # the logging radio's own settings, as it reported them when it connected (SELF_INFO)
+    ev = store.query("SELECT detail FROM events WHERE kind = 'connected' AND station IS ? AND detail LIKE '%self_info%' "
+                     "ORDER BY ts DESC LIMIT 1", row["station"])
+    radio = (json.loads(ev[0]["detail"]).get("self_info") or {}) if ev and ev[0]["detail"] else {}
+    nodes = [r["node"] for r in store.query("SELECT DISTINCT node FROM node_info WHERE node LIKE 'mc:%'")]
+    return meshcore_anatomy.build(row, receptions, radio, nodes, lambda i: {"name": mesh.name(i)}, hashtag)
+
+
 def setup_info(mesh):
     """What the setup page shows: whether this install is configured, the defaults, ports, the live link."""
     import config as cfgmod
+    import importlib.util
+    try:
+        has_meshcore = importlib.util.find_spec("meshcore") is not None
+    except (ImportError, ValueError):  # a stand-in module without a spec (tests)
+        has_meshcore = "meshcore" in sys.modules
+    py = Path(sys.executable)
+    py = py.with_name("python.exe") if py.name.lower() == "pythonw.exe" else py  # pip's output needs a console
+    req = runtime.HERE / "requirements-meshcore.txt"
     info = {"configured": CFG["_path"] is not None, "path": str(cfgmod.config_path()),
+            # the optional library a MeshCore radio needs: looked for, never imported here
+            "meshcoreAvailable": has_meshcore,
+            "meshcoreInstall": f'"{py}" -m pip install -r "{req}"',
             "defaults": {"dataDir": str(cfgmod.default_data_dir()), "httpPort": CFG["http"]["port"]},
             "ports": serial_ports(), "status": mesh.status(),
             "radioName": mesh.name(mesh.local_id) if mesh.connected and mesh.local_id else None,
@@ -103,7 +131,8 @@ def setup_info(mesh):
             "supervised": bool(os.environ.get("LORAKEET_SUPERVISED") or os.environ.get("INVOCATION_ID"))}
     if info["configured"]:  # a read-only summary; the file itself is edited by hand
         r = CFG["radio"]
-        info["summary"] = {"radio": r["host"] and f"{r['host']}:{r['tcp_port']}" or r["port"] or "auto-detect (USB)",
+        where = r["host"] and f"{r['host']}:{r['tcp_port']}" or r["port"] or "auto-detect (USB)"
+        info["summary"] = {"radio": f"MeshCore on {where}" if r["protocol"] == "meshcore" else where,
                            "dataDir": str(CFG["storage"]["data_dir"]), "lan": CFG["http"]["lan"],
                            "storeRecipients": CFG["logging"]["store_recipients"], "tiles": CFG["map"]["tiles"],
                            "stationName": CFG["station"]["name"], "location": bool(CFG["station"]["location"])}
@@ -346,7 +375,7 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                     "AS stations FROM p WHERE n = 1 ORDER BY ts DESC LIMIT ?", time.time() - 3 * 86400, limit))
             if path.startswith("/api/packet/") and path.endswith("/anatomy"):
                 try:
-                    return self._json(packet_anatomy(store, mesh, int(path.split("/")[3])))
+                    return self._json(packet_anatomy(store, mesh, int(path.split("/")[3]), (qs.get("channel") or "")[:32] or None))
                 except (ValueError, IndexError):
                     return self._json({"error": "no such packet"}, 404)
                 except Exception as e:  # noqa: BLE001
@@ -393,6 +422,9 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                     levels=[x for x in qs.get("levels", "").split(",") if x] or None,
                     source=qs.get("source") or None))
             if path == "/api/analytics/airtime":
+                if radioid.is_meshcore(station):   # its modem maths are Meshtastic's (presets, frame layout)
+                    return self._json({"unsupported": "Airtime isn't worked out for MeshCore stations yet "
+                                                      "(docs/MESHCORE.md, step 7)."})
                 try:
                     cache = {}
                     describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
@@ -679,7 +711,8 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                     threading.Timer(1.0, runtime.exit_now).start()
                     return None
                 if path == "/api/logging":  # pause / resume logging (the tray icon, the dashboard's paused chip)
-                    mesh.set_paused(bool(body.get("paused")))
+                    for link in (mesh, *getattr(mesh, "extras", ())):   # every radio's port is let go, or none
+                        link.set_paused(bool(body.get("paused")))
                     return self._json({"paused": mesh.paused})
                 if path == "/api/send":
                     return self._json(mesh.send_text(body.get("text"), body.get("to"), body.get("channel", 0)))

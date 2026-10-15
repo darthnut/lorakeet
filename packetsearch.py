@@ -1,5 +1,6 @@
 """Packet browser: filtered, paged search over `packets` (first copies, decoded) or `rx_hops` (every
-over-the-air reception) or `tx_log` (our transmissions), with CSV export of the full filtered set."""
+over-the-air reception) or `tx_log` (our transmissions), or `mc_rx` (a MeshCore station's receptions), with CSV export
+of the full filtered set."""
 import csv
 import io
 import time
@@ -14,6 +15,8 @@ SOURCES = {
                 "next_hop", "want_ack", "length", "encrypted", "transport", "snr", "rssi"],
     "tx_log": ["ts", "from_id", "to_id", "pkt_id", "channel", "directed", "hops", "hop_start", "hop_limit", "relay",
                "next_hop", "want_ack", "length", "encrypted", "transport", "priority"],
+    "mc_rx": ["ts", "from_id", "payload_name", "route", "hops", "path", "snr", "rssi", "length", "packet_hash",
+              "transport1", "transport2", "version"],
 }
 MAX_CSV_ROWS = 500_000
 
@@ -22,6 +25,7 @@ MAX_CSV_ROWS = 500_000
 # own internal reports (e.g. a "max retransmit" NAK to itself) carry neither.
 ARRIVAL_SQL = """CASE
   WHEN raw IS NULL THEN 'unknown'
+  WHEN json_extract(raw, '$.meshcore') IS NOT NULL THEN 'lora'
   WHEN json_extract(raw, '$.transportMechanism') LIKE 'TRANSPORT_LORA%' THEN 'lora'
   WHEN json_extract(raw, '$.transportMechanism') = 'TRANSPORT_MQTT' THEN 'mqtt'
   WHEN json_extract(raw, '$.transportMechanism') = 'TRANSPORT_MULTICAST_UDP' THEN 'udp'
@@ -49,22 +53,34 @@ def _where(source, f):
     if f.get("until"):
         sql.append("ts < ?"); args.append(float(f["until"]))
     for key in ("from_id", "to_id"):
-        if f.get(key):
+        if f.get(key) and key in cols:
             sql.append(f"{key} = ?"); args.append(f[key])
-    if f.get("node"):  # either end
-        sql.append("(from_id = ? OR to_id = ?)"); args += [f["node"], f["node"]]
+    if f.get("node"):  # either end (a MeshCore reception names its sender at most)
+        if "to_id" in cols:
+            sql.append("(from_id = ? OR to_id = ?)"); args += [f["node"], f["node"]]
+        else:
+            sql.append("from_id = ?"); args.append(f["node"])
+    if f.get("payload") and "payload_name" in cols:
+        sql.append("payload_name = ?"); args.append(f["payload"])
+    if f.get("path") and "path" in cols:  # came through a repeater: a hop starting with these hex digits
+        sql.append("(',' || path) LIKE ?"); args.append(f"%,{str(f['path']).lower().strip()}%")
     if f.get("portnum") and "portnum" in cols:
         sql.append("portnum = ?"); args.append(f["portnum"])
-    if f.get("channel") not in (None, ""):
+    # which mesh: a MeshCore station's packets are typed MC_* (packets is the one source holding both)
+    if f.get("network") == "meshcore" and "portnum" in cols:
+        sql.append("substr(portnum, 1, 3) = 'MC_'")
+    elif f.get("network") == "meshtastic" and "portnum" in cols:
+        sql.append("(portnum IS NULL OR substr(portnum, 1, 3) != 'MC_')")
+    if f.get("channel") not in (None, "") and "channel" in cols:
         sql.append("channel = ?"); args.append(int(str(f["channel"]), 0))
     for key, op in (("hopsMin", ">="), ("hopsMax", "<=")):
         if f.get(key) not in (None, ""):
             sql.append(f"hops {op} ?"); args.append(int(f[key]))
     if f.get("snrMin") not in (None, "") and "snr" in cols:
         sql.append("snr >= ?"); args.append(float(f["snrMin"]))
-    if f.get("kind") == "broadcast":
+    if f.get("kind") == "broadcast" and "to_id" in cols:
         sql.append("to_id IN ('^all','!ffffffff')")
-    elif f.get("kind") == "directed":
+    elif f.get("kind") == "directed" and "to_id" in cols:
         sql.append("to_id NOT IN ('^all','!ffffffff')")
     if f.get("q") and "summary" in cols:
         sql.append("summary LIKE ?"); args.append(f"%{f['q']}%")
@@ -97,8 +113,12 @@ def search(db_path, source, f, limit=200, offset=0, station=None):
         if source == "packets":
             facets["portnum"] = [r[0] for r in db.execute(
                 "SELECT portnum FROM packets GROUP BY 1 ORDER BY COUNT(*) DESC").fetchall()]
-        facets["channel"] = [r[0] for r in db.execute(
-            f"SELECT channel FROM {source} WHERE channel IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC").fetchall()]
+        if source == "mc_rx":
+            facets["payload"] = [r[0] for r in db.execute(
+                "SELECT payload_name FROM mc_rx WHERE payload_name IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC").fetchall()]
+        else:
+            facets["channel"] = [r[0] for r in db.execute(
+                f"SELECT channel FROM {source} WHERE channel IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC").fetchall()]
         return {"source": source, "columns": cols, "total": total, "rows": rows, "facets": facets,
                 "ms": round((time.time() - t) * 1000)}
     finally:

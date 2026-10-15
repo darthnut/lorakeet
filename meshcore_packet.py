@@ -98,6 +98,42 @@ def _hash(payload_type, path_len_byte, payload):
     return h.digest()[:8].hex()
 
 
+ADVERT = 4
+ADV_TYPES = {1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
+
+
+def parse_advert(payload):
+    """An ADVERT payload -> {publicKey, timestamp, type, lat, lon, name}, or None when it's too short.
+
+    Layout (firmware AdvertDataHelpers): public key(32), timestamp uint32 LE(4), signature(64), then app data: a
+    flags byte (low 4 bits the radio's type; 0x10 a location follows as two int32 LE micro-degrees, 0x20 and 0x40 a
+    2-byte feature field each, 0x80 the name, which is the rest). The signature isn't checked: Lorakeet logs what it
+    heard. A position of exactly 0, 0 means none."""
+    b = _bytes(payload)
+    if len(b) < 101:
+        return None
+    out = {"publicKey": b[:32].hex(), "timestamp": int.from_bytes(b[32:36], "little"), "type": None,
+           "lat": None, "lon": None, "name": None}
+    at = 100
+    flags = b[at]
+    at += 1
+    out["type"] = ADV_TYPES.get(flags & 0x0F, f"type{flags & 0x0F}")
+    if flags & 0x10:
+        if len(b) < at + 8:
+            return out
+        lat = int.from_bytes(b[at:at + 4], "little", signed=True) / 1e6
+        lon = int.from_bytes(b[at + 4:at + 8], "little", signed=True) / 1e6
+        at += 8
+        if (lat, lon) != (0, 0) and -90 <= lat <= 90 and -180 <= lon <= 180:
+            out["lat"], out["lon"] = lat, lon
+    for mask in (0x20, 0x40):
+        if flags & mask:
+            at += 2
+    if flags & 0x80 and len(b) > at:
+        out["name"] = b[at:].split(bytes(1), 1)[0].decode("utf-8", "replace") or None
+    return out
+
+
 def packet_hash(raw):
     """The firmware's packet hash (16 hex digits), or None for a packet parse() rejects."""
     p = parse(raw)

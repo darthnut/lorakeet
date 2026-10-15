@@ -142,6 +142,8 @@ def test_radios_by_name_and_answers_in_local_time(fake):
     assert posts[-1][1]["id"] == "!a0000002" and not out["isError"]
     out = _call(lk, "watch_node", node="gar")                  # ambiguous: says which
     assert out["isError"] and "Garden Shed" in out["content"][0]["text"]
+    assert lk.resolve("mc:A0000017C2BE") == "mc:a0000017c2be"   # a MeshCore id stays one (it once became "!mc:...")
+    assert lk.resolve("A0000001") == "!a0000001"
 
 
 def test_api_get_is_read_only(fake):

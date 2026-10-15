@@ -17,6 +17,7 @@ from config import CFG
 from fwlog import ANSI, parse_rx, parse_tx, strip_text_prefix
 import keyflags
 import nodeids
+import radioid
 import runtime
 from station import load_station_locations, set_clock_from_gps
 from store import DebugLog, dumps, node_id, redacted_channels, redacted_config, redacted_module_config
@@ -42,12 +43,18 @@ def messages_for_this_radio(store, local, limit=200):
     them. Channel indexes differ between radios (the Pi's 2 is the desk's 1, both "Lorakeet"), so another
     station's copy is renumbered by channel name; one on a channel this radio doesn't have gets channel None
     (shown in no channel view). Phone-log imports (no packet id, no channel recorded) are left out: they can't be
-    matched with the stations' copies and only ever showed up as unlabelled duplicates."""
+    matched with the stations' copies and only ever showed up as unlabelled duplicates. MeshCore messages carry no packet
+    id either, but they're real: a MeshCore station's copies stay."""
     rows = store.query(
         "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
         "ELSE from_id || ':' || pkt_id END ORDER BY (station IS ?) DESC, outgoing DESC, ts) AS _copy "
-        "FROM messages WHERE NOT (pkt_id IS NULL AND station IS NOT ?)) WHERE _copy = 1 "
+        "FROM messages WHERE NOT (pkt_id IS NULL AND station IS NOT ? AND station NOT LIKE 'mc:%')) WHERE _copy = 1 "
         "ORDER BY ts DESC LIMIT ?", local, local, limit)
+    for m in rows:
+        st = m.get("station")
+        if st and st != local and radioid.is_meshcore(st) and m.get("to_id") == "^all":
+            # a MeshCore channel: another mesh, never one of this radio's channels
+            m["channelName"], m["channel"] = f"MeshCore channel {m.get('channel') or 0}", None
     with store.lock:
         names = topology._channel_names(store.db)
     if not local or local not in names:
@@ -55,7 +62,7 @@ def messages_for_this_radio(store, local, limit=200):
     mine = {name: idx for idx, name in names.get(local, {}).items()}
     for m in rows:
         st = m.get("station")
-        if st and st != local and m.get("to_id") in ("^all", "!ffffffff"):
+        if st and st != local and not radioid.is_meshcore(st) and m.get("to_id") in ("^all", "!ffffffff"):
             name = names.get(st, {}).get(m.get("channel") or 0)
             m["channelName"] = name
             m["channel"] = mine.get(name) if name else None
@@ -94,6 +101,8 @@ def keep_recipient(frm, to, local):
 def arrival_of(packet):
     """How a packet reached the dashboard, from fields the radio reported (mirrors packetsearch.ARRIVAL_SQL)."""
     tm = packet.get("transportMechanism")
+    if "meshcore" in packet:
+        return "lora"   # a MeshCore station logs only what its radio heard on the air
     if isinstance(tm, str) and tm.startswith("TRANSPORT_LORA"):
         return "lora"
     if tm in ("TRANSPORT_MQTT", "TRANSPORT_MULTICAST_UDP", "TRANSPORT_API"):
@@ -217,6 +226,10 @@ class Mesh(RadioLink):
         self.port_hint = port_hint
         self.host, self.tcp_port = host or None, tcp_port
         self.iface = None
+        self._connecting = None    # the interface while it connects (boot lines arrive before it's self.iface)
+        self.extras = []           # [[radios]]: the other radios this Lorakeet logs (server.py); this is the main one
+        self.claimed_ports = set()   # their ports: auto-detect leaves them alone
+        self.station_name = ""     # an extra radio's [[radios]] name (the main radio's is [station] name)
         self.needs_choice = False  # several radios on USB and none of them the remembered one
         self.rx = {}  # node id -> {"rssi","snr","ts","count"} as heard by our radio
         # firmware debug-log records received / RX-TX header lines mined from them (alerts.py watches the
@@ -227,7 +240,12 @@ class Mesh(RadioLink):
         self.station_ids = set()  # every listening station seen (ours + collectors)
         r = store.query("SELECT MAX(ts) AS ts FROM packets WHERE relay=? AND hops>0", runtime.BASE_BYTE) if runtime.BASE_ID else None
         self.base_relay_ts = r[0]["ts"] if r else None
-        for r in store.query("SELECT from_id, MAX(ts) AS ts, snr, rssi, hops FROM packets GROUP BY from_id"):
+        # (a MeshCore packet usually names no sender: from_id is empty, and isn't a radio to list)
+        # ...and only from this link's own kind of station: a MeshCore radio's receptions aren't "heard here" on a
+        # Meshtastic radio's map (several radios, one Lorakeet), nor the other way round
+        mine = "station LIKE 'mc:%'" if self.PROTOCOL == "meshcore" else "(station IS NULL OR station NOT LIKE 'mc:%')"
+        for r in store.query("SELECT from_id, MAX(ts) AS ts, snr, rssi, hops FROM packets WHERE from_id IS NOT NULL "
+                             f"AND {mine} GROUP BY from_id"):
             self.rx[r["from_id"]] = {"ts": r["ts"], "snr": r["snr"], "rssi": r["rssi"], "hops": r["hops"], "count": 0}
         # latest position per node from our own log; the library's node DB doesn't always keep them
         self.pos = {r["node"]: r for r in store.query(
@@ -297,7 +315,8 @@ class Mesh(RadioLink):
             return f"{self.host}:{self.tcp_port}"
         if self.port_hint:  # a configured port is used strictly: with several radios on USB, never pick another
             return resolve_port(self.port_hint)
-        port, problem = pick_usb_port(self.remembered_radio(), radio_ports())
+        claimed = {resolve_port(p) or p for p in self.claimed_ports}
+        port, problem = pick_usb_port(self.remembered_radio(), radio_ports(), claimed)
         if problem:
             self.needs_choice = True
             err = "several radios are plugged in: choose the one to log from on the Radio page"
@@ -315,6 +334,7 @@ class Mesh(RadioLink):
         iface = None
         try:
             iface = SerialInterface(port, timeout=CONNECT_TIMEOUT_S, connectNow=False)
+            self._connecting = iface
             # The library flattens each firmware LogRecord to bare text and drops its level, source
             # and timestamp. Intercept records before that happens (set before connecting so boot-time
             # records are caught too). connect + waitForConfig is exactly what connectNow=True does.
@@ -345,7 +365,7 @@ class Mesh(RadioLink):
                 load_station_locations(self.store, self.local_id)
                 self._load_remote()
                 self.node_cache = iface.nodes or {}
-                self.last_rx = time.time()
+                self.last_rx = time.monotonic()
                 self.connected = True
                 self.connected_at = time.time()
             log.info("connected: %s on %s, %d nodes", self.local_id, port, len(self.node_cache))
@@ -416,6 +436,8 @@ class Mesh(RadioLink):
         self.store.insert("rx_hops" if rx else "tx_log", ts=time.time(), **h)
 
     def _on_log_line(self, line, interface, **_):
+        if interface is not self.iface and interface is not self._connecting:
+            return  # another radio's (several radios, one Lorakeet)
         # Plain-text lines only arrive outside protobuf mode (e.g. boot chatter before the API starts).
         line = ANSI.sub("", line).rstrip()
         if self.debug_log and line.strip():
@@ -475,11 +497,12 @@ class Mesh(RadioLink):
                 frm = r["from_id"]
                 if frm in self.station_ids:
                     continue  # a station hearing another station's own radio: internal traffic
-                cur = self.rx_remote.get(frm)
-                if not cur or r["ts"] >= cur["ts"]:
-                    self.rx_remote[frm] = {"from_id": frm, "station": station, "ts": r["ts"], "snr": r["snr"],
-                                           "rssi": r["rssi"], "hops": r["hops"]}
-                touched.add(frm)
+                if frm:   # (a MeshCore packet often names no sender: nothing to place, still a packet for the feed)
+                    cur = self.rx_remote.get(frm)
+                    if not cur or r["ts"] >= cur["ts"]:
+                        self.rx_remote[frm] = {"from_id": frm, "station": station, "ts": r["ts"], "snr": r["snr"],
+                                               "rssi": r["rssi"], "hops": r["hops"]}
+                    touched.add(frm)
                 if r["ts"] > time.time() - 600:  # live only: a catch-up after an outage doesn't flood the feed
                     raw = json.loads(r["raw"]) if r["raw"] else {}
                     self.broadcast("packet", {k: r[k] for k in ("rowid", "ts", "from_id", "to_id", "portnum", "channel", "snr",
@@ -610,7 +633,7 @@ class Mesh(RadioLink):
 
     def status(self):
         return {"connected": self.connected, "paused": self.paused, "port": self.port, "localId": self.local_id,
-                "baseId": runtime.BASE_ID, "baseName": runtime.BASE_NAME, "stations": self.station_names(), "demo": bool(runtime.DEMO)}
+                "protocol": self.PROTOCOL, "radios": [x.status() for x in self.extras], "baseId": runtime.BASE_ID, "baseName": runtime.BASE_NAME, "stations": self.station_names(), "demo": bool(runtime.DEMO)}
 
     # -- history seeding from the radio's own node DB
     def _seed_history(self):
@@ -635,13 +658,15 @@ class Mesh(RadioLink):
 
     # -- live packets
     def _on_node(self, node, interface, **_):
+        if interface is not self.iface:
+            return  # another radio in this Lorakeet ([[radios]]): the library's events go to every listener
         nid = node.get("user", {}).get("id") or node_id(node["num"])
         self.broadcast("node", self.node_json(nid))
 
     def _on_receive(self, packet, interface, **_):
         if interface is not self.iface:
             return  # straggler from a connection we've already dropped
-        self.last_rx = time.time()
+        self.last_rx = time.monotonic()
         try:
             self._handle(packet)
         except Exception as e:  # noqa: BLE001 - one bad packet must not kill the reader thread
@@ -799,6 +824,9 @@ class Mesh(RadioLink):
         if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
             raise ValueError(f"message is longer than {MAX_TEXT_BYTES} bytes")
         dest = to or BROADCAST
+        if dest != BROADCAST and not radioid.is_meshtastic(dest):
+            # the library would take the id's last 8 hex digits as a node number: a DM to some other radio, or none
+            raise ValueError("a Meshtastic radio can only message a Meshtastic radio (!xxxxxxxx)")
         state = {"status": "sending", "pkt_id": None}
 
         def set_status(status):
@@ -855,6 +883,9 @@ class Mesh(RadioLink):
         self._require_link()
         if not target or target in (self.local_id, BROADCAST):
             raise ValueError("pick a remote node to trace")
+        if not radioid.is_meshtastic(target):
+            # the library would turn the id's last 8 hex digits into a node number and send to a radio that isn't there
+            raise ValueError("only a Meshtastic radio (!xxxxxxxx) can be traced from a Meshtastic radio")
         wait = TRACEROUTE_COOLDOWN_S - (time.time() - self.last_traceroute)
         if wait > 0:
             raise ValueError(f"wait {wait:.0f} s between traceroutes")
@@ -928,6 +959,9 @@ class Mesh(RadioLink):
     # -- serialization
     def describe(self, nid):
         """Display identity for analytics: live node DB first, then our identity log."""
+        if not nid:   # a MeshCore channel message names its sender only in its text ("Name: message")
+            return {"name": "(sender not named)", "short": "?", "hw": None, "role": None, "announced": False,
+                    "isBase": False, "isLocal": False, "keyFlag": None, "v28": False}
         n = (self._nodes().get(nid) or {}).get("user") or {}
         k = self.known.get(nid) or {}
         name = n.get("longName") or k.get("long_name") or (runtime.BASE_NAME if nid == runtime.BASE_ID else nid)
@@ -952,7 +986,7 @@ class Mesh(RadioLink):
                 # not in the radio's node DB yet: placeholder so the base card is always there
                 n = {"num": int(runtime.BASE_ID[1:], 16), "user": {"longName": runtime.BASE_NAME, "shortName": runtime.BASE_NAME}}
             elif nid in self.pos or nid in self.rx or nid in self.rx_remote:
-                n = {"num": int(nid[1:], 16), "user": {}}
+                n = {"num": radioid.node_num(nid), "user": {}}   # a MeshCore radio has no node number
             else:
                 return None
         u, p, dm = n.get("user", {}), dict(n.get("position") or {}), n.get("deviceMetrics") or {}
@@ -969,9 +1003,9 @@ class Mesh(RadioLink):
         rx = self.rx.get(nid, {})
         rr = self.rx_remote.get(nid)
         return {
-            "id": nid, "num": n.get("num"),
+            "id": nid, "num": n.get("num"), "protocol": radioid.protocol_of(nid),
             "longName": u.get("longName") or nid, "shortName": u.get("shortName") or nid[-4:],
-            "hwModel": u.get("hwModel"), "role": u.get("role", "CLIENT"),
+            "hwModel": u.get("hwModel"), "role": u.get("role", None if radioid.is_meshcore(nid) else "CLIENT"),
             "lat": p.get("latitude"), "lon": p.get("longitude"), "alt": p.get("altitude"),
             "precisionBits": p.get("precisionBits"), "positionTime": p.get("time"),
             # nodes without a set clock report 1970-era times; treat those as unknown
@@ -999,7 +1033,7 @@ class Mesh(RadioLink):
     def state(self):
         nodes = []
         for nid in set(self._nodes()) | set(self.pos) | set(self.rx) | set(self.rx_remote) | ({runtime.BASE_ID} if runtime.BASE_ID else set()):
-            j = self.node_json(nid)
+            j = self.node_json(nid) if nid else None
             if j:
                 nodes.append(j)
         return {"status": self.status(), "nodes": nodes, "now": time.time()}

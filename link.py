@@ -16,6 +16,14 @@ from store import dumps
 
 log = logging.getLogger("meshdash")
 
+# Opening a USB radio's port restarts it, and a radio booting (radio and GPS powering up, its first transmissions)
+# draws a burst of current. Radios sharing one USB budget (a Pi 4 has 1.2 A for all four ports) restarting together
+# tripped the Pi's over-current protection, which cut every port at once, the data drive included. So the radios in
+# one Lorakeet open their ports one at a time, at least STAGGER_S apart.
+STAGGER_S = 20
+_open_lock = threading.Lock()
+_last_open = [0.0]   # time.monotonic() of the last port opening; [] so tests can reset it
+
 
 class RadioLink:
     PROTOCOL = None
@@ -29,7 +37,10 @@ class RadioLink:
         self.paused = False  # logging paused (tray / dashboard): the radio's port is let go until resumed
         self.port = None
         self.local_id = None
-        self.last_rx = 0     # anything from the radio, including its own telemetry (the watchdog)
+        # anything from the radio, including its own telemetry (the watchdog). time.monotonic(), not the wall clock: a
+        # Pi has no clock battery and boots on its shutdown time, so network time can jump it forward by hours after
+        # boot, which read as hours of silence and restarted every radio.
+        self.last_rx = 0
         self.last_connect_error = None
         self.lock = threading.RLock()
         self.subscribers = set()
@@ -52,16 +63,30 @@ class RadioLink:
     def run(self):
         while True:
             try:
-                if self.connected and not self.paused and time.time() - self.last_rx > self.WATCHDOG_S:
+                if self.connected and not self.paused and time.monotonic() - self.last_rx > self.WATCHDOG_S:
                     log.warning("no data from radio for %d s; reconnecting", self.WATCHDOG_S)
                     self.event("watchdog", silent_s=self.WATCHDOG_S)
                     self.drop_link()
                 if not self.connected and not self.paused:
-                    self.connect()
+                    self.connect_staggered()
                 self.tick()
             except Exception:  # noqa: BLE001 - this loop must never die
                 log.exception("connection loop error")
             time.sleep(self.LOOP_S)
+
+    def connect_staggered(self):
+        """connect(), but never within STAGGER_S of another radio's port opening in this Lorakeet. An attempt that
+        fails fast (no radio there: the port never opened) doesn't count."""
+        with _open_lock:
+            wait = _last_open[0] + STAGGER_S - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            t = time.monotonic()
+            try:
+                self.connect()
+            finally:
+                if self.connected or time.monotonic() - t > 2:
+                    _last_open[0] = time.monotonic()
 
     def set_paused(self, paused):
         """Pause logging: let go of the radio (its USB port is free for the radio's own app, a CLI or a flasher)

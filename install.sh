@@ -3,9 +3,12 @@
 #   ./install.sh               # set up (or update) the Python environment, plus a "Lorakeet" launcher
 #   ./install.sh --autostart   # ...and run Lorakeet as a system service (Linux with systemd; asks for sudo)
 #   ./install.sh --no-shortcut # without the launcher
+#   ./install.sh --meshcore    # ...plus the MeshCore library, for a MeshCore radio (asked when run in a terminal;
+#                              # --no-meshcore skips the question)
 #   ./install.sh --uninstall   # remove the launcher, the service and the venv (your logged data is kept)
 #
-# It checks for Python 3.11+, creates the virtual environment in ./venv and installs the requirements.
+# It checks for Python 3.11+, creates the virtual environment in ./venv and installs the requirements (and the
+# MeshCore library when asked, or when it's already there: an update keeps it).
 # Safe to run again after updating (git pull): it only installs what changed.
 # The launcher (an app-menu entry on a Linux desktop, Lorakeet.command on a Mac's Desktop) runs lorakeet.pyw:
 # it starts Lorakeet if it isn't running and opens it in the browser.
@@ -16,15 +19,17 @@
 set -eu
 cd "$(dirname "$0")"
 here=$(pwd)
-autostart=0; shortcut=1; uninstall=0
+autostart=0; shortcut=1; uninstall=0; meshcore=ask
 desktop_entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/lorakeet.desktop"
 mac_command="$HOME/Desktop/Lorakeet.command"
 for a in "$@"; do
   case "$a" in
     --autostart) autostart=1 ;;
     --no-shortcut) shortcut=0 ;;
+    --meshcore) meshcore=1 ;;
+    --no-meshcore) meshcore=0 ;;
     --uninstall) uninstall=1 ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (try --help)"; exit 2 ;;
   esac
 done
@@ -74,6 +79,32 @@ if [ ! -x venv/bin/python ]; then
 fi
 echo "Installing the requirements..."
 venv/bin/python -m pip install --disable-pip-version-check --prefer-binary -q -r requirements.txt
+# The MeshCore library: only a MeshCore station needs it. Already installed, or the settings name a MeshCore radio
+# (a venv made afresh): keep it, and up to date, without asking.
+has_meshcore=$(venv/bin/python - 2>/dev/null <<'PY' || true
+import importlib.util
+n = importlib.util.find_spec("meshcore") is not None
+try:
+    from config import CFG
+    n = n or "meshcore" in [CFG["radio"]["protocol"]] + [r.get("protocol") for r in CFG["radios"]]
+except Exception:
+    pass
+print("yes" if n else "no")
+PY
+)
+[ "$has_meshcore" = yes ] && meshcore=1
+if [ "$meshcore" = ask ]; then
+  meshcore=0
+  if [ -t 0 ]; then
+    printf "Will this Lorakeet log a MeshCore radio? (Most mesh radios run Meshtastic: say no unless yours runs MeshCore.) [y/N] "
+    read -r answer || answer=""
+    case "$answer" in [yY]*) meshcore=1 ;; esac
+  fi
+fi
+if [ "$meshcore" = 1 ]; then
+  echo "Installing the MeshCore library..."
+  venv/bin/python -m pip install --disable-pip-version-check --prefer-binary -q -U -r requirements-meshcore.txt
+fi
 version=$(venv/bin/python server.py --version)
 echo "$version is installed."
 

@@ -20,15 +20,16 @@ all run `server.py` from the folder). Each module's docstring says what it holds
 | `store.py` | mesh.db: `SCHEMA`, `MIGRATIONS`, `SCHEMA_VERSION`, `FIELD_NOTES`, `Store`, `DebugLog`, secret stripping (`redacted_*`, `scrub_logged_secrets`) |
 | `fwlog.py` | firmware debug-log parsing (`parse_rx`, `parse_tx`) |
 | `channels.py` | channel hashes and keys (`radio_channels`, `channel_keys`), public fingerprints |
-| `link.py` | `RadioLink`, what every protocol's link shares: the reconnect loop and watchdog, pausing, the events log, the SSE fan-out. A link supplies `connect()`, `drop_link()`, `tick()`, `status()` |
+| `link.py` | `RadioLink`, what every protocol's link shares: the reconnect loop and watchdog, pausing, the events log, the SSE fan-out. A link supplies `connect()`, `drop_link()`, `tick()`, `status()`. Radios open their ports `STAGGER_S` (20 s) apart (`connect_staggered`): each opening restarts the radio, and two restarting together tripped a Pi 4's USB over-current limit |
 | `mesh.py` | `Mesh(RadioLink)`, the Meshtastic link: connect, log, live state, send; port detection, packet helpers |
+| `meshcore_link.py` | `MeshCoreLink(Mesh)`, the MeshCore link (a Mesh subclass, so the pages' live state, node list and status work unchanged; `send_text`/`traceroute` refuse): the `meshcore` library on its own event loop thread; receptions -> `mc_rx` (+ first hearing -> `packets`), adverts -> `node_info`/`positions`, messages, counters -> `telemetry_full`. Used for `[radio] protocol = "meshcore"` and `[[radios]]` entries with that protocol. A radio stuck silent gets an RTS reset (`_reset_radio`, Espressif USB only) |
 | `meshcore_packet.py` | MeshCore raw packets: `parse` (route, transport codes, path key prefixes, payload), the firmware `packet_hash` (dedup across paths; not the library's `pkt_hash`), `clock_status` (seeded clocks). Pure: no radio or library needed |
-| `radioid.py` | the one place that knows what a radio id is (`!xxxxxxxx`, MeshCore `mc:` + 12 hex). Never write an id regex elsewhere; `static/common.js` `isRadioId` is the browser's copy. MeshCore ids are recognised but not accepted until the MeshCore link lands (`ACCEPTED`). Plan: docs/MESHCORE.md |
+| `radioid.py` | the one place that knows what a radio id is (`!xxxxxxxx`, MeshCore `mc:` + 12 hex). Never write an id regex elsewhere; `static/common.js` `isRadioId` is the browser's copy. `ACCEPTED` takes both kinds; settings that name radios by number (`[base] id`, `[remote] allow`) are Meshtastic-only. Plan: docs/MESHCORE.md |
 | `station.py` | station health (`HealthWatch`), `station_report`, locations, Radio-page station settings |
 | `peers.py` | `PeerManager` (hub-to-hub senders) |
 | `web.py` | `make_handler` (the request handler: pages, analytics, settings, login, SSE), access, connection limits |
 | `web_radio.py`, `web_hub.py` | route mixins: the Radio page (`/api/radio*`); ingest + the Stations page (`/api/ingest*`, `/api/hub*`). `make(...)` closes over make_handler's state, so their methods read `mesh`, `store` etc. as before |
-| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `packetsearch.py` |
+| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `meshcore_anatomy.py`, `packetsearch.py` |
 | features | `alerts.py`, `storage.py` (backups), `sync.py`, `pairing.py`, `remote.py`, `login.py`, `radio_setup.py`, `radio_advanced.py`, `demo.py`, `config.py`, `api_index.py`, `mcp_server.py`, `tray.py`, `supervise.pyw`, `lorakeet.pyw` |
 
 Tests patch a name where it's read: `runtime.DATA_DIR`, `store_mod.DB_WAIT_S`, `web_mod.client_access`.
@@ -132,7 +133,8 @@ nonexistent radio.port).
   .gitattributes) run `install.ps1`, which asks as it goes (`Ask`: the default when there's no console or with
   `-Yes`; every question has a switch): install Python 3.12 if there's no 3.11+ (winget per-user, else python.org's
   installer after checking it's signed by the PSF), venv + requirements + `--version` smoke test (re-running =
-  update), shortcuts (desktop + Start menu -> `venv\Scripts\pythonw.exe lorakeet.pyw`, icon static/favicon.ico),
+  update; MeshCore: `-MeshCore`/`-NoMeshCore` asks whether to add requirements-meshcore.txt, kept and updated once
+  present or when lorakeet.toml names a MeshCore radio; install.sh `--meshcore`/`--no-meshcore`), shortcuts (desktop + Start menu -> `venv\Scripts\pythonw.exe lorakeet.pyw`, icon static/favicon.ico),
   autostart (per-user logon task "Lorakeet" running supervise.pyw; default no), open now. `-Uninstall` stops this
   folder's processes, removes the task/shortcuts only if they point at this folder, removes the venv, and deletes
   logged data only after the user types DELETE (never with -Yes). `install.sh`: the same for Linux (app-menu
@@ -154,6 +156,12 @@ nonexistent radio.port).
   409 saying how. Exit code 0 always means "asked to restart" to the supervisor: no crash back-off.
 - **supervise.pyw** allows one supervisor per dashboard port (`Local\lorakeet-supervisor-<port>`); before
   0.3.0 it was one per session, so a second install's runner quietly stood down.
+- **Several radios** (`[[radios]]`: protocol, port (required), name, sync_token): each extra radio is its own station in
+  the one mesh.db. `StationStore` tags its rows with its station; `Store.own_stations()` (main + settings `own_station`/
+  `own_stations`) is what a hub refuses from others. Collectors sync each on its own pairing and bookmark
+  (`sync_progress:<station>`). Mesh's library-event listeners ignore other interfaces (the meshtastic library's pubsub
+  is process-wide). The live map and Radio page are the main radio's; `status.radios` lists the extras; pausing lets go
+  of every port. Known limit: two Meshtastic radios share the `radio_channels` settings record.
 - **Network radios:** `[radio] host` (or `--host`) connects to a Wi-Fi/Ethernet radio's TCP API (port 4403)
   instead of USB, through the same connect/watchdog path (`Mesh.run` builds a `TCPInterface(connectNow=False)`, then `connect()`
   (which opens the socket itself: calling `myConnect()` too made a second connection the radio kept dropping)
@@ -253,6 +261,11 @@ nonexistent radio.port).
   `keyFlags` in the anatomy; drawn by `keyBadge()` (prov.js) on the map's node list, panel and feed, node
   pages, the Analytics node table (`key:flagged` filter), the Packets browser ("Sender key" filter), the
   replay log and texts panel (not on `?anon=1` pages). insights.py's weak/duplicate findings share its rules.
+- **MeshCore packet anatomy** (`meshcore_anatomy.py`, the same endpoint and page): read from the packet's own logged bytes
+  (`packets.raw.frame`), so every field is `received`; every hearing (mc_rx by packet hash); channel messages decrypted
+  only with keys anyone can know (Public's published key; a hashtag channel's = SHA-256("#name")[:16], name typed by the
+  viewer, `?channel=`), and only when the 2-byte MAC proves the key. Tests encrypt with pycryptodome, Lorakeet decrypts
+  with cryptography. Verified 2026-10-14 on two real Public channel messages from two MeshCore radios.
 - **Packet anatomy** (`anatomy.py`): one packet rebuilt layer by layer (radio, 16-byte header, AES-CTR
   encryption, Data envelope, payload), every field labelled with where its value came from. Traceroutes
   addressed to us gain the radio's own SNR entry before the API sees them; `_traceroute_on_air` accounts

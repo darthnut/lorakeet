@@ -58,6 +58,7 @@ function card(title, sub, body, extra = "") {
 async function renderNode() {
   const d = NV.data; if (!d) return;
   const s = d.stats, est = s.coveredHours < 24;
+  const mc = d.protocol === "meshcore" || String(d.id).startsWith("mc:");  // MeshCore has no 1-byte relay ID to attribute by
   const hasTel = d.series.some((x) => x.battery != null || x.voltage != null);
   const hasSnr = d.series.some((x) => x.snr != null);
   const sub = [d.short, (d.hw || "").replace(/_/g, " ").toLowerCase(), (d.role || "").replace(/_/g, " ").toLowerCase(), d.id].filter(Boolean).join(" · ");
@@ -93,7 +94,7 @@ async function renderNode() {
       ${tile("Last heard", s.lastEver ? esc(ago(s.lastEver)) : "—", s.firstEver ? `first heard ${esc(when(s.firstEver))}` : "", "observed")}
       ${tile("Longest silence", sil ? dur(sil.seconds) : "—", sil ? (sil.ongoing ? "and counting" : `ended ${esc(when(sil.to))}`) : "no gap over an hour while logging", "inferred")}
       ${tile("Heard directly", nf.format(s.direct), `of ${nf.format(s.packets)} packets (0 hops)`, "observed")}
-      ${tile("Relayed to us" + prov("inferred", "Attributed by the packet's 1-byte relay ID."), `${s.relayByteShared.length ? "≤" : ""}${nf.format(s.relayedToUs)}`, s.relayByteShared.length
+      ${mc ? tile("Relayed to us", "—", "not tracked for MeshCore") : tile("Relayed to us" + prov("inferred", "Attributed by the packet's 1-byte relay ID."), `${s.relayByteShared.length ? "≤" : ""}${nf.format(s.relayedToUs)}`, s.relayByteShared.length
         ? `<span title="${esc(s.relayByteShared.map((c) => c.name).join(", "))}">upper bound: relay ID …${esc(d.id.slice(-2))} is shared with ${s.relayByteShared.length} other node${s.relayByteShared.length === 1 ? "" : "s"}</span>`
         : "other nodes' packets it was last hop for")}
     </section>

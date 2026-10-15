@@ -23,6 +23,7 @@ async function load() {
   if (R?.demo) { $("lead").textContent = R.error; $("s1").hidden = true; return; }
   if (!R || R.error) { $("err").textContent = R?.error || "Couldn't reach Lorakeet."; schedule(); return; }
   $("err").textContent = "";
+  if (R.protocol === "meshcore") { renderMeshCore(); return; }
   renderConnect();
   const on = R.connected;
   for (const id of ["s2", "s3", "s4"]) $(id).hidden = !on;
@@ -31,6 +32,24 @@ async function load() {
   renderBackups();
   renderStation();
   schedule();
+}
+// A MeshCore station: what its radio reports, read-only. Its settings are changed in the MeshCore app (or its
+// config tool) for now; the Meshtastic steps don't apply.
+function renderMeshCore() {
+  const r = R.radio || {};
+  const row = (k, v) => `<tr><th>${esc(k)}</th><td>${v == null || v === "" ? '<span class="muted">not reported</span>' : esc(v)}</td></tr>`;
+  $("connect").innerHTML = (R.connected
+    ? `<p class="live ok">Connected: <b>${esc(r.name || r.id)}</b> <span class="muted">(${esc(r.id)})</span>, a MeshCore radio, on ${esc(R.port)}.</p>`
+    : `<p class="live wait">MeshCore radio not connected yet${R.port ? ` (trying ${esc(R.port)})` : ""}. This page updates by itself.</p>`
+      + (R.error ? `<p class="note">Last error: <code>${esc(R.error)}</code></p>` : "")) +
+    `<table class="kv">${row("Frequency", r.freq != null ? `${r.freq} MHz` : null)}${row("Bandwidth", r.bw != null ? `${r.bw} kHz` : null)}` +
+    `${row("Spreading factor", r.sf)}${row("Coding rate", r.cr != null ? `4/${r.cr}` : null)}` +
+    `${row("Transmit power", r.txPower != null ? `${r.txPower} dBm (max ${r.maxTxPower ?? "?"})` : null)}</table>` +
+    `<p class="note">This station logs a MeshCore radio. Lorakeet can't change MeshCore settings yet: use the MeshCore app or its configuration tool (and let Lorakeet's logging pause while it holds the radio). Lorakeet's Meshtastic steps (settings, channels and the logging check) don't apply to it, so they aren't shown.</p>`;
+  for (const id of ["s2", "s3", "s4", "adv", "bk"]) if ($(id)) $(id).hidden = true;
+  renderStation();
+  clearTimeout(pollT);
+  pollT = setTimeout(load, R.connected ? 15000 : 3000);
 }
 function schedule() {
   clearTimeout(pollT);

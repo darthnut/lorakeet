@@ -34,7 +34,12 @@ DEFAULTS = {
         "host": "",               # a radio on the network instead (Wi-Fi / Ethernet): IP or name, e.g.
                                   # "192.168.1.50" or "meshtastic.local"; set = no USB auto-detect
         "tcp_port": 4403,         # the radio's API port (Meshtastic's default)
+        "protocol": "meshtastic",  # or "meshcore": a MeshCore companion radio on USB (port must be set; listening only)
     },
+    # More radios logged by this one Lorakeet, each its own station (MESHCORE.md step 6): [[radios]] entries with
+    # protocol ("meshtastic" or "meshcore"), port (USB, required), name (the station's name, optional) and sync_token
+    # (its own pairing with the hub, when this is a collector). The pages' live map and Radio page are [radio]'s.
+    "radios": [],
     "storage": {
         "data_dir": "",           # empty = per-OS default (see default_data_dir)
         "db_warn_gb": 1.0,        # warn (banner + notification) when the database reaches this size
@@ -168,13 +173,36 @@ def _validate(c):
                 ipaddress.ip_network(n)
             except ValueError:
                 raise ValueError(f"lorakeet.toml: sync.allow: {n!r} is not a network") from None
-    for nid in c["remote"]["allow"]:
-        if not radioid.is_radio_id(nid):
+    for nid in c["remote"]["allow"]:   # remote commands are Meshtastic direct messages
+        if not (radioid.is_radio_id(nid) and radioid.is_meshtastic(nid)):
             raise ValueError('lorakeet.toml: remote.allow entries look like "!1234abcd"')
     if c["remote"]["enabled"] and not c["remote"]["allow"]:
         raise ValueError("lorakeet.toml: remote.enabled needs at least one radio in remote.allow")
+    for i, x in enumerate(c["radios"], 1):
+        if not isinstance(x, dict):
+            raise ValueError("lorakeet.toml: each [[radios]] entry is a table")
+        unknown = set(x) - {"protocol", "port", "name", "sync_token"}
+        if unknown:
+            raise ValueError(f"lorakeet.toml: [[radios]] entry {i}: unknown setting {', '.join(sorted(unknown))}")
+        if x.get("protocol", "meshtastic") not in ("meshtastic", "meshcore"):
+            raise ValueError(f'lorakeet.toml: [[radios]] entry {i}: protocol is "meshtastic" or "meshcore"')
+        if not isinstance(x.get("port"), str) or not x["port"]:
+            raise ValueError(f"lorakeet.toml: [[radios]] entry {i} needs a port (its USB serial port)")
+        if x["port"] == c["radio"]["port"] or x["port"] in [y.get("port") for y in c["radios"][:i - 1]]:
+            raise ValueError(f"lorakeet.toml: [[radios]] entry {i}: port {x['port']} is already used by another radio")
+        if not isinstance(x.get("name", ""), str) or not isinstance(x.get("sync_token", ""), str):
+            raise ValueError(f"lorakeet.toml: [[radios]] entry {i}: name and sync_token are text")
+        if c["sync"]["mode"] == "collector" and len(x.get("sync_token", "")) < 16:
+            raise ValueError(f"lorakeet.toml: [[radios]] entry {i} needs its own sync_token (16+ characters): pair it "
+                             "with the hub as a station of its own")
+    r = c["radio"]
+    if r["protocol"] not in ("meshtastic", "meshcore"):
+        raise ValueError('lorakeet.toml: radio.protocol is "meshtastic" or "meshcore"')
+    if r["protocol"] == "meshcore" and (r["host"] or not r["port"]):
+        raise ValueError('lorakeet.toml: a MeshCore radio is on USB: set radio.port (e.g. "COM12" or /dev/ttyACM0), '
+                         "not radio.host")
     bid = c["base"]["id"]
-    if bid and not radioid.is_radio_id(bid):
+    if bid and not (radioid.is_radio_id(bid) and radioid.is_meshtastic(bid)):   # the base works by its relay byte
         raise ValueError('lorakeet.toml: base.id must look like "!1234abcd"')
 
 
@@ -310,8 +338,15 @@ def write_setup(answers):
     if path.exists():
         raise FileExistsError(f"{path} already exists")
     a = answers or {}
+    protocol = a.get("protocol") or "meshtastic"
+    if protocol not in ("meshtastic", "meshcore"):
+        raise ValueError('protocol is "meshtastic" or "meshcore"')
     radio = {}
-    if a.get("host"):
+    if protocol == "meshcore":  # USB only: a host is passed on so validation refuses it with its own message
+        radio = {"protocol": "meshcore", "port": str(a.get("port") or "").strip()}
+        if a.get("host"):
+            radio["host"] = str(a["host"]).strip()
+    elif a.get("host"):
         radio = {"host": str(a["host"]).strip(), "tcp_port": int(a.get("tcpPort") or 4403)}
     elif a.get("port"):
         radio = {"port": str(a["port"]).strip()}
@@ -341,6 +376,8 @@ def write_setup(answers):
         "station": "# This listening station: a name, and the antenna's position [lat, lon] for the maps.",
         "sync": "# This station sends what it logs to a hub (from a pairing code). Keep the token private.",
     }
+    if protocol == "meshcore":
+        notes["radio"] = "# The radio: a MeshCore companion radio on this USB serial port (listening only)."
     lines = ["# Lorakeet settings, written by the first-run setup page. Every option is explained in",
              "# lorakeet.example.toml; edit this file and restart Lorakeet to change them.", ""]
     for section, values in user.items():

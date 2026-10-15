@@ -228,6 +228,10 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                         else:
                             analytics.STATION_LOCATIONS.pop(sid, None)
                             load_station_locations(store, mesh.local_id)
+                    elif act == "relabel":
+                        if not pairings.relabel(pid, str(body.get("label") or "")):
+                            raise ValueError("no such pairing")
+                        log.info("stations: pairing %s renamed", pid)
                     elif act == "revoke":
                         if not pairings.revoke(pid):
                             raise ValueError("no such pairing (or already revoked)")

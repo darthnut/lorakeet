@@ -111,7 +111,8 @@ class HealthWatch:
             time.sleep(self.POWER_S)
 
 
-def station_report(mesh):
+def station_report(mesh, name=None):
+    """name: an extra radio's [[radios]] name (the main radio's comes from [station] name)."""
     import platform
     import shutil
     if runtime.DEMO:  # made up, like the rest of the demo: never this computer's platform, uptime or disk
@@ -119,7 +120,7 @@ def station_report(mesh):
                 "radioFirmware": "2.7.26", "uptimeS": 3 * 86400, "backlog": 0}
     md = getattr(mesh.iface, "metadata", None) if mesh.iface is not None else None
     loc = CFG["station"]["location"]
-    rep = {"name": CFG["station"]["name"] or (mesh.name(mesh.local_id) if mesh.local_id else ""),
+    rep = {"name": (name if name is not None else CFG["station"]["name"]) or (mesh.name(mesh.local_id) if mesh.local_id else ""),
            "note": CFG["station"]["note"], "software": SOFTWARE, "version": runtime.VERSION, "platform": f"{sys.platform} {platform.machine()}",
            "uptimeS": _uptime_s(), "diskFreeMB": round(shutil.disk_usage(runtime.DATA_DIR).free / 1048576),
            "radioFirmware": getattr(md, "firmware_version", None) or None,
