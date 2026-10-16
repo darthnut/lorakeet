@@ -45,6 +45,17 @@ def hashtag_secret(name):
     return hashlib.sha256(("#" + name.lstrip("#")).encode()).digest()[:16]
 
 
+def seal_channel_message(secret, ts, text, attempt=0):
+    """A channel message's payload as a MeshCore radio sends it (the inverse of what's read below): channel hash, MAC,
+    AES-128-ECB of timestamp, flags and "name: text", zero-padded to a whole block. For made-up traffic (the demo)."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    plain = int(ts).to_bytes(4, "little") + bytes([attempt & 3]) + text.encode()
+    plain += bytes(-len(plain) % 16)
+    e = Cipher(algorithms.AES(secret), modes.ECB()).encryptor()
+    ct = e.update(plain) + e.finalize()
+    return bytes([channel_hash(secret)]) + hmac.new(secret, ct, hashlib.sha256).digest()[:2] + ct
+
+
 def _decrypt(secret, ciphertext):
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     d = Cipher(algorithms.AES(secret), modes.ECB()).decryptor()

@@ -43,9 +43,9 @@ def test_every_view_has_something_to_show(built):
     for table in ("packets", "rx_hops", "telemetry_full", "positions", "node_info", "messages", "links", "traceroutes"):
         assert _q(path, f"SELECT COUNT(*) FROM {table}")[0][0] > 0, table
     names = {r[0] for r in _q(path, "SELECT long_name FROM node_info")}
-    assert {"Demo Home", "Hilltop Station", "Demo Car"} <= names
+    assert {"Demo Home", "Hilltop Station", "Demo Car", "Demo MeshCore"} <= names
     stations = {r[0] for r in _q(path, "SELECT DISTINCT station FROM packets")}
-    assert len(stations) == 3 and home in stations
+    assert len(stations) == 4 and home in stations and sum(s.startswith("mc:") for s in stations) == 1
     assert _q(path, "PRAGMA user_version")[0][0] == store_mod.SCHEMA_VERSION
     # the newest data is minutes old, so "the last 24 hours" is full
     assert time.time() - _q(path, "SELECT MAX(ts) FROM packets")[0][0] < 3600
@@ -133,3 +133,28 @@ def test_the_demo_refuses_everything_that_touches_real_radios_or_settings(monkey
         assert written == []
     finally:
         srv.shutdown()
+
+
+def test_the_demo_has_a_meshcore_side_that_reads_like_a_real_one(tmp_path):
+    # demo_meshcore.py: real frames, so every MeshCore view (map, packets, anatomy) works on the demo
+    import types
+
+    import store as store_mod
+    import web
+    path = tmp_path / "demo.db"
+    demo.build(path)
+    st = store_mod.Store(path)
+    mc = st.query("SELECT station FROM mc_rx LIMIT 1")[0]["station"]
+    assert mc.startswith("mc:") and st.query("SELECT COUNT(*) AS n FROM positions WHERE source = 'advert'")[0]["n"] > 0
+    assert st.query("SELECT COUNT(*) AS n FROM messages WHERE station = ?", mc)[0]["n"] > 0
+    mesh = types.SimpleNamespace(name=lambda i: i)
+    public = tagged = 0
+    for r in st.query("SELECT rowid FROM packets WHERE portnum = 'MC_GRP_TXT'"):
+        a = web.packet_anatomy(st, mesh, r["rowid"])
+        assert all(c["ok"] for c in a["checks"])
+        if a["crypto"].get("plain"):
+            public += 1
+        elif web.packet_anatomy(st, mesh, r["rowid"], "demo")["crypto"].get("plain"):
+            tagged += 1
+    assert public and tagged              # Public reads itself; #demo opens when its name is typed
+    st.close()

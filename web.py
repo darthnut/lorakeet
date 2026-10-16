@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import airtime
 import analytics
 import anatomy
+import graphmetrics
 import meshcore_anatomy
 import api_index
 import diagnostics
@@ -422,9 +423,6 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                     levels=[x for x in qs.get("levels", "").split(",") if x] or None,
                     source=qs.get("source") or None))
             if path == "/api/analytics/airtime":
-                if radioid.is_meshcore(station):   # its modem maths are Meshtastic's (presets, frame layout)
-                    return self._json({"unsupported": "Airtime isn't worked out for MeshCore stations yet "
-                                                      "(docs/MESHCORE.md, step 7)."})
                 try:
                     cache = {}
                     describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
@@ -434,6 +432,17 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 except Exception as e:  # noqa: BLE001
                     log.exception("airtime failed")
                     return self._json({"error": f"airtime failed: {e}"}, 500)
+            if path == "/api/analytics/critical":
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    return self._json(graphmetrics.compute(runtime.DATA_DIR / "mesh.db", qs.get("range", "7d"), station, describe,
+                                                           everyone=qs.get("all") == "1"))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("critical relays failed")
+                    return self._json({"error": f"critical relays failed: {e}"}, 500)
             if path == "/api/analytics/stations":
                 try:
                     return self._json(compare.matrix(runtime.DATA_DIR / "mesh.db", qs.get("range", "7d"),

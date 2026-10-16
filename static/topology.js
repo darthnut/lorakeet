@@ -10,6 +10,80 @@ function nodeFill(n) {
   if (n.isBase) return "var(--base)";
   return n.role ? "var(--recent)" : "var(--stale)";
 }
+/* ---------------------------------------------------------------- Visualizations: what to show, how to colour it
+   VF (localStorage meshdash.vizShow): role (all | routers | clients), net (all | meshtastic | meshcore), links (all |
+   measured), snr (null or a minimum average link SNR, dB), colour (type | central | cuts | packets | links).
+   Filters narrow the data before the graph and map are built, so the replay and grow mode agree with what's shown;
+   listening stations always stay. Colour-by repaints the graph's radios (graphmetrics for centrality / cuts off). */
+const VF_DEFAULT = { role: "all", net: "all", links: "all", snr: null, colour: "type" };
+const VF = (() => { try { return { ...VF_DEFAULT, ...JSON.parse(localStorage.getItem("meshdash.vizShow") || "{}") }; } catch { return { ...VF_DEFAULT }; } })();
+const saveVF = () => { try { localStorage.setItem("meshdash.vizShow", JSON.stringify(VF)); } catch { /* storage blocked */ } };
+const vfActive = () => ["role", "net", "links", "snr"].filter((k) => VF[k] !== VF_DEFAULT[k]).length;
+
+// a radio that passes packets on: Meshtastic routers and repeaters, MeshCore repeaters and room servers
+const isRelayRole = (role) => /^(ROUTER|ROUTER_LATE|ROUTER_CLIENT|REPEATER|repeater|room)$/.test(String(role || ""));
+// does this radio pass the radio filters? (stations always do)
+function vizKeep(id, info = {}) {
+  if (info.isLocal || info.isStation) return true;
+  const mc = String(id).startsWith("mc:");
+  if (VF.net === "meshtastic" && mc) return false;
+  if (VF.net === "meshcore" && !mc) return false;
+  if (VF.role === "routers" && !isRelayRole(info.role)) return false;
+  if (VF.role === "clients" && isRelayRole(info.role)) return false;
+  return true;
+}
+function vizFilter(d) {
+  if (!vfActive()) return d;
+  const keep = new Set(d.nodes.filter((n) => vizKeep(n.id, n)).map((n) => n.id));
+  const edges = d.edges.filter((e) => keep.has(e.a) && keep.has(e.b) && (VF.links !== "measured" || e.measured)
+    && (VF.snr == null || (e.snr != null && e.snr >= VF.snr)));
+  const linked = new Set(edges.flatMap((e) => [e.a, e.b]));
+  const nodes = d.nodes.filter((n) => keep.has(n.id) && (linked.has(n.id) || n.isLocal || n.isStation))
+    .map((n) => ({ ...n, degree: edges.filter((e) => e.a === n.id || e.b === n.id).length }));
+  return { ...d, nodes, edges, filtered: { radios: d.nodes.length - nodes.length, links: d.edges.length - edges.length } };
+}
+
+// colour-by: a value per radio, drawn as one hue from faint (low) to strong (high); "cuts off" in the warning colour
+const VF_COLOURS = {
+  central: { label: "Centrality", needs: "critical", value: (n, m) => m?.[n.id]?.betweenness, fmt: (v) => `${fmt(v * 100, 1)} % of shortest routes pass through it` },
+  cuts: { label: "Cuts off", needs: "critical", value: (n, m) => m?.[n.id]?.cutsOff, fmt: (v) => (v ? `would cut off ${v} radio${v === 1 ? "" : "s"}` : "cuts off none"), warn: true },
+  packets: { label: "Packets heard", value: (n) => n.packets, fmt: (v) => `${nf.format(v)} packets heard` },
+  links: { label: "Links", value: (n) => n.degree, fmt: (v) => `${v} link${v === 1 ? "" : "s"}` },
+};
+// graphmetrics for the range and station shown. The fetch itself is kept, so a redraw while it's still on its way
+// waits for the same answer (returning the not-yet-filled cache painted every radio "not known").
+const VM = { key: null, pending: null };
+function vizMetrics(range) {
+  const key = `${range}|${stationQS()}`;
+  if (VM.key !== key) {
+    VM.key = key;
+    VM.pending = fetch(`/api/analytics/critical?range=${encodeURIComponent(range)}&all=1${stationQS()}`)
+      .then((r) => r.json()).then((d) => {
+        if (d.error) throw new Error(d.error);
+        return Object.fromEntries(d.radios.map((r) => [r.id, r]));
+      })
+      .catch(() => { VM.key = null; return null; });   // colour stays by type this time; the next redraw asks again
+  }
+  return VM.pending;
+}
+// fill and a tooltip line per radio for the chosen colour-by, or null for "by type"
+async function vizColouring(range, nodes) {
+  const c = VF_COLOURS[VF.colour];
+  if (!c) return null;
+  const m = c.needs ? await vizMetrics(range) : null;
+  const vals = nodes.map((n) => c.value(n, m)).filter((v) => v != null && Number.isFinite(v));
+  const max = Math.max(1e-9, ...vals);
+  return (n) => {
+    if (n.isLocal || n.isStation) return null;      // stations keep their colour: they're the observers
+    const v = c.value(n, m);
+    if (v == null || !Number.isFinite(v)) return { fill: "var(--stale)", note: `${c.label}: not known` };
+    const k = Math.sqrt(v / max);                      // square root: a few large values don't flatten the rest
+    // a hue of its own (stations are the accent blue): green for amounts, the warning colour for "cuts off"
+    const hue = c.warn && v > 0 ? "var(--warning)" : "var(--s3)";
+    return { fill: v > 0 ? `color-mix(in oklab, ${hue} ${Math.round(25 + 75 * k)}%, var(--stale))` : "var(--stale)", note: c.fmt(v) };
+  };
+}
+
 const edgeWidth = (e) => 1.5 + Math.log2(1 + e.count) * 1.2;
 const edgeTip = (e, byId) => {
   const a = byId.get(e.a), b = byId.get(e.b);
@@ -52,7 +126,7 @@ async function renderTopology(range) {
     (s.ambiguousRelayPackets ? ` ${nf.format(s.ambiguousRelayPackets)} relayed packets skipped: their 1-byte relay ID still matched several nodes.` : "") +
     (s.unknownRelayPackets ? ` ${nf.format(s.unknownRelayPackets)} skipped: relay ID matches no known node.` : "") +
     " Built from what our radio heard, so links far from the house are under-represented.";
-  if ($("topoReplay")) drawReplay(d, range);  // Visualizations: graph or map, with the player underneath
+  if ($("topoReplay")) drawReplay(vizFilter(d), range);  // Visualizations: graph or map (filtered), with the player
   else drawTable(d);                           // Analytics: the links table
 }
 
@@ -106,7 +180,7 @@ function drawGraph(d, el = $("topoGraph"), extra = { nodes: [], tethers: [] }, {
     const nb = neighbors.get(n.id);
     node.classed("dim", (m) => !nb.has(m.id));
     edge.classed("dim", (e) => e.a !== n.id && e.b !== n.id);
-    showTip(ev, `<b>${esc(n.name)}</b>${n.isBase ? " ☀" : ""}${n.keyFlag ? `<br><span class="t">⚠ ${esc(keyFlagText(n.keyFlag))}</span>` : ""}<br>${n.ghost ? `no observed RF link · reached us via ${esc(byId.get(n.via)?.name || "a relay")}, path unknown` : `${n.degree} link${n.degree === 1 ? "" : "s"}`} · ${nf.format(n.packets)} packets heard in range${n.role ? `<br><span class="t">${esc(prettyEnum(n.role))}${n.hw ? ` · ${esc(prettyHw(n.hw))}` : ""}</span>` : ""}`);
+    showTip(ev, `<b>${esc(n.name)}</b>${n.isBase ? " ☀" : ""}${n.keyFlag ? `<br><span class="t">⚠ ${esc(keyFlagText(n.keyFlag))}</span>` : ""}<br>${n.ghost ? `no observed RF link · reached us via ${esc(byId.get(n.via)?.name || "a relay")}, path unknown` : `${n.degree} link${n.degree === 1 ? "" : "s"}`} · ${nf.format(n.packets)} packets heard in range${n.role ? `<br><span class="t">${esc(prettyEnum(n.role))}${n.hw ? ` · ${esc(prettyHw(n.hw))}` : ""}</span>` : ""}${n.colourNote ? `<br><b>${esc(n.colourNote)}</b>` : ""}`);
   }).on("pointerleave", () => { node.classed("dim", false); edge.classed("dim", false); hideTip(); })
     .on("click", (ev, n) => { location.href = nodeHref(n.id); });
 
@@ -262,7 +336,13 @@ function drawGraph(d, el = $("topoGraph"), extra = { nodes: [], tethers: [] }, {
     node.each(function (n) { put(this, nodeOp ? nodeOp(n.id).toFixed(2) : null); });
     for (const sel of [edge, tether]) sel.each(function (e) { put(this, edgeOp ? edgeOp(e.a, e.b).toFixed(2) : null); });
   };
-  return { g, r, byId, pos: (id) => disp.get(id), setShown, fade, setDecay };
+  // colour-by (vizColouring): fill each radio's dot from its value, or back to its type colour with null
+  const recolor = (paint) => node.each(function (n) {
+    const p = paint ? paint(n) : null;
+    n.colourNote = p ? p.note : null;
+    d3.select(this).select("circle").attr("fill", p ? p.fill : nodeFill(n));
+  });
+  return { g, r, byId, pos: (id) => disp.get(id), setShown, fade, setDecay, recolor };
 }
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };

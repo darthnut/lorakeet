@@ -36,6 +36,33 @@ def relay_resolver(db, local):
     return lambda relay: resolve_relay(by_byte.get(relay, []), neighbors, aliases)
 
 
+def mc_prefix_resolver(db):
+    """MeshCore paths name each repeater by a short prefix of its public key (1-3 bytes, as hex). A prefix -> the one
+    known MeshCore radio it can be, or None (no radio known with it, or more than one: never guessed). Repeaters and
+    room servers are the radios that pass packets on, so they're preferred when a chat radio shares the prefix."""
+    nodes = db.execute("SELECT node, role FROM node_info WHERE node LIKE 'mc:%' AND rowid IN "
+                       "(SELECT MAX(rowid) FROM node_info WHERE node LIKE 'mc:%' GROUP BY node)").fetchall()
+    cache = {}
+
+    def resolve(prefix):
+        if prefix not in cache:
+            hits = [(n, role) for n, role in nodes if n.startswith("mc:" + prefix)]
+            relays = [n for n, role in hits if role in ("repeater", "room")]
+            pick = relays if relays else [n for n, _ in hits]
+            cache[prefix] = pick[0] if len(pick) == 1 else None
+        return cache[prefix]
+    return resolve
+
+
+def mc_chain(r, resolve):
+    """One MeshCore reception as the radios it passed: [sender or None, repeater or None per hop, ..., station]. A
+    trace's path holds SNRs, not prefixes: no chain."""
+    if r["payload_name"] == "TRACE":
+        return None
+    hops = [x for x in (r["path"] or "").split(",") if x]
+    return [r["from_id"]] + [resolve(h) for h in hops] + [r["at"]], hops
+
+
 def compute(db_path, range_key, local_id, describe):
     db = _connect(db_path, local_id)
     try:
@@ -130,6 +157,23 @@ def _compute(db, range_key, local, describe):
             relay_evidence(r["from_id"], r["relay"], r["hops"], r["snr"], r["ts"], r["at"])
     rx_start = min((r["ts"] for r in rx), default=None)
 
+    # MeshCore receptions: each names the repeaters it came through (key prefixes, resolved only when unambiguous).
+    # A heard-direct advert is a measured link; a path's links are inferred (a short prefix stands for the radio).
+    mc_resolve = mc_prefix_resolver(db)
+    mc_rows = 0
+    for r in q("SELECT ts, from_id, path, hops, snr, payload_name, COALESCE(station, ?) AS at FROM mc_rx WHERE ts >= ?",
+               local, since):
+        chain = mc_chain(r, mc_resolve)
+        if not chain:
+            continue
+        mc_rows += 1
+        nodes_on, _ = chain
+        if r["hops"] == 0:
+            add(r["from_id"], r["at"], "direct", r["snr"], r["ts"])   # nothing between (add skips an unnamed sender)
+            continue
+        for i, (a, b) in enumerate(zip(nodes_on, nodes_on[1:])):
+            add(a, b, "path", r["snr"] if i == len(nodes_on) - 2 else None, r["ts"])   # the SNR is the last hop's
+
     # nodes: every endpoint, with identity, latest position and activity in range
     ids = {i for e in edges.values() for i in (e["a"], e["b"])}
     pos = _positions(db, ids, tracks)
@@ -157,7 +201,7 @@ def _compute(db, range_key, local, describe):
                       "measured": sum(e["measured"] for e in out_edges),
                       "inferred": sum(not e["measured"] for e in out_edges),
                       "ambiguousRelayPackets": ambiguous, "unknownRelayPackets": unknown,
-                      "relayResolvedByLink": by_link, "receptionsMined": rx_rows,
+                      "relayResolvedByLink": by_link, "receptionsMined": rx_rows, "meshcoreReceptions": mc_rows,
                       "miningSince": rx_start}}
 
 
@@ -305,8 +349,32 @@ def _replay(db, range_key, local):
         seen.add((r["from_id"], r["pkt_id"], r["hops"], r["relay"], r["at"]))
         p = port.get((r["from_id"], r["pkt_id"]))
         events.append(_event(r, p, resolve_at(r["at"]), local, "rx", rowid.get((r["from_id"], r["pkt_id"]))))
+    # MeshCore: every reception (mc_rx), each with the chain of radios it came through; its first hearing in packets
+    # (named MC_*, often without a sender) is that same reception, so it isn't a second event
+    mc_resolve, mc_rowid = mc_prefix_resolver(db), {}
+    for r in q("SELECT rowid, pkt_id FROM packets WHERE ts >= ? AND substr(portnum, 1, 3) = 'MC_'", since - 600):
+        mc_rowid[r["pkt_id"]] = r["rowid"]
+    for r in q("SELECT ts, from_id, path, hops, snr, payload_name, packet_hash, COALESCE(station, ?) AS at FROM mc_rx "
+               "WHERE ts >= ? ORDER BY ts", local, since):
+        port_mc = f"MC_{r['payload_name']}"
+        e = {"ts": r["ts"], "kind": "mc", "from": r["from_id"], "group": port_group(port_mc), "portnum": port_mc,
+             "hops": r["hops"]}
+        chain = mc_chain(r, mc_resolve)
+        if chain:
+            e["path"], e["prefixes"] = chain[0][1:-1], chain[1]
+        if r["at"] and r["at"] != local:
+            e["at"] = r["at"]
+        if r["snr"] is not None:
+            e["snr"] = r["snr"]
+        h = r["packet_hash"] or ""
+        row = mc_rowid.get(int(h[:13], 16)) if h else None
+        row = row or (mc_rowid.get(int(h[:15], 16)) if h else None)   # rows logged before the 52-bit ids
+        if row:
+            e["row"] = row
+        events.append(e)
     for r in q("SELECT ts, from_id, relay, hops, snr, pkt_id, to_id, portnum, rowid, COALESCE(station, ?) AS at "
-               "FROM packets WHERE ts >= ? AND from_id != COALESCE(station, ?) ORDER BY ts", local, since, local):
+               "FROM packets WHERE ts >= ? AND from_id IS NOT COALESCE(station, ?) "
+               "AND (portnum IS NULL OR substr(portnum, 1, 3) != 'MC_') ORDER BY ts", local, since, local):
         if (r["from_id"], r["pkt_id"], r["hops"], r["relay"], r["at"]) in seen:
             continue
         events.append(_event(r, r["portnum"], resolve_at(r["at"]), local, "rx", r["rowid"]))

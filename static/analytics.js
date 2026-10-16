@@ -370,6 +370,37 @@ function transcript(c) {
     <div class="b">${m.encrypted ? "🔒 Direct message our radio couldn't decrypt (missing key)" : esc(m.text)}</div></div>`).join("");
 }
 
+/* ---------------------------------------------------------------- critical relays (graphmetrics.py) */
+const CRIT = { range: null, data: null };
+
+async function renderCritical(range) {
+  if (CRIT.range !== range || !CRIT.data) {
+    try {
+      const d = await fetch(`/api/analytics/critical?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      CRIT.data = d; CRIT.range = range;
+    } catch (e) { $("critSummary").textContent = `Couldn't work out critical relays: ${e.message}`; return; }
+  }
+  const d = CRIT.data, s = d.stats;
+  if (!s.links) { $("critSummary").textContent = "No radio links observed in this range yet."; $("critRadios").innerHTML = $("critLinks").innerHTML = ""; return; }
+  $("critSummary").innerHTML = s.singlePoints
+    ? `<b>${nf.format(s.singlePoints)}</b> radio${s.singlePoints === 1 ? " is a single point" : "s are single points"} of failure: between them, <b>${nf.format(s.dependOnOne)}</b> of the ${nf.format(s.reachable)} radios linked to your station${s.stations.length === 1 ? "" : "s"} reach ${s.stations.length === 1 ? "it" : "them"} through only one of them ${prov("inferred", "Worked out from the observed link graph.")}.`
+    : `No single radio stands between your station${s.stations.length === 1 ? "" : "s"} and the rest: every one of the ${nf.format(s.reachable)} linked radios has another way in ${prov("inferred", "Worked out from the observed link graph.")}.`;
+  const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
+  const list = (ids) => ids.map((i) => esc(CRIT.names?.[i] || i)).join(", ");
+  bars($("critRadios"), d.radios.filter((r) => r.cutsOff || r.betweenness > 0.01).slice(0, 12).map((r) => ({
+    label: r.name, labelHtml: who(r.id, r.name), value: r.betweenness, r, color: r.cutsOff ? "var(--warning)" : undefined })),
+  { empty: "No radio carries much of the traffic between others.",
+    value: (v, row) => `${fmt(v * 100, 0)} % central${row.r.cutsOff ? ` · cuts off ${row.r.cutsOff}` : ""}`,
+    title: (row) => `<b>${esc(row.r.name)}</b><br>${fmt(row.r.betweenness * 100, 1)} % of shortest routes between other radios pass through it · ${row.r.degree} link${row.r.degree === 1 ? "" : "s"}${row.r.cutsOff ? `<br>Without it, ${row.r.cutsOff} radio${row.r.cutsOff === 1 ? "" : "s"} couldn't reach your stations: ${list(row.r.cutList)}` : ""}` });
+  bars($("critLinks"), d.links.slice(0, 12).map((l) => ({ label: `${l.aName} – ${l.bName}`, labelHtml: `${who(l.a, l.aName)} – ${who(l.b, l.bName)}`,
+    value: l.cutsOff, l, color: "var(--warning)" })),
+  { empty: "No single link stands between a radio and your stations.",
+    value: (v, row) => `cuts off ${v} · ${row.l.measured ? "measured" : "inferred"}`,
+    title: (row) => `<b>${esc(row.l.aName)} – ${esc(row.l.bName)}</b> (${row.l.measured ? "measured" : "inferred"} link)<br>Without it, ${row.l.cutsOff} radio${row.l.cutsOff === 1 ? "" : "s"} couldn't reach your stations: ${list(row.l.cutList)}` });
+  $("critNote").textContent = `The mesh as your station${s.stations.length === 1 ? "" : "s"} heard it in this range: ${nf.format(s.radios)} radios, ${nf.format(s.links)} links, ${fmt((s.inferredShare || 0) * 100, 0)} % of them inferred (relay IDs, MeshCore paths). A radio that looks critical may have links you never heard; one that looks redundant may not be. Your stations themselves aren't ranked.`;
+}
+
 /* ---------------------------------------------------------------- airtime */
 const AIR = { range: null, data: null };
 const AIR_COL = (g) => (g === "Not decoded" ? "var(--text-muted)" : g === "Our radio" ? "var(--stale)" : gcol(g));
@@ -386,12 +417,16 @@ async function renderAirtime(range) {
   const d = AIR.data, t = d.totals;
   if (d.unsupported) { $("airSummary").textContent = d.unsupported; ["airChart", "airTx", "airOrig", "airLegend"].forEach((id) => ($(id).innerHTML = "")); return; }
   if (!t.loggedS) { $("airSummary").textContent = "No receptions logged in this range yet."; ["airChart", "airTx", "airOrig", "airLegend"].forEach((id) => ($(id).innerHTML = "")); return; }
-  $("airSummary").innerHTML = `Transmissions our radio heard used <b>${secs(t.heardS)}</b> of airtime: <b>${fmt(t.heardPct, 2)} %</b> of the ${fmt(t.loggedS / 3600, 0)} logged hours ${prov("inferred", "Calculated from each frame's length and the LoRa settings.")}. ` +
+  const mc = d.protocol === "meshcore";   // a MeshCore station: its radio measures its own receive and transmit airtime
+  if (mc) $("airSummary").innerHTML = `Transmissions the radio heard used <b>${secs(t.heardS)}</b> of airtime: <b>${fmt(t.heardPct, 3)} %</b> of the ${fmt(t.loggedS / 3600, 0)} logged hours ${prov("inferred", "Calculated from each packet's length and the radio's own settings (MeshCore's 16-symbol preamble).")}. ` +
+    `The radio itself measured <b>${t.chUtilAvg == null ? "—" : `${fmt(t.chUtilAvg, 3)} %`}</b> receiving ${prov("reported", "Its receive-airtime counter, read every five minutes.")} and <b>${secs(t.oursS)}</b> transmitting.` +
+    (d.radioAssumed ? " (Its settings weren't recorded: the US MeshCore settings are assumed.)" : "");
+  else $("airSummary").innerHTML = `Transmissions our radio heard used <b>${secs(t.heardS)}</b> of airtime: <b>${fmt(t.heardPct, 2)} %</b> of the ${fmt(t.loggedS / 3600, 0)} logged hours ${prov("inferred", "Calculated from each frame's length and the LoRa settings.")}. ` +
     `Our own radio transmitted for ${secs(t.oursS)} (${fmt(t.oursPct, 2)} %). Our radio measured the channel busy <b>${fmt(t.chUtilAvg, 2)} %</b> of the time ${prov("reported", "Our radio's channel utilization, from its once-a-minute device metrics.")}` +
     (t.chUtilAvg != null ? `; the ${fmt(Math.max(0, t.chUtilAvg - t.heardPct - t.oursPct), 2)} points not explained by logged packets are receptions it rejected${t.badPackets != null ? ` (${nf.format(t.badPackets)} failed CRC)` : ""}, partial receptions and interference.` : ".");
   const groups = [...d.groups, "Our radio"];
   $("airLegend").innerHTML = groups.map((g) => `<span><i style="background:${AIR_COL(g)}"></i>${esc(g)}</span>`).join("") +
-    '<span><i class="lg-line" style="border-top-color:var(--text-primary)"></i>measured channel utilization</span><span><i class="gapkey"></i>not logged</span>';
+    `<span><i class="lg-line" style="border-top-color:var(--text-primary)"></i>${mc ? "measured receive airtime" : "measured channel utilization"}</span><span><i class="gapkey"></i>not logged</span>`;
   airtimeChart($("airChart"), d, groups);
   const label = (r) => (r.id ? `<a class="nlink" href="${nodeHref(r.id)}">${esc(r.name)}</a>` : `<span class="muted">${esc(r.name)}</span>`);
   bars($("airTx"), d.transmitters.slice(0, 12).map((r) => ({ label: r.name, labelHtml: label(r), value: r.s, r })),
@@ -442,7 +477,7 @@ function airtimeChart(el, d, groups) {
     if (!b.covered) return showTip(e, `${head}<br><span class="t">Not logged: no receptions recorded</span>`);
     const rows = [...groups].reverse().map((g) => [g, g === "Our radio" ? b.ours : b.pct[g]]).filter(([, v]) => v)
       .map(([g, v]) => `<span class="sw" style="background:${AIR_COL(g)}"></span>${esc(g)} <b>${fmt(v, 2)} %</b>`).join("<br>");
-    showTip(e, `${head}<br>Calculated airtime <b>${fmt(b.total + b.ours, 2)} %</b> of the time${rows ? `<br>${rows}` : ""}<br>Measured channel utilization <b>${b.chUtil == null ? "—" : `${fmt(b.chUtil, 2)} %`}</b>${b.chUtilN ? ` <span class="t">(${b.chUtilN} readings)</span>` : ""}`);
+    showTip(e, `${head}<br>Calculated airtime <b>${fmt(b.total + b.ours, 2)} %</b> of the time${rows ? `<br>${rows}` : ""}<br>${d.protocol === "meshcore" ? "Measured receive airtime" : "Measured channel utilization"} <b>${b.chUtil == null ? "—" : `${fmt(b.chUtil, 2)} %`}</b>${b.chUtilN ? ` <span class="t">(${b.chUtilN} readings)</span>` : ""}`);
   });
   svg.addEventListener("pointerleave", () => { hot.setAttribute("visibility", "hidden"); hideTip(); });
 }
@@ -637,6 +672,7 @@ function renderAll() {
   heatmap($("heat"), d);
   renderTopology(d.range);
   renderAirtime(d.range);
+  renderCritical(d.range);
   renderMatrix(d.range);
   renderCompare(d.range);
   renderPrivacy(d);

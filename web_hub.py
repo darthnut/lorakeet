@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import threading
+import time
 
 import analytics
 from config import CFG
@@ -156,6 +157,10 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
             hubst = syncer.status()["stations"] if isinstance(syncer, sync_mod.Hub) else {}
             plist = pairings.list()
             ids = {r["id"] for r in analytics.stations(runtime.DATA_DIR / "mesh.db")} | set(metas) | {e["station"] for e in plist if e["station"]}
+            # forgotten stations stay out of the list (their logged data stays in Analytics) until they send again
+            gone = json.loads((store.query("SELECT value FROM settings WHERE key='stations_forgotten'")
+                               or [{"value": "{}"}])[0]["value"])
+            ids = {i for i in ids if i not in gone or i in metas or i in hubst}
             rows = []
             for sid in sorted(ids, key=lambda x: (x != mesh.local_id, x)):
                 m, p = metas.get(sid) or {}, next((e for e in plist if e["station"] == sid), None)
@@ -251,6 +256,13 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                                     d.pop(sid, None)
                                     store.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(d)))
                             store.db.commit()
+                        if sid:
+                            with store.lock:   # remembered, so the list leaves it out (logged data keeps it there)
+                                r = store.db.execute("SELECT value FROM settings WHERE key='stations_forgotten'").fetchone()
+                                gone = {**(json.loads(r[0]) if r else {}), sid: time.time()}
+                                store.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('stations_forgotten', ?)",
+                                                 (json.dumps(gone),))
+                                store.db.commit()
                         pairings.forget(pid=pid, station=sid)
                         analytics.STATION_LOCATIONS.pop(sid, None)
                         mesh.station_ids.discard(sid)

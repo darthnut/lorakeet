@@ -41,6 +41,24 @@
     <div class="seg vz-panel" id="topoMode" role="group" aria-label="View">
       <button data-mode="graph" class="on">Graph</button><button data-mode="geo">Geographic</button><button data-mode="drive" title="What a moving station heard along its route">Coverage</button>
     </div>
+    <details class="vz-panel vz-fadeopts" id="vzShow">
+      <summary title="Which radios and links to show, and how to colour them">Show <span class="vz-count" id="vzShowCount" hidden></span> ▾</summary>
+      <div class="vz-panel vz-fade-menu">
+        <label>Radios
+          <select id="vfRole"><option value="all">All</option><option value="routers">Routers and repeaters</option><option value="clients">Clients</option></select></label>
+        <label>Network
+          <select id="vfNet"><option value="all">Meshtastic and MeshCore</option><option value="meshtastic">Meshtastic</option><option value="meshcore">MeshCore</option></select></label>
+        <label>Links
+          <select id="vfLinks"><option value="all">Measured and inferred</option><option value="measured">Measured only</option></select></label>
+        <label>Link signal (average SNR)
+          <select id="vfSnr"><option value="">Any</option><option value="-10">At least −10 dB</option><option value="0">At least 0 dB</option><option value="5">At least 5 dB</option></select></label>
+        <label>Colour radios by
+          <select id="vfColour"><option value="type">Type (our stations, base, others)</option><option value="central">Centrality (how much passes through it)</option>
+            <option value="cuts">Cuts off (single points of failure)</option><option value="packets">Packets heard</option><option value="links">Links</option></select></label>
+        <p class="hint" id="vfHint">Your listening stations always stay. Filters apply to the graph, the map and the replay; colours to the graph.</p>
+        <button type="button" class="btn" id="vfReset">Show everything</button>
+      </div>
+    </details>
     <button type="button" class="btn vz-panel" id="vzGrow" aria-pressed="false" title="Radios appear only once the replay reaches their first packet, so the graph grows over time (G)">Grow</button>
     <button type="button" class="btn vz-panel" id="vzFade" aria-pressed="false" title="Radios dim when they go quiet and brighten when heard again (D)">Fade</button>
     <details class="vz-panel vz-fadeopts" id="vzFadeOpts">

@@ -80,6 +80,7 @@ body.vz-clean .leaflet-control-container { display: none; }
 .vz-fade-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 760; padding: 10px 12px; display: grid; gap: 8px; min-width: 270px; font-size: 13px; }
 .vz-fade-menu label { display: grid; gap: 3px; color: var(--text-secondary); }
 .vz-fade-menu select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.vz-count { display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--bg); font-size: 11px; text-align: center; }
 .vz-fade-menu .hint { color: var(--text-muted); font-size: 12px; line-height: 1.4; margin: 0; }
 
 /* grow mode: radios fade in at their first packet (topology.js fade(), on the replay's clock) */

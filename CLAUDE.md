@@ -29,7 +29,7 @@ all run `server.py` from the folder). Each module's docstring says what it holds
 | `peers.py` | `PeerManager` (hub-to-hub senders) |
 | `web.py` | `make_handler` (the request handler: pages, analytics, settings, login, SSE), access, connection limits |
 | `web_radio.py`, `web_hub.py` | route mixins: the Radio page (`/api/radio*`); ingest + the Stations page (`/api/ingest*`, `/api/hub*`). `make(...)` closes over make_handler's state, so their methods read `mesh`, `store` etc. as before |
-| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `meshcore_anatomy.py`, `packetsearch.py` |
+| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `meshcore_anatomy.py`, `packetsearch.py`, `graphmetrics.py` (critical relays: betweenness + what each radio/link would cut off from the stations, on topology's graph) |
 | features | `alerts.py`, `storage.py` (backups), `sync.py`, `pairing.py`, `remote.py`, `login.py`, `radio_setup.py`, `radio_advanced.py`, `demo.py`, `config.py`, `api_index.py`, `mcp_server.py`, `tray.py`, `supervise.pyw`, `lorakeet.pyw` |
 
 Tests patch a name where it's read: `runtime.DATA_DIR`, `store_mod.DB_WAIT_S`, `web_mod.client_access`.
@@ -75,6 +75,8 @@ Tests patch a name where it's read: `runtime.DATA_DIR`, `store_mod.DB_WAIT_S`, `
   every .py, `node --check`s every page script and tool, `bash -n`s the deploy scripts, `tools/release_check.py`,
   and the install scripts end to end. `platforms` (macOS arm64, windows-11-arm) runs only on darthnut/lorakeet or by
   hand: every dev push runs CI on the private repo, where macOS minutes cost 10x and ARM Windows doesn't exist.
+  Also to save private minutes (Windows counts 2x): a push there tests Windows on 3.12 only (the matrix `exclude`),
+  and a docs-only push (`*.md`, `docs/`, LICENSE) runs nothing. Pull requests always run the whole matrix.
 - Project files: SECURITY.md (GitHub private reporting), CONTRIBUTING.md, CODE_OF_CONDUCT.md (Contributor Covenant
   2.1, reports through the same private channel), docs/ARCHITECTURE.md, docs/POLICIES.md (a draft until the user
   removes its banner: don't present its proposals as promises).
@@ -328,6 +330,11 @@ nonexistent radio.port).
   Coverage) it also moves everything by one offset to a decoy place (`decoyShift` in topology.js: default
   14.5 degrees east at the same latitude, which keeps distances exact; `?decoy=lat,lon`), and Coverage renames
   stations/radios, drops links with real ids and never shows message text (test messages carry coordinates).
+- **Show menu** (`VF` in topology.js, localStorage `meshdash.vizShow`; viz.js wires it): filters (role, network, measured
+  links, min link SNR) applied by `vizFilter` to the topology data before drawReplay builds the graph or map, and by
+  `vizKeep` to the replay's ghosts, so the replay and grow mode agree with what's shown; stations always stay.
+  Colour-by repaints the graph's dots (`drawGraph().recolor`, `vizColouring`; centrality / cuts off from
+  `/api/analytics/critical?all=1`): one green ramp for amounts, the warning colour for cuts off, stations keep the accent.
 - **Groovy mode** (`static/groovy.js`, toolbar "🌈 Groovy" / V, `localStorage meshdash.groovy`, `?groovy=<vibe>` for
   one visit, not saved; `record-viz.mjs --groovy`): decoration only, never touches the data or the replay's state.
   Two canvases in the stage: `.groovy-back` under the views (lava-lamp blobs; the map's tiles get a hue-rotate filter
@@ -369,7 +376,8 @@ nonexistent radio.port).
 
 ## Demo (`demo.py`, `server.py --demo`, the setup page's "Explore a demo")
 
-- `demo.build(path)`: a made-up mesh around downtown Portland (`PORTLAND`, allowed by the release checker as an
+- `demo.build(path)`: a made-up mesh around downtown Portland (plus `demo_meshcore.py`: "Demo MeshCore" in Demo Home's box,
+  real MeshCore frames with their own seed; Public messages sealed with the published key, #demo with its hashtag key) (`PORTLAND`, allowed by the release checker as an
   example), fixed seed, timestamps over the last 3 days: "Demo Home" (with a 2 h logging gap), "Hilltop Station"
   (rows marked as synced: `src_rowid`, `received_via = "pair:demo"`), "Demo Car" (own GPS fixes during one drive),
   3 routers, 20 clients (4 never share a position, 2 announce the same key, one rename), public chatter, a private

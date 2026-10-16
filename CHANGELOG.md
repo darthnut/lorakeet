@@ -6,6 +6,36 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.1 (2026-10-16)
+
+**New**
+- **Show menu on Visualizations:** filter the graph, map and replay by radio type (routers and repeaters, or
+  clients), network (Meshtastic, MeshCore), link evidence (measured only) and link signal; colour radios by centrality,
+  what each would cut off (single points of failure), packets heard or links. Your stations always stay; the choice is
+  remembered per browser.
+- **Critical relays** (Analytics): which radios the mesh, as your stations hear it, depends on: each radio's share of
+  the shortest routes between others, and the radios and links whose loss would leave others unable to reach any of
+  your stations (single points of failure). Worked out from the link graph the Visualizations page draws, with how
+  much of it is inferred said plainly.
+- **MeshCore on the network graph and in the replay:** links from the repeaters each packet came through (a
+  repeater's key prefix is drawn as a radio only when exactly one known radio has it, repeaters preferred), and every
+  MeshCore reception replayed along its whole path: sender (when it's named), each repeater, the station.
+- **Airtime for MeshCore stations** (Analytics): channel time of everything the radio heard, by type and by the
+  radio on the air, calculated from each packet at the radio's own settings, with the radio's own measured receive
+  and transmit airtime alongside. MeshCore packet types share the Meshtastic groups' colours (text, node info,
+  routing) instead of all being "other".
+- **The demo has a MeshCore side:** "Demo MeshCore", a second radio in Demo Home's box, hearing a small made-up
+  MeshCore mesh (repeaters, chat radios, adverts on the map, Public channel conversations, direct messages), so every
+  MeshCore view can be tried before a radio is plugged in. Its Public messages decrypt in packet anatomy, and a
+  #demo hashtag channel opens when you type its name there.
+
+**Fixed**
+- **MeshCore radios are labelled by name on the map** (they have no short name: the map showed their id's last
+  digits), and a hub lists another station's MeshCore radios as heard by that station.
+- **"Station isn't syncing" alerts:** raised once per silence (a hub restart used to raise it again), under the
+  name you gave the station, and never for a station whose pairing you revoked. **Forget** takes a station off the
+  Stations list even when its logged data stays (it used to stay listed); it comes back if it sends again.
+
 ## 0.5.0 (2026-10-14)
 
 **New**

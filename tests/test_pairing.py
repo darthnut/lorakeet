@@ -4,6 +4,7 @@ import gzip
 import http.client
 import json
 import threading
+import time
 
 import pytest
 
@@ -51,6 +52,9 @@ class _Mesh:
 
     def name(self, nid):
         return "Hub radio"
+
+    def describe(self, nid):
+        return {"name": nid}
 
     def own_fix_now(self):
         return None
@@ -171,3 +175,18 @@ def test_join_reads_the_code_from_stdin(tmp_path):
                        capture_output=True, text=True, cwd=root, env={**__import__("os").environ, "LORAKEET_CONFIG": str(toml)},
                        timeout=60)
     assert r.returncode != 0 and "Not joined" in (r.stdout + r.stderr)
+
+
+def test_forget_takes_a_station_off_the_list_though_its_data_stays(hub):
+    # a station whose radio went away (reflashed, retired): its rows keep it in the database, but Forget means "stop
+    # listing it" (it once stayed listed, and kept raising "isn't syncing" alerts after every restart)
+    req, _, _ = hub
+    c = pairing.parse_code(req("POST", "/api/hub/pair", {"label": "Old radio"})[1]["code"])
+    rows = [{"src_rowid": 1, "station": "!a0000001", "ts": time.time() - 60, "from_id": "!a0000005", "portnum": "TEXT_MESSAGE_APP"}]
+    body = gzip.compress(json.dumps({"protocol": 1, "station": "!a0000001", "table": "packets", "rows": rows}).encode())
+    assert req("POST", "/api/ingest", body, {"Content-Encoding": "gzip", "Authorization": f"Bearer {c['token']}",
+                                             "X-Lorakeet-Station": "!a0000001"})[0] == 200
+    listed = lambda: {s["id"] for s in req("GET", "/api/hub")[1]["stations"]}  # noqa: E731
+    assert "!a0000001" in listed()
+    req("POST", "/api/hub/station", {"action": "forget", "station": "!a0000001"})
+    assert "!a0000001" not in listed()          # off the list, though its packets are still logged

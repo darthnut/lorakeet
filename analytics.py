@@ -60,7 +60,14 @@ def resolve_relay(candidates, neighbors, aliases=None):
     return None, "ambiguous"
 
 
+# A MeshCore station's packets (portnum MC_<payload type>) in the same groups, so a type keeps its colour on either mesh
+MC_GROUPS = {"MC_GRP_TXT": "Text", "MC_TXT_MSG": "Text", "MC_ADVERT": "Node info", "MC_ACK": "Routing",
+             "MC_PATH": "Routing", "MC_TRACE": "Routing"}
+
+
 def port_group(port):
+    if port in MC_GROUPS:
+        return MC_GROUPS[port]
     for name, ports in PORT_GROUPS:
         if port in ports:
             return name

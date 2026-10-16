@@ -97,6 +97,18 @@
     <p class="muted" id="cmpNote"></p>
   </section>
 
+  <section class="card" id="critCard">
+    <div class="card-head">
+      <div><h2>Critical relays</h2><p class="sub">Which radios the mesh, as your stations hear it, depends on. <b>Cuts off</b>: take that radio away and this many radios could reach none of your stations. <b>Central</b>: the share of shortest routes between other radios that pass through it.</p></div>
+    </div>
+    <p class="scope" id="critSummary"></p>
+    <div class="grid2">
+      <div><h3 class="minor">Radios</h3><div id="critRadios"></div></div>
+      <div><h3 class="minor">Links <span class="muted">(whose loss would cut radios off)</span></h3><div id="critLinks"></div></div>
+    </div>
+    <p class="muted" id="critNote"></p>
+  </section>
+
   <section class="card" id="topoCard">
     <div class="card-head">
       <div><h2>Radio links</h2><p class="sub">Which radios have been observed hearing each other directly: the RF links that carry the mesh, not who talks to whom. Measured = direct reception, traceroute or neighbor report; inferred = from relays.</p></div>
