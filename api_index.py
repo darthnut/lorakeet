@@ -76,6 +76,10 @@ ENDPOINTS = [
      "summary": "One radio's packets as CSV (raw JSON included)."},
     {"method": "GET", "path": "/api/analytics/airtime", "tier": "read", "params": {"range": RANGE, "station": STATION},
      "summary": "Channel airtime: calculated from what was heard vs measured channel utilization; by type and sender."},
+    {"method": "GET", "path": "/api/analytics/critical", "tier": "read",
+     "params": {"range": RANGE, "station": STATION, "all": "1 = every radio, not just the top 25"},
+     "summary": "Critical relays: each radio's centrality on the link graph and the radios (and links) whose loss would "
+                "cut others off from every listening station."},
     {"method": "GET", "path": "/api/analytics/topology", "tier": "read", "params": {"range": RANGE, "station": STATION},
      "summary": "Physical RF links between radios (measured and inferred from relay bytes)."},
     {"method": "GET", "path": "/api/analytics/replay", "tier": "read", "params": {"range": "default 24h", "station": STATION},

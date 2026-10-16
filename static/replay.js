@@ -47,10 +47,22 @@ async function drawReplay(d, range) {
   // radios that appear in the replay but have no observed RF link: add them, tethered to their usual relayer
   const inGraph = new Set(d.nodes.map((n) => n.id));
   const ghosts = new Map();
+  const allowed = (id) => vizKeep(id, rd.nodes?.[id] || {});   // the Show menu's radio filters apply to ghosts too
   for (const e of rd.events) {
+    if (e.kind === "mc") {
+      const chain = mcChain(e).filter(Boolean);
+      chain.forEach((id, i) => {
+        if (inGraph.has(id) || !allowed(id)) return;
+        const g = ghosts.get(id) || ghosts.set(id, { via: new Map(), hops: [] }).get(id);
+        const nb = chain[i + 1] || chain[i - 1];
+        if (nb) g.via.set(nb, (g.via.get(nb) || 0) + 1);
+        g.hops.push(1);
+      });
+      continue;
+    }
     if (e.kind === "trace") {
       for (const route of [e.path || [], e.back || []]) route.forEach((id, i) => {
-        if (!id || inGraph.has(id)) return;
+        if (!id || inGraph.has(id) || !allowed(id)) return;
         const g = ghosts.get(id) || ghosts.set(id, { via: new Map(), hops: [] }).get(id);
         const nb = route[i - 1] || route[i + 1];
         if (nb) g.via.set(nb, (g.via.get(nb) || 0) + 1);
@@ -59,7 +71,7 @@ async function drawReplay(d, range) {
       continue;
     }
     for (const id of [e.from, e.relay]) {
-      if (!id || inGraph.has(id)) continue;
+      if (!id || inGraph.has(id) || !allowed(id)) continue;
       const g = ghosts.get(id) || ghosts.set(id, { via: new Map(), hops: [] }).get(id);
       if (id === e.from) {
         const via = e.relay && e.relay !== id ? e.relay : e.at || rd.local;
@@ -126,6 +138,10 @@ async function drawReplay(d, range) {
     R.unplaced = [...ids].filter((id) => !m.at(id)).length;
   } else {
     R.graph = drawGraph(d, $("topoReplayGraph"), extra, { inset: vizInset });
+    if (R.graph && VF.colour !== "type") {   // colour-by (the Show menu): may need graphmetrics first
+      const graph = R.graph;
+      vizColouring(range, d.nodes).then((paint) => { if (current() && R.graph === graph) graph.recolor(paint); });
+    }
     if (!R.graph) { $("replayStatus").textContent = "Nothing to replay in this range yet."; return; }
     R.layer = R.graph.g.append("g").attr("class", "flights").node();
   }
@@ -550,8 +566,28 @@ function frame(now) {
   else R.raf = 0;
 }
 
+// A MeshCore reception's chain: sender (or null: most packets don't name it), each repeater (null where its key prefix
+// matches no single known radio), then the station that heard it.
+const mcChain = (e) => [e.from || null, ...(e.path || []), e.at || R.data.local];
+// where a flight starts: the sender, else (MeshCore, no sender named) the first radio on its path we can place
+function originOf(e) {
+  if (e.kind === "tx") return R.data.local;
+  if (e.kind !== "mc" || (e.from && R.graph?.pos(e.from))) return e.from;
+  return mcChain(e).find((id) => id && R.graph?.pos(id)) || null;
+}
+
 function legs(e) {
   const me = e.at || R.data.local;  // the station that heard it (combined view), else our radio
+  if (e.kind === "mc") {   // along the known chain: solid between neighbours, dashed across an unresolved hop
+    const chain = mcChain(e), out = [];
+    let last = null, gap = false;
+    for (const id of chain) {
+      if (!id || !R.graph?.pos(id)) { if (last) gap = true; continue; }
+      if (last && last !== id) out.push([last, id, gap ? "dash" : "solid"]);
+      last = id; gap = false;
+    }
+    return out;
+  }
   if (e.kind === "trace") {  // out along the measured route, then back along the return route
     const hops = (route) => route.slice(1).map((id, i) => [route[i], id, "trace"]).filter(([a, b]) => a && b);
     return [...hops(e.path || []), ...hops(e.back || [])];
@@ -567,7 +603,7 @@ function launch(e, now) {
   const log = $("replayTicker");
   log.insertAdjacentHTML("afterbegin", describeEvent(e));
   while (log.childElementCount > LOG_ROWS) log.lastElementChild.remove();
-  if (!R.graph || (!R.graph.pos(e.from) && e.kind !== "tx")) return;
+  if (!R.graph || !R.graph.pos(originOf(e))) return;
   const ns = "http://www.w3.org/2000/svg", color = rcol(e.group);
   const g = document.createElementNS(ns, "g");
   g.setAttribute("class", `flight${e.group === "Text" ? " text" : ""}${e.group === "Unknown" ? " unknown" : ""}${e.kind === "trace" ? " trace" : ""}`);
@@ -590,7 +626,7 @@ function animate(now) {
     if (age > total) { f.g.remove(); continue; }
     keep.push(f);
     // transmission ring at the originator
-    const o = R.graph.pos(f.e.kind === "tx" ? R.data.local : f.e.from);
+    const o = R.graph.pos(originOf(f.e));
     if (o) {
       const k = Math.min(1, age / 700), base = R.graph.r(o);
       f.ring.setAttribute("cx", o.x); f.ring.setAttribute("cy", o.y);
@@ -631,7 +667,11 @@ function describeEvent(e) {
     const hop = (route, snrs) => route.map((id, i) => `${id ? esc(nameOf(id)) : "unknown hop"}${i && snrs[i] != null ? ` <span class="muted">${esc(snrs[i])} dB</span>` : ""}`).join(" → ");
     return `<li class="trace-log"><span class="t">${esc(t)}</span><i style="background:${rcol(e.group)}"></i><b>Traceroute${e.origin ? ` (${esc(e.origin)})` : ""}</b> to ${esc(nameOf(e.to))}<br>out: ${hop(e.path || [], e.snr || [])}${(e.back || []).length ? `<br>back: ${hop(e.back, e.snrBack || [])}` : ""}</li>`;
   }
-  if (e.kind === "tx") path = `our radio transmitted${e.to && e.to !== "^all" ? ` to ${esc(nameOf(e.to))}` : " a broadcast"}`;
+  if (e.kind === "mc") {
+    const us = e.at ? esc(nameOf(e.at)) : "us";
+    const hops = (e.path || []).map((id, i) => (id ? esc(nameOf(id)) : `<span class="muted" title="No single known radio has this key prefix">${esc((e.prefixes || [])[i] || "?")}</span>`));
+    path = `${e.from ? esc(nameOf(e.from)) : '<span class="muted">sender not named</span>'} → ${hops.length ? `${hops.join(" → ")} → ` : ""}${us}${e.hops === 0 ? ", heard directly" : ""}`;
+  } else if (e.kind === "tx") path = `our radio transmitted${e.to && e.to !== "^all" ? ` to ${esc(nameOf(e.to))}` : " a broadcast"}`;
   else if (e.from === (e.at || R.data.local)) path = `${e.at ? `${esc(nameOf(e.at))}'s` : "our"} packet, rebroadcast by ${esc(nameOf(e.relay))}`;
   else {
     const us = e.at ? esc(nameOf(e.at)) : "us";

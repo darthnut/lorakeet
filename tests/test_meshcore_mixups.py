@@ -80,3 +80,11 @@ def test_the_packet_browser_filters_by_network(tmp_path):
     assert ports("meshcore") == ["MC_ACK", "MC_ADVERT", "MC_GRP_TXT"]
     assert ports("meshtastic") == ["TEXT_MESSAGE_APP"]
     assert len(ports("")) == 4
+
+
+def test_a_meshcore_radio_is_labelled_by_its_name():
+    # MeshCore radios have no short name: the map labelled them with the id's last digits
+    assert mesh_mod.short_label("mc:a0000017c2be", "Crest Repeater") == "Crest"
+    assert mesh_mod.short_label("mc:a0000017c2be", "Sellwood Rptr North") == "Sellwood"
+    assert mesh_mod.short_label("mc:a0000017c2be", None) == "c2be"
+    assert mesh_mod.short_label("!a0000001", "Some Radio") == "0001"   # Meshtastic: unchanged

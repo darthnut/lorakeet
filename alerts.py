@@ -64,6 +64,7 @@ class Alerts:
             store.db.executescript(SCHEMA)
             store.db.commit()
         self.state = {}  # in-memory: open silence alerts, low-battery latch, new-node batch, timers
+        self.pairings = None  # pairing.Pairings (server.py): a station whose pairing was revoked isn't watched
         self.lock = threading.Lock()
         s = self.settings()
         if base_id and not s["watched"] and not self._get("initialized"):
@@ -220,12 +221,23 @@ class Alerts:
         or this PC can't be reached). Raised once, resolved with a 'back' alert when batches resume."""
         if CFG["sync"]["mode"] != "hub":
             return
-        r = self.store.query("SELECT value FROM settings WHERE key='sync_hub'")
-        stations = json.loads(r[0]["value"]) if r else {}
-        open_ = self.state.setdefault("stationSilent", {})
+        setting = lambda k: json.loads((self.store.query("SELECT value FROM settings WHERE key=?", k)  # noqa: E731
+                                        or [{"value": "{}"}])[0]["value"])
+        stations, owners, over, meta = (setting(k) for k in ("sync_hub", "station_owners", "station_overrides",
+                                                             "station_meta"))
+        if "stationSilent" not in self.state:
+            # alerts still open from before a restart: kept, not raised again (each restart used to toast once more)
+            self.state["stationSilent"] = {r["node"]: r["rowid"] for r in self.store.query(
+                "SELECT node, MAX(rowid) AS rowid FROM alerts WHERE kind = 'station-silent' AND resolved_ts IS NULL "
+                "GROUP BY node")}
+        open_ = self.state["stationSilent"]
         limit = s["stationSilenceMin"] * 60
         for sid, st in stations.items():
-            name = self.mesh.describe(sid)["name"]
+            owner = owners.get(sid) or ""
+            if self.pairings and owner.startswith("pair:") and self.pairings.is_revoked(owner):
+                continue  # its pairing was revoked: it can't sync, and that's the point
+            # the name this hub gave it, else the one it reports, else its radio's
+            name = (over.get(sid) or {}).get("name") or (meta.get(sid) or {}).get("name") or self.mesh.describe(sid)["name"]
             quiet = time.time() - st.get("last", 0)
             if sid not in open_ and quiet >= limit:
                 open_[sid] = self.raise_alert(

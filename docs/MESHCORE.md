@@ -97,7 +97,12 @@ short prefix of the repeater's public key, though, not its id, so a path still h
 7. **Packet anatomy** (`meshcore_anatomy.py`): done. A packet laid out from its own logged bytes (nothing rebuilt):
    radio (the station radio's settings, 16-symbol preamble, sync word 0x12), header, transport codes, path, payload by
    type, the packet hash, every hearing; Public and hashtag channel messages decrypted, proven by the MAC.
-8. **Later:** airtime for its presets, a settings page, sending messages and traces.
+8. **Airtime** (`airtime._compute_meshcore`): done. Calculated per reception at the radio's own settings, against its
+   measured rx_air_secs / tx_air_secs counters; MC_* types join the port groups (analytics.MC_GROUPS).
+9. **Graph and replay from paths** (`topology.mc_prefix_resolver`, `mc_chain`): done. Path links are inferred ("path"),
+   a direct advert is measured; replay events of kind "mc" carry the whole chain (sender or none, each repeater or
+   none, the station), and the page flies them along it.
+10. **Later:** a settings page, sending messages and traces.
    Zero-hop neighbour discovery (one request, then a minute's listening: nearby repeaters answer with full keys and
    SNR, the best link evidence there is), opt-in like drive pings since it transmits.
 

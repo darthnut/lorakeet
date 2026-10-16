@@ -192,6 +192,7 @@ def main():
     mesh.claimed_ports = {x["port"] for x in CFG["radios"]}   # auto-detect never takes one of theirs
     if runtime.DEMO:
         mesh.local_id = runtime.DEMO
+        mesh._load_remote()   # the other stations' radios (Hilltop, the car, the MeshCore one): there's no connect to load it
     debug_log.on_batch = lambda rows: mesh.broadcast("debug", rows)
     # Bind before touching the radio: a second instance must exit here, not fight over the COM port.
     try:
@@ -199,6 +200,7 @@ def main():
                           dests=CFG["backup"]["destinations"],
                           on_change=lambda st: mesh.broadcast("storage", st), on_event=mesh.event)
         alert_engine = alerts_mod.Alerts(store, mesh, runtime.DATA_DIR / "mesh.db", runtime.BASE_ID)
+        alert_engine.pairings = PAIRINGS
         # http.lan = "view" / "login": all interfaces; this PC full access, other private-LAN devices read-only
         # or nothing until they log in (login.access); "off": this computer only.
         bind = "0.0.0.0" if CFG["http"]["lan"] in ("view", "login") else "127.0.0.1"

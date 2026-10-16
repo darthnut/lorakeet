@@ -25,6 +25,8 @@ NOT_DECODED = "Not decoded"  # a copy whose packet never reached the API (heard,
 def compute(db_path, range_key, local_id, describe):
     db = _connect(db_path, local_id)
     try:
+        if radioid.is_meshcore(local_id):
+            return _compute_meshcore(db, range_key, local_id, describe)
         return _compute(db, range_key, scope_local(local_id) or "", describe)
     finally:
         db.close()
@@ -150,6 +152,118 @@ def _compute(db, range_key, local, describe):
         "transmitters": [{**ident(k), "s": v[0], "n": v[1], "share": v[0] / heard if heard else 0} for k, v in tx_rows[:25]],
         "originators": [{**ident(k), "s": v[0], "copies": v[1], "packets": len(v[2]),
                          "share": v[0] / heard if heard else 0} for k, v in or_rows[:25]],
+    }
+
+
+def _compute_meshcore(db, range_key, local, describe):
+    """A MeshCore station: every reception (mc_rx, its whole packet's length) at the settings its radio reported
+    (SELF_INFO: SF, bandwidth, coding rate; MeshCore's 16-symbol preamble, meshcore_anatomy), set against what the
+    radio MEASURED: its counters carry receive and transmit airtime (rx_air_secs / tx_air_secs, seconds since it
+    booted). Only adverts name their sender; the radio on the air is the last repeater in the path (resolved where one
+    known radio has that key prefix) or, heard direct, the sender."""
+    import meshcore_anatomy   # imported here: the Meshtastic path doesn't need it
+    since, until, _first, bucket, fmt = _window(db, range_key)
+    q = lambda sql, *a: db.execute(sql, a).fetchall()  # noqa: E731
+    ev = q("SELECT detail FROM events WHERE kind = 'connected' AND detail LIKE '%self_info%' ORDER BY ts DESC LIMIT 1")
+    settings = (json.loads(ev[0][0]).get("self_info") or {}) if ev and ev[0][0] else {}
+    ms_cache = {}
+
+    def airtime(length):
+        if length not in ms_cache:
+            ms_cache[length] = meshcore_anatomy._radio(settings, length)["airtimeMs"] / 1000
+        return ms_cache[length]
+
+    radio = meshcore_anatomy._radio(settings, 0)
+    mining_since = q("SELECT MIN(ts) FROM mc_rx")[0][0]
+    covered_hours = _coverage(db, since, local)
+    known = [r[0] for r in q("SELECT DISTINCT node FROM node_info WHERE node LIKE 'mc:%'")]
+
+    def who_has(prefix):
+        hits = [n for n in known if n.startswith("mc:" + prefix)]
+        return hits[0] if len(hits) == 1 else f"repeater {prefix}" + ("" if not hits else " (shared prefix)")
+
+    by_bucket, by_group = defaultdict(Counter), Counter()
+    transmitters = defaultdict(lambda: [0.0, 0])
+    originators = defaultdict(lambda: [0.0, 0, set()])
+    no_length = 0
+    for r in q("SELECT ts, length, payload_name, path, hops, from_id, packet_hash FROM mc_rx WHERE ts >= ?", since):
+        if not r["length"]:
+            no_length += 1
+            continue
+        s = airtime(r["length"])
+        g = port_group(f"MC_{r['payload_name']}")
+        by_bucket[_bkey(r["ts"], fmt)][g] += s
+        by_group[g] += s
+        path = [x for x in (r["path"] or "").split(",") if x]
+        if r["payload_name"] == "TRACE":   # a trace's path holds each hop's SNR, not key prefixes
+            who = "a repeater on a trace"
+        else:
+            who = who_has(path[-1]) if path else (r["from_id"] or "sender not named")
+        transmitters[who][0] += s
+        transmitters[who][1] += 1
+        o = originators[r["from_id"] or "sender not named"]
+        o[0] += s
+        o[1] += 1
+        o[2].add(r["packet_hash"])
+    # measured: the radio's own receive/transmit airtime counters (seconds since boot; a smaller value = it rebooted)
+    rx_m, tx_m, n_m, prev = Counter(), Counter(), Counter(), None
+    for ts, data in q("SELECT ts, data FROM telemetry_full WHERE node = ? AND kind = 'meshcore_stats_radio' AND ts >= ? "
+                      "ORDER BY ts", local, since - 600):
+        try:
+            d = json.loads(data)
+            cur = (float(d["rx_air_secs"]), float(d["tx_air_secs"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if prev is not None and ts >= since:
+            k = _bkey(ts, fmt)
+            rx_m[k] += cur[0] - prev[0] if cur[0] >= prev[0] else cur[0]
+            tx_m[k] += cur[1] - prev[1] if cur[1] >= prev[1] else cur[1]
+            n_m[k] += 1
+        prev = cur
+    groups = [g for g, _ in PORT_GROUPS] + [OTHER]
+    groups = [g for g in groups if by_group.get(g)]
+    series, covered_s, ours = [], 0.0, 0.0
+    measured = []
+    for start in _bucket_starts(since, until, bucket):
+        key = start.strftime(fmt)
+        hours = [start + timedelta(hours=h) for h in range(1 if bucket == "hour" else 24)]
+        logged = sum(1 for h in hours if h.strftime("%Y-%m-%d %H") in covered_hours
+                     and mining_since is not None and (h + timedelta(hours=1)).timestamp() > mining_since
+                     and h.timestamp() < until) * 3600.0
+        covered = logged > 0 and _covered(start, bucket, covered_hours)
+        covered_s += logged if covered else 0
+        c = by_bucket.get(key, Counter())
+        mrx = 100 * rx_m[key] / logged if covered and n_m.get(key) else None
+        if covered:
+            ours += tx_m.get(key, 0)
+        if mrx is not None:
+            measured.append(mrx)
+        series.append({
+            "t": start.timestamp(), "covered": covered,
+            "pct": {g: 100 * c.get(g, 0) / logged for g in groups} if covered else None,
+            "total": 100 * sum(c.values()) / logged if covered else None,
+            "ours": 100 * tx_m.get(key, 0) / logged if covered else None,
+            "chUtil": mrx, "chUtilN": n_m.get(key, 0),
+        })
+    heard = sum(by_group.values())
+
+    def ident(i):
+        return {"id": i, **describe(i)} if radioid.protocol_of(i) else {"id": None, "name": i}
+    return {
+        "range": range_key, "since": since, "until": until, "bucket": bucket, "miningSince": mining_since,
+        "combined": False, "measuredAt": local, "protocol": "meshcore",
+        "radio": {k: radio[k] for k in ("preset", "sf", "bwKHz", "cr", "symbolMs")}, "radioAssumed": radio["presetAssumed"],
+        "groups": groups, "series": series,
+        "totals": {"heardS": heard, "oursS": ours, "loggedS": covered_s,
+                   "heardPct": 100 * heard / covered_s if covered_s else None,
+                   "oursPct": 100 * ours / covered_s if covered_s else None,
+                   "chUtilAvg": sum(measured) / len(measured) if measured else None, "badPackets": None,
+                   "transmissions": sum(v[1] for v in transmitters.values()), "noLength": no_length},
+        "byGroup": [{"group": g, "s": by_group[g]} for g in groups],
+        "transmitters": [{**ident(k), "s": v[0], "n": v[1], "share": v[0] / heard if heard else 0}
+                         for k, v in sorted(transmitters.items(), key=lambda kv: -kv[1][0])[:25]],
+        "originators": [{**ident(k), "s": v[0], "copies": v[1], "packets": len(v[2]), "share": v[0] / heard if heard else 0}
+                        for k, v in sorted(originators.items(), key=lambda kv: -kv[1][0])[:25]],
     }
 
 

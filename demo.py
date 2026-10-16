@@ -8,7 +8,8 @@ the real one, with timestamps over the last three days so every view (24 h, 7 da
 - "Hilltop Station", a second listening station that syncs to it, and "Demo Car", a mobile station with one drive;
 - three routers on the hills and about twenty radios around town: positions, telemetry, node info, chatter on the
   public channel, a private channel this radio can read, encrypted traffic it can't, a few traceroutes, and two radios
-  announcing the same key (so the key warning shows).
+  announcing the same key (so the key warning shows);
+- "Demo MeshCore", a MeshCore radio in Demo Home's box, hearing a small MeshCore mesh (demo_meshcore.py).
 """
 import base64
 import json
@@ -119,6 +120,7 @@ def build(path, now=None):
     """Write the demo mesh to a new database at `path` (replacing it). Returns the demo's own radio id."""
     import runtime
     import store as store_mod  # the schema and Store; imported here so `import demo` stays cheap
+    import demo_meshcore
     from analytics import STATION_TABLES
 
     rng = random.Random(SEED)
@@ -273,6 +275,16 @@ def build(path, now=None):
             back=json.dumps([{"id": via, "snr": round(rng.uniform(-5, 8), 2)}, {"id": m.home, "snr": round(rng.uniform(-6, 6), 2)}]),
             done_ts=start + (k + 1) * 50000 + 20)
 
+    # ---- the MeshCore side: a second radio in Demo Home's box (its own seed, so the Meshtastic mesh stays as it was)
+    mrng = random.Random(SEED + 1)
+
+    def mc_signal(km):
+        snr = max(-14.0, min(12.5, 11 - km * 1.6 + mrng.gauss(0, 1.5)))
+        return round(snr * 4) / 4, int(-50 - km * 5 + mrng.gauss(0, 3))
+
+    mc, mc_hub, mc_report, mc_self = demo_meshcore.add(
+        mrng, put, m.radios[m.home]["pos"], PORTLAND, start, now, lambda t: not gap[0] <= t < gap[1], _km, mc_signal)
+
     # ---- the database itself
     store = store_mod.Store(tmp)
     store.claim_station(m.home)
@@ -283,15 +295,17 @@ def build(path, now=None):
         store.db.executemany(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                              [[r.get(c) for c in cols] for r in rs])
     hub = {m.hill: {"first": start, "last": now - 20, "rows": sum(n for (st, _), n in src.items() if st == m.hill), "tables": {}},
-           m.car: {"first": drive[0], "last": drive[1], "rows": sum(n for (st, _), n in src.items() if st == m.car), "tables": {}}}
+           m.car: {"first": drive[0], "last": drive[1], "rows": sum(n for (st, _), n in src.items() if st == m.car), "tables": {}},
+           mc: mc_hub}
     meta = {m.hill: {"name": "Hilltop Station", "location": list(m.radios[m.hill]["pos"]), "version": runtime.VERSION,
                      "platform": "linux aarch64", "radioHw": "RAK4631", "radioFirmware": "2.7.26", "uptimeS": DAYS * 86400,
                      "backlog": 0, "received": now - 20},
             m.car: {"name": "Demo Car", "mobile": True, "version": runtime.VERSION, "radioHw": "TRACKER_T1000_E",
-                    "radioFirmware": "2.7.26", "received": drive[1]}}
+                    "radioFirmware": "2.7.26", "received": drive[1]},
+            mc: {**mc_report, "version": runtime.VERSION, "location": list(m.radios[m.home]["pos"])}}
     private_hash = 124
     settings = {
-        "sync_hub": hub, "station_meta": meta, "station_owners": {m.hill: "pair:demo", m.car: "pair:demo"},
+        "sync_hub": hub, "station_meta": meta, "station_owners": {m.hill: "pair:demo", m.car: "pair:demo", mc: "pair:demo"},
         "radio_channels": {"ts": now, "channels": [
             {"index": 0, "role": "PRIMARY", "name": "LongFast", "hash": PUBLIC_HASH, "encrypted": True, "publicKey": True},
             {"index": 1, "role": "SECONDARY", "name": PRIVATE_NAME, "hash": private_hash, "encrypted": True, "publicKey": False}]},
@@ -303,6 +317,9 @@ def build(path, now=None):
     store.db.execute("INSERT INTO events (ts, kind, detail, station) VALUES (?, 'connected', ?, ?)", (start, json.dumps({
         "port": "demo", "local": m.home, "channels": [{"index": 0, "role": "PRIMARY", "settings": {"name": ""}},
                                                        {"index": 1, "role": "SECONDARY", "settings": {"name": PRIVATE_NAME}}]}), m.home))
+    # the MeshCore radio's own settings, as it reports them on connecting (packet anatomy's radio layer)
+    store.db.execute("INSERT INTO events (ts, kind, detail, station) VALUES (?, 'connected', ?, ?)", (start, json.dumps({
+        "port": "demo", "local": mc, "protocol": "meshcore", "self_info": mc_self}), mc))
     store.db.commit()
     store.close()
     for p in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm")):

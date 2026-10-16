@@ -13,6 +13,9 @@ Lorakeet records everything it hears, the same way it does for a Meshtastic radi
 MeshCore and Meshtastic can't hear each other, so one radio logs one or the other. To log both, plug in one radio
 of each kind: see [Two radios in one Lorakeet](#two-radios-in-one-lorakeet).
 
+**Try it first:** the setup page's **Explore a demo** includes a made-up MeshCore station, so you can see every
+MeshCore view (and open the #demo channel in packet anatomy by typing its name) before plugging anything in.
+
 ## What you need
 
 - **A MeshCore companion radio running the USB companion firmware**, connected to the computer by a USB cable that
@@ -100,6 +103,11 @@ sync_token = "..."                                  # only if this Lorakeet sync
   messages to the radio itself.
 - **The radio's own health:** its battery, uptime, noise floor and packet counters are recorded about every five
   minutes.
+- **The network graph and replay** (Visualizations): links from the repeaters each packet came through, and packets
+  replayed along those paths. A repeater's short key prefix is drawn as that radio only when exactly one known radio
+  has it.
+- **Airtime** (Analytics): how much channel time what it heard took up, by type and by the radio on the air,
+  calculated from each packet and set against the radio's own measured receive airtime.
 - **Packet anatomy:** open a MeshCore packet's anatomy to see it byte by byte, straight from the bytes the radio
   received: header, path, payload, packet hash, and every hearing of it. **Public** channel messages are decrypted
   (its key is published); for a **hashtag channel**, type the channel's name to try it. A decryption is shown only
@@ -110,9 +118,7 @@ sync_token = "..."                                  # only if this Lorakeet sync
 - **Sending** messages or traces from a MeshCore station.
 - **Changing radio settings** from the Radio page: for a MeshCore radio it's read-only. Use MeshCore's tools (and
   let Lorakeet's logging pause while they hold the radio).
-- **Airtime** figures for MeshCore stations.
 - **Station comparison** between MeshCore stations (it compares Meshtastic stations).
-- **The network graph and traffic replay built from MeshCore paths.** Planned.
 - **Remote commands** (the `[remote]` settings are Meshtastic-only).
 
 ### Something wrong?

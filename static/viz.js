@@ -37,6 +37,23 @@ window.vizInset = () => {
 new ResizeObserver(() => stage.style.setProperty("--bottom-h", `${$("vzBottom").offsetHeight}px`)).observe($("vzBottom"));
 new ResizeObserver(() => stage.style.setProperty("--toolbar-h", `${document.querySelector(".vz-toolbar").offsetHeight}px`)).observe(document.querySelector(".vz-toolbar"));
 
+// ---------------------------------------------------------------- the Show menu: filters and colour-by (topology.js VF)
+
+function showMenuSync() {
+  $("vfRole").value = VF.role; $("vfNet").value = VF.net; $("vfLinks").value = VF.links;
+  $("vfSnr").value = VF.snr == null ? "" : String(VF.snr); $("vfColour").value = VF.colour;
+  const n = vfActive();
+  $("vzShowCount").hidden = !n; $("vzShowCount").textContent = String(n);
+}
+function showMenuChanged() {
+  VF.role = $("vfRole").value; VF.net = $("vfNet").value; VF.links = $("vfLinks").value;
+  VF.snr = $("vfSnr").value === "" ? null : Number($("vfSnr").value); VF.colour = $("vfColour").value;
+  saveVF(); showMenuSync(); redraw();
+}
+for (const id of ["vfRole", "vfNet", "vfLinks", "vfSnr", "vfColour"]) $(id).addEventListener("change", showMenuChanged);
+$("vfReset").addEventListener("click", () => { Object.assign(VF, VF_DEFAULT); saveVF(); showMenuSync(); redraw(); });
+showMenuSync();
+
 let resizeT = null;
 const redraw = () => renderTopology(A.range);
 const redrawSoon = () => { clearTimeout(resizeT); resizeT = setTimeout(redraw, 150); };

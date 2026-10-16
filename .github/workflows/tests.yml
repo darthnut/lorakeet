@@ -2,6 +2,8 @@ name: tests
 
 on:
   push:
+    # a push that only changes docs runs nothing (pull requests always run everything: main's required checks)
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   pull_request:
   workflow_dispatch:  # Actions tab -> tests -> Run workflow: also runs the other-platforms job on a private fork
 
@@ -14,6 +16,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12"]
+        # Private Actions minutes are limited and a Windows minute counts double: there, a push tests Windows on 3.12
+        # only (3.11 still runs on Linux). Pull requests and the public repository run the whole matrix.
+        exclude: ${{ fromJSON(github.repository != 'darthnut/lorakeet' && github.event_name == 'push' && '[{"os":"windows-latest","python":"3.11"}]' || '[]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

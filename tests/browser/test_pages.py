@@ -54,6 +54,26 @@ def test_visualizations_graph_map_and_replay(page, demo_url):
     clean(page)
 
 
+def test_visualizations_show_menu_filters_and_colours(page, demo_url):
+    page.goto(demo_url + "/visualizations.html")
+    nodes = page.locator("#topoReplayGraph g.node")
+    expect(nodes.first).to_be_attached(timeout=20000)
+    everyone = nodes.count()
+    page.locator("#vzShow summary").click()
+    page.select_option("#vfRole", "routers")                       # routers and repeaters (and the station)
+    expect(page.locator("#vzShowCount")).to_have_text("1")
+    page.wait_for_function(f"document.querySelectorAll('#topoReplayGraph g.node').length < {everyone}", timeout=20000)
+    # the figures arrive slowly (as on a slow CI machine, which found the race) while the graph is redrawn meanwhile
+    page.route("**/api/analytics/critical*", lambda route: (page.wait_for_timeout(1500), route.continue_()))
+    page.select_option("#vfColour", "cuts")                        # single points of failure in the warning colour
+    page.evaluate("redraw(); setTimeout(redraw, 300)")
+    page.wait_for_function("[...document.querySelectorAll('#topoReplayGraph circle')].some(c => "
+                           "(c.getAttribute('fill') || '').includes('--warning'))", timeout=20000)
+    page.locator("#vfReset").click()
+    page.wait_for_function(f"document.querySelectorAll('#topoReplayGraph g.node').length >= {everyone}", timeout=20000)
+    clean(page)
+
+
 def test_packets_table_and_anatomy(page, demo_url):
     page.goto(demo_url + "/packets.html")
     rows = page.locator("#ptable tbody tr")

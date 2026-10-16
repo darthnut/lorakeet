@@ -69,6 +69,14 @@ def messages_for_this_radio(store, local, limit=200):
     return rows
 
 
+def short_label(nid, long_name=None):
+    """A radio's short label when it gives none: a MeshCore radio has no short name, so the first word of its name
+    (up to 8 characters); otherwise the id's last 4 digits, as before."""
+    if radioid.is_meshcore(nid) and long_name and long_name != nid:
+        return long_name.split()[0][:8]
+    return nid[-4:]
+
+
 def first_public_key(store, nid):
     """The first public key this database recorded for a radio: what remote commands are checked against."""
     r = store.query("SELECT public_key FROM node_info WHERE node = ? AND public_key IS NOT NULL AND public_key != '' "
@@ -463,7 +471,8 @@ class Mesh(RadioLink):
             "SELECT DISTINCT station FROM packets WHERE station IS NOT NULL")} | {self.local_id}
         rr = {}
         for r in self.store.query("SELECT from_id, station, MAX(ts) AS ts, snr, rssi, hops FROM packets "
-                                  "WHERE station IS NOT NULL AND station != ? GROUP BY from_id, station", self.local_id):
+                                  "WHERE station IS NOT NULL AND station != ? AND from_id IS NOT NULL GROUP BY from_id, station",
+                                  self.local_id):
             if r["from_id"] not in self.station_ids and (r["from_id"] not in rr or r["ts"] > rr[r["from_id"]]["ts"]):
                 rr[r["from_id"]] = dict(r)
         self.rx_remote = rr
@@ -969,7 +978,7 @@ class Mesh(RadioLink):
         # The library omits role when it's the default CLIENT, so CLIENT is only implied for nodes that
         # actually announced themselves; nodes we've never heard a NodeInfo from have an unknown role.
         role = n.get("role") or k.get("role") or ("CLIENT" if announced else None)
-        return {"name": name, "short": n.get("shortName") or k.get("short_name") or nid[-4:],
+        return {"name": name, "short": n.get("shortName") or k.get("short_name") or short_label(nid, name),
                 "hw": n.get("hwModel") or k.get("hw_model"), "role": role, "announced": announced,
                 "isBase": nid == runtime.BASE_ID, "isLocal": nid == self.local_id, "keyFlag": key_flag(nid),
                 "v28": likely_28(nid)}
@@ -1004,7 +1013,7 @@ class Mesh(RadioLink):
         rr = self.rx_remote.get(nid)
         return {
             "id": nid, "num": n.get("num"), "protocol": radioid.protocol_of(nid),
-            "longName": u.get("longName") or nid, "shortName": u.get("shortName") or nid[-4:],
+            "longName": u.get("longName") or nid, "shortName": u.get("shortName") or short_label(nid, u.get("longName")),
             "hwModel": u.get("hwModel"), "role": u.get("role", None if radioid.is_meshcore(nid) else "CLIENT"),
             "lat": p.get("latitude"), "lon": p.get("longitude"), "alt": p.get("altitude"),
             "precisionBits": p.get("precisionBits"), "positionTime": p.get("time"),
