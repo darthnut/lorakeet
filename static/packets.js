@@ -30,8 +30,10 @@ function filters() {
 }
 
 async function load() {
+  const seq = (P.seq = (P.seq || 0) + 1);   // a slower, older request mustn't overwrite a newer one's rows
   const qs = new URLSearchParams({ source: P.source, limit: PAGE, offset: P.offset, ...filters(), ...(window.LK_STATION ? { station: window.LK_STATION } : {}) });
   const r = await fetch(`/api/packets/search?${qs}`).then((x) => x.json());
+  if (seq !== P.seq) return;
   if (r.error) { $("count").textContent = r.error; return; }
   P.data = r;
   if (!P.facets || P.facets.source !== P.source) {
@@ -58,7 +60,7 @@ function cell(col, row) {
   if (col === "from_id" && v == null && isMC(row.portnum)) return '<span class="muted" title="Most MeshCore packets carry only a 1-byte hash of the sender, or nothing">not named</span>';
   if (col === "from_id" || col === "to_id") {
     const name = row[col.replace("_id", "_name")];
-    const kf = col === "from_id" ? keyBadge(row.from_keyflag, { short: true }) : "";
+    const kf = col === "from_id" ? keyBadge(row.from_keyflag, { short: true }) + damageBadge(row.corrupt, { short: true }) : "";
     return v === "^all" ? "broadcast" : name && name !== v ? `${esc(name)}${kf} <span class="muted">${esc(v)}</span>` : esc(v) + kf;
   }
   if (col === "relay" || col === "next_hop") return hex(v);

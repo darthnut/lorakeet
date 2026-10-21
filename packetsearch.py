@@ -23,15 +23,20 @@ MAX_CSV_ROWS = 500_000
 # How a packets-table row reached the dashboard, read from fields the radio reported in `raw`
 # (computed at query time; nothing stored). LoRa arrivals carry transportMechanism + rxSnr; the radio's
 # own internal reports (e.g. a "max retransmit" NAK to itself) carry neither.
-ARRIVAL_SQL = """CASE
-  WHEN raw IS NULL THEN 'unknown'
-  WHEN json_extract(raw, '$.meshcore') IS NOT NULL THEN 'lora'
-  WHEN json_extract(raw, '$.transportMechanism') LIKE 'TRANSPORT_LORA%' THEN 'lora'
-  WHEN json_extract(raw, '$.transportMechanism') = 'TRANSPORT_MQTT' THEN 'mqtt'
-  WHEN json_extract(raw, '$.transportMechanism') = 'TRANSPORT_MULTICAST_UDP' THEN 'udp'
-  WHEN json_extract(raw, '$.transportMechanism') = 'TRANSPORT_API' THEN 'api'
-  WHEN json_extract(raw, '$.rxSnr') IS NULL AND json_extract(raw, '$.rxRssi') IS NULL THEN 'local'
+def arrival_sql(raw="raw"):
+    """How a packet arrived, from its raw JSON column (`raw`, or e.g. "x.raw" in a join)."""
+    return f"""CASE
+  WHEN {raw} IS NULL THEN 'unknown'
+  WHEN json_extract({raw}, '$.meshcore') IS NOT NULL THEN 'lora'
+  WHEN json_extract({raw}, '$.transportMechanism') LIKE 'TRANSPORT_LORA%' THEN 'lora'
+  WHEN json_extract({raw}, '$.transportMechanism') = 'TRANSPORT_MQTT' THEN 'mqtt'
+  WHEN json_extract({raw}, '$.transportMechanism') = 'TRANSPORT_MULTICAST_UDP' THEN 'udp'
+  WHEN json_extract({raw}, '$.transportMechanism') = 'TRANSPORT_API' THEN 'api'
+  WHEN json_extract({raw}, '$.rxSnr') IS NULL AND json_extract({raw}, '$.rxRssi') IS NULL THEN 'local'
   ELSE 'unknown' END"""
+
+
+ARRIVAL_SQL = arrival_sql()
 
 
 def csv_cell(v):
@@ -87,6 +92,10 @@ def _where(source, f):
     if f.get("keyflag"):  # sender has a compromised or shared key; the server passes keyflags.flags() in
         nodes = [n for n, v in (f.get("keyflagNodes") or {}).items() if f["keyflag"] == "any" or v["kind"] == f["keyflag"]]
         sql.append(f"from_id IN ({','.join('?' * len(nodes)) or 'NULL'})"); args += nodes
+    if f.get("corrupt") and "pkt_id" in cols:  # possibly damaged on the air; the server passes corruption.flags() in
+        keys = [f"{k[0]}/{k[1]}" for k, v in (f.get("corruptPackets") or {}).items()
+                if f["corrupt"] == "any" or v["confidence"] == f["corrupt"]]
+        sql.append(f"(from_id || '/' || pkt_id) IN ({','.join('?' * len(keys)) or 'NULL'})"); args += keys
     if f.get("arrival") and source == "packets":
         if f["arrival"] == "air":
             sql.append(f"({ARRIVAL_SQL}) IN ('lora', 'mqtt', 'udp')")

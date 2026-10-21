@@ -11,6 +11,7 @@ import statistics
 import time
 from collections import Counter, defaultdict
 
+import corruption
 import keyflags
 import topology
 import weak_keys
@@ -297,7 +298,8 @@ def _health(db, range_key, local, describe):
     # 5. router-role nodes we never see relaying
     relay_bytes = Counter(r[0] for r in q("SELECT relay FROM rx_hops WHERE ts>=? AND hops>=1 AND relay IS NOT NULL", since))
     relay_bytes.update(r[0] for r in q("SELECT relay FROM packets WHERE ts>=? AND hops>=1 AND relay IS NOT NULL", since))
-    roles = {r["node"]: r["role"] for r in q("SELECT node, role, MAX(ts) FROM node_info GROUP BY node")}
+    roles = {r["node"]: r["role"] for r in q(f"SELECT node, role, MAX(ts) FROM node_info WHERE {radioid.REAL_IDENTITY} "
+                                             "GROUP BY node")}
     heard = {r[0]: r[1] for r in q("SELECT from_id, COUNT(*) FROM packets WHERE ts>=? GROUP BY 1", since)}
     for nid, role in roles.items():
         if role in ROUTER_ROLES and heard.get(nid, 0) >= 5 and radioid.is_meshtastic(nid) and not relay_bytes.get(radioid.relay_byte(nid)):
@@ -332,12 +334,43 @@ def _health(db, range_key, local, describe):
                                  [{"label": "packets without hop_start", "value": r["n"], "prov": "observed"}], describe))
 
     findings += _security(q, local, describe)
+    findings = _damaged(db, q, since, findings, describe)
     order = {"warn": 0, "info": 1}
     findings.sort(key=lambda f: (order.get(f["severity"], 2), f["kind"]))
     return {"range": range_key, "since": since, "until": until, "findings": findings,
             "counts": dict(Counter(f["severity"] for f in findings)),
             "thresholds": {"airtimeWarnPct": AIRTIME_WARN, "channelUtilWarnPct": CHANNEL_UTIL_WARN,
                            "chattyFactor": CHATTY_FACTOR, "snrDropDb": SNR_DROP_DB}}
+
+
+def _damaged(db, q, since, findings, describe):
+    """8. packets damaged on the air (corruption.py). A phantom sender (a damaged copy of another radio's packet)
+    gets that finding instead of any other: its "hop limit 7" or "new radio" isn't about a real radio."""
+    bad = corruption.analyse(db)
+    ph = {n for n, f in bad["senders"].items() if corruption.phantom(f)}
+    findings = [f for f in findings if (f.get("node") or {}).get("id") not in ph]
+    heard = lambda nid, pkt=None: q("SELECT 1 FROM rx_hops WHERE from_id = ? AND (? IS NULL OR pkt_id = ?) AND ts >= ? "  # noqa: E731
+                                    "UNION ALL SELECT 1 FROM packets WHERE from_id = ? AND (? IS NULL OR pkt_id = ?) AND ts >= ? "
+                                    "LIMIT 1", nid, pkt, pkt, since, nid, pkt, pkt, since)
+    for nid in sorted(ph):
+        f = bad["senders"][nid]
+        if not heard(nid):
+            continue
+        ev = [{"label": "confidence", "value": f["confidence"], "prov": "inferred"}]
+        if f.get("original"):
+            ev.append({"label": "probably", "value": describe(f["original"])["name"], "prov": "inferred"})
+        findings.append(_finding("info", "damaged-sender", "Probably not a radio: a damaged packet", f["why"], nid, ev, describe))
+    other = sorted({k[0] for k, v in bad["packets"].items() if k[0] not in ph and heard(*k)})
+    if other:
+        n = sum(1 for k in bad["packets"] if k[0] in other and heard(*k))
+        names = ", ".join(describe(i)["name"] for i in other[:8]) + (f" and {len(other) - 8} more" if len(other) > 8 else "")
+        findings.append(_finding("info", "damaged-packets", "Packets damaged on the air",
+                                 f"{n} packet{'s' if n != 1 else ''} from {names} arrived with a header that can't be real "
+                                 "or contents that won't decrypt with a public key: damage a radio's 16-bit check let "
+                                 "through (about 1 in 65,000 damaged frames). Nothing to fix; they're marked in the "
+                                 "Packets browser (\"Possibly damaged\").", None,
+                                 [{"label": "packets", "value": n, "prov": "inferred"}], describe))
+    return findings
 
 
 # ------------------------------------------------------------------ security
@@ -364,18 +397,24 @@ def _security(q, local, describe):
     by_key = defaultdict(list)
     for nid, key in latest.items():
         by_key[key].append(nid)
-    for nodes in by_key.values():
+    for key, nodes in by_key.items():
         if len(nodes) < 2:
             continue
         benign = keyflags.renumbered(nodes, aliases)
+        weak = keyflags.is_weak(key)
         names = ", ".join(describe(n)["name"] for n in nodes)
-        out.append(_finding("info" if benign else "warn", "duplicate-key",
-                            "Same key, two node numbers (likely a 2.8 firmware upgrade)" if benign
-                            else "Several nodes share one public key",
-                            ("Firmware 2.8 renumbers a node to crc32(publicKey) on first boot, leaving the old number "
-                             "stale. Benign." if benign else
-                             "Each node should have a unique key. Sharing one points to a cloned device or copied "
-                             "config, and lets one impersonate the other.") + f" Nodes: {names}.",
+        if benign:
+            title, why = ("Same key, two node numbers (likely a 2.8 firmware upgrade)",
+                          "Firmware 2.8 renumbers a node to crc32(publicKey) on first boot, leaving the old number "
+                          "stale. Benign.")
+        elif weak:
+            # a key on the firmware's weak list turns up on many unrelated radios: not something their owners copied
+            title, why = ("Several radios have the same weak key", keyflags.WEAK_SHARED_WHY)
+        else:
+            title, why = ("Several nodes share one public key",
+                          "Each node should have a unique key. Sharing one points to a cloned device or copied "
+                          "config, and lets one impersonate the other.")
+        out.append(_finding("info" if benign else "warn", "duplicate-key", title, why + f" Nodes: {names}.",
                             nodes[0], [{"label": "nodes", "value": len(nodes), "prov": "reported"}], describe))
 
     # key changes: only keys heard ON THE AIR (NodeInfo packets, at the time they arrived). node_info also holds

@@ -103,6 +103,14 @@ function renderAnatomy(a) {
   // a sender or recipient whose key can't be trusted (keyflags.py)
   for (const k of a.keyFlags || []) html += `<p class="kf-note">⚠ <b>${k.role === "sender" ? "Sender" : "Recipient"} ${esc(k.name)}</b>: ${esc(k.text)}${k.role === "recipient" && a.json?.pkiEncrypted ? " This direct message's encryption depends on that key." : ""}</p>`;
 
+  // probably damaged on the air (corruption.py): why, and the header next to the likely original radio's usual one
+  if (a.corruption) {
+    const c = a.corruption;
+    const rows = (c.compare || []).map((f) => `<tr><th>${esc(f.field)}</th><td>${esc(f.got)}</td><td>${esc(f.usual)}</td>${f.xor && !/^0+$/.test(f.xor) ? `<td class="x">flipped bits ${esc(f.xor)}</td>` : `<td class="muted">${f.got === f.usual ? "same" : ""}</td>`}</tr>`).join("");
+    html += `<div class="kf-note">≈ <b>${esc(DAMAGE_LABEL[c.confidence] || "Possibly damaged")}</b> <span class="muted">(inferred)</span>: ${esc(c.why)}
+      ${rows ? `<table class="dmg-table"><tr><th></th><th>this packet</th><th>${esc(c.originalName || c.original)} usually</th><th></th></tr>${rows}</table>` : ""}</div>`;
+  }
+
   // 3. encryption
   if (a.crypto) {
     const c = a.crypto;

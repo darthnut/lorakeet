@@ -3,7 +3,8 @@
   compromised = the key is on the Meshtastic firmware's list of known low-entropy keys (weak_keys.py): anyone
                 can read direct messages to the radio and impersonate it.
   shared      = several radios announce the same key (a cloned device or copied config): each can read the
-                others' direct messages and impersonate them.
+                others' direct messages and impersonate them. A weak key shared by many radios is the firmware
+                problem, not copying (WEAK_SHARED_WHY): it's flagged compromised, with the others listed.
 
 A radio's key is a fact about the radio, not about who heard it, so flags use every station's identity log.
 A radio renumbered by firmware 2.8 (nodeids.py: its old and new numbers share the key) is one radio, not a
@@ -21,6 +22,13 @@ import nodeids
 import weak_keys
 
 CACHE_S = 120
+
+# why unrelated radios end up with the same weak key (the health finding and the badge text both say it)
+WEAK_SHARED_WHY = ("The key is on Meshtastic's list of known weak keys. Some radios made their key with too little "
+                   "randomness, or were flashed from an image that already held one, so unrelated radios ended up with "
+                   "the same key: a firmware problem, not a cloned device or a copied config. Anyone can read their "
+                   "direct messages and impersonate them; updating the firmware and regenerating the key on each "
+                   "radio fixes it.")
 
 _lock = threading.Lock()
 _cache = {}  # db path -> (computed_at, flags)
@@ -98,6 +106,6 @@ def text(flag, name_of=lambda n: n):
     if flag["kind"] == "compromised":
         s = ("Compromised key: its public key is on Meshtastic's list of known weak keys, so anyone can read "
              "direct messages to it and pretend to be it. Regenerating the key on the device fixes it.")
-        return s + (f" Also shared with: {others}." if others else "")
+        return s + (f" The same weak key is on: {others} (a firmware problem, not a copied config)." if others else "")
     return (f"Shared key: {len(flag['with']) + 1} radios announce the same public key ({others} and this one), so "
             "they can read each other's direct messages and pretend to be each other.")

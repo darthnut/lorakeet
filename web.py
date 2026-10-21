@@ -29,6 +29,8 @@ from config import CFG
 from config import public as config_public
 import drive
 import insights
+import corruption
+import linkhistory
 import keyflags
 import login as login_mod
 from mesh import messages_for_this_radio, serial_ports
@@ -95,6 +97,10 @@ def packet_anatomy(store, mesh, rowid, hashtag=None):
     to = row["raw"].get("toId")
     out["keyFlags"] = [{"role": role, "id": nid, "name": mesh.name(nid), **flagged[nid], "text": keyflags.text(flagged[nid], mesh.name)}
                        for role, nid in (("sender", row["from_id"]), ("recipient", to)) if nid in flagged]
+    # probably damaged on the air (corruption.py): why, and the header next to the likely original's
+    d = corruption.flags(runtime.DATA_DIR / "mesh.db")["packets"].get((row["from_id"], row["pkt_id"]))
+    if d:
+        out["corruption"] = dict(d, originalName=mesh.name(d["original"]) if d.get("original") else None)
     return out
 
 
@@ -196,7 +202,7 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
         name = mesh.describe(sid)["name"]
         if name == sid:
             r = store.query("SELECT long_name FROM node_info WHERE node = ? AND long_name IS NOT NULL "
-                            "ORDER BY ts DESC LIMIT 1", sid)
+                            f"AND {radioid.REAL_IDENTITY} ORDER BY ts DESC LIMIT 1", sid)
             name = r[0]["long_name"] if r else sid
         return name
 
@@ -365,15 +371,20 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 # the live feed: one entry per packet (its first copy), listing every station that heard it;
                 # stations hearing each other's own radios are left out
                 limit = min(int(qs.get("limit", 200)), 2000)
+                # Pick the newest first copies FIRST, then work out arrival and "heard by" for just those: done for
+                # every packet of the 3 days before the LIMIT, the feed took 5.7 s once five stations were logging.
+                since = time.time() - 3 * 86400
                 return self._json(store.query(
                     "WITH st AS (SELECT DISTINCT station AS id FROM packets WHERE station IS NOT NULL), "
-                    "p AS (SELECT rowid AS rid, *, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
+                    "p AS (SELECT rowid AS rid, ts, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
                     "ELSE from_id || ':' || pkt_id END ORDER BY ts) AS n FROM packets WHERE ts > ? "
-                    "AND NOT (from_id IN (SELECT id FROM st) AND from_id != station)) "
-                    "SELECT rid AS rowid, ts, from_id, to_id, portnum, channel, snr, rssi, hops, via_mqtt, summary, relay, "
-                    f"pkt_id, pki, station, {packetsearch.ARRIVAL_SQL} AS arrival, "
-                    "(SELECT GROUP_CONCAT(DISTINCT q.station) FROM packets q WHERE q.from_id = p.from_id AND q.pkt_id = p.pkt_id) "
-                    "AS stations FROM p WHERE n = 1 ORDER BY ts DESC LIMIT ?", time.time() - 3 * 86400, limit))
+                    "AND NOT (from_id IN (SELECT id FROM st) AND from_id != station)), "
+                    "top AS (SELECT rid FROM p WHERE n = 1 ORDER BY ts DESC LIMIT ?) "
+                    "SELECT x.rowid AS rowid, x.ts, x.from_id, x.to_id, x.portnum, x.channel, x.snr, x.rssi, x.hops, x.via_mqtt, "
+                    f"x.summary, x.relay, x.pkt_id, x.pki, x.station, {packetsearch.arrival_sql('x.raw')} AS arrival, "
+                    "(SELECT GROUP_CONCAT(DISTINCT q.station) FROM packets q WHERE q.from_id = x.from_id AND q.pkt_id = x.pkt_id "
+                    "AND q.ts > ?) AS stations FROM top JOIN packets x ON x.rowid = top.rid ORDER BY x.ts DESC",
+                    since, limit, since - 86400))
             if path.startswith("/api/packet/") and path.endswith("/anatomy"):
                 try:
                     return self._json(packet_anatomy(store, mesh, int(path.split("/")[3]), (qs.get("channel") or "")[:32] or None))
@@ -432,6 +443,17 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 except Exception as e:  # noqa: BLE001
                     log.exception("airtime failed")
                     return self._json({"error": f"airtime failed: {e}"}, 500)
+            if path == "/api/analytics/critical/history":   # critical relays day by day (graphmetrics.history)
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    return self._json(graphmetrics.history(runtime.DATA_DIR / "mesh.db", qs.get("range", "30d"), station, describe,
+                                                           window_days=qs.get("window", graphmetrics.WINDOW_DAYS)))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("critical relays history failed")
+                    return self._json({"error": f"critical relays history failed: {e}"}, 500)
             if path == "/api/analytics/critical":
                 try:
                     cache = {}
@@ -443,6 +465,23 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 except Exception as e:  # noqa: BLE001
                     log.exception("critical relays failed")
                     return self._json({"error": f"critical relays failed: {e}"}, 500)
+            if path in ("/api/analytics/links", "/api/analytics/links/compare"):   # link history (linkhistory.py)
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    dbp = runtime.DATA_DIR / "mesh.db"
+                    if path == "/api/analytics/links":
+                        return self._json(linkhistory.history(dbp, qs.get("range", "30d"), station, describe))
+                    if not qs.get("at"):
+                        return self._json({"error": "at (unix time) is required"}, 400)
+                    ph = corruption.flags(dbp)["senders"]
+                    return self._json(linkhistory.compare(dbp, qs["at"], qs.get("days", 7), station, describe,
+                                                          phantom=lambda i: corruption.phantom(ph.get(i))))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("link history failed")
+                    return self._json({"error": f"link history failed: {e}"}, 500)
             if path == "/api/analytics/stations":
                 try:
                     return self._json(compare.matrix(runtime.DATA_DIR / "mesh.db", qs.get("range", "7d"),
@@ -568,11 +607,16 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                     if path == "/api/packets/search":
                         if qs.get("keyflag"):
                             qs = dict(qs, keyflagNodes=keyflags.flags(dbp))
+                        damaged = corruption.flags(dbp)["packets"]
+                        if qs.get("corrupt"):
+                            qs = dict(qs, corruptPackets=damaged)
                         r = packetsearch.search(dbp, qs.get("source", "packets"), qs, qs.get("limit", 200), qs.get("offset", 0), station)
                         flagged = keyflags.flags(dbp)
                         for row in r["rows"]:
                             if row.get("from_id") in flagged:
                                 row["from_keyflag"] = flagged[row["from_id"]]["kind"]
+                            if (d := damaged.get((row.get("from_id"), row.get("pkt_id")))):
+                                row["corrupt"] = {"confidence": d["confidence"], "why": d["why"]}
                             for k in ("from_id", "to_id"):
                                 if radioid.protocol_of(row.get(k)):
                                     row[k.replace("_id", "_name")] = describe(row[k])["name"]
@@ -581,6 +625,8 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                         src = qs.get("source", "packets")
                         if qs.get("keyflag"):
                             qs = dict(qs, keyflagNodes=keyflags.flags(dbp))
+                        if qs.get("corrupt"):
+                            qs = dict(qs, corruptPackets=corruption.flags(dbp)["packets"])
                         return self._send(packetsearch.search_csv(dbp, src, qs, station).encode("utf-8"), "text/csv; charset=utf-8",
                                           {"Content-Disposition": f'attachment; filename="mesh-{src}.csv"'})
                     if path == "/api/alerts":

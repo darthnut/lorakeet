@@ -14,10 +14,8 @@ async function estimates() {
   return INS.est;
 }
 
-async function renderInsights(range) {
-  if (INS.range !== range) { INS.range = range; INS.health = INS.cov = INS.tr = null; INS.est = null; }
-  renderHealth(range); renderCoverage(range); renderTraces(range);
-}
+// Analytics renders these per tab: health on Health, coverage and traceroutes on Network (analytics.js TAB_RENDER,
+// insightsRange resets the cache when the range changes)
 
 /* ---------------------------------------------------------------- health */
 const KIND_GROUP = (k) => k.replace(/^chatty-.*/, "chatty");

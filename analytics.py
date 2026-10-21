@@ -13,6 +13,7 @@ import sqlite3
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+import corruption
 import radioid
 
 RANGES = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400, "all": None}
@@ -245,6 +246,14 @@ def _connect(path, station=None):
         for sql in _COMBINED:
             t = sql.split()[3]  # CREATE TEMP VIEW <table> ...
             db.execute(sql.replace("{SRC}", src(t)[0]).replace("{SEL}", src(t)[1]))
+        # The de-duplicated packets view runs a window over every packet each time it's read, and one analysis reads
+        # it a dozen-plus times (the Analytics summary: 28 queries, ~0.15 s each on 17k packets). Work it out once
+        # per connection instead (~0.2 s), indexed like the table.
+        db.execute("CREATE TEMP TABLE _combined_packets AS SELECT * FROM packets")
+        db.execute("DROP VIEW temp.packets")
+        db.execute("CREATE TEMP VIEW packets AS SELECT * FROM _combined_packets")
+        db.execute("CREATE INDEX temp._combined_packets_ts ON _combined_packets(ts)")
+        db.execute("CREATE INDEX temp._combined_packets_from ON _combined_packets(from_id, ts)")
     elif station:
         station = aliases.get(station, station)  # asked for by its pre-2.8 number
         for t in STATION_TABLES:
@@ -510,9 +519,11 @@ def _compute(db, range_key, local, describe):
     # every packet heard, MeshCore ones that name no sender included (the node list leaves those out)
     total = q(f"SELECT COUNT(*) {P}", since, local)[0][0]
     ch = [s["chUtil"] for s in series if s["chUtil"] is not None]
-    new_nodes = [n for n in nodes if n["firstEver"] and n["firstEver"] >= since]
+    # a phantom (a damaged copy of another radio's packet, corruption.py) stays in the list, flagged, but isn't counted
+    real = [n for n in nodes if not corruption.phantom(n.get("corrupt"))]
+    new_nodes = [n for n in real if n["firstEver"] and n["firstEver"] >= since]
     kpis = {
-        "packets": total, "nodes": len(nodes), "newNodes": len(new_nodes),
+        "packets": total, "nodes": len(real), "newNodes": len(new_nodes), "damagedSenders": len(nodes) - len(real),
         "messages": sum(1 for m in msgs if not m["encrypted"]),
         "conversations": len(conversations),
         "chUtilAvg": sum(ch) / len(ch) if ch else None,

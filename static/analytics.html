@@ -33,194 +33,237 @@
 
   <section class="kpis" id="kpis" aria-label="Summary"></section>
 
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Traffic over time</h2><p class="sub">Packets heard per <span class="bucket">hour</span>, by type. Hatched = dashboard wasn't running, so no data (not zero).</p></div>
-      <button class="linkbtn" data-table="traffic">Table</button>
-    </div>
-    <div class="legend-row" id="trafficLegend"></div>
-    <div class="chart" id="traffic"></div>
-    <div class="tableview" id="traffic-table" hidden></div>
-  </section>
+  <nav class="atabs" id="atabs" role="tablist" aria-label="Analytics sections">
+    <button role="tab" id="tabbtn-overview" data-tab="overview" aria-controls="tab-overview">Overview</button>
+    <button role="tab" id="tabbtn-radios" data-tab="radios" aria-controls="tab-radios">Radios</button>
+    <button role="tab" id="tabbtn-network" data-tab="network" aria-controls="tab-network">Network</button>
+    <button role="tab" id="tabbtn-channel" data-tab="channel" aria-controls="tab-channel">Channel</button>
+    <button role="tab" id="tabbtn-health" data-tab="health" aria-controls="tab-health">Health</button>
+  </nav>
 
-  <div class="grid2">
+  <div class="atab" id="tab-overview" data-tab="overview" role="tabpanel" aria-labelledby="tabbtn-overview">
     <section class="card">
-      <div class="card-head"><div><h2>Channel utilization</h2><p class="sub">How busy the airwaves are, as measured by our radio (% of time).</p></div></div>
-      <div class="chart" id="util"></div>
+      <div class="card-head">
+        <div><h2>Traffic over time</h2><p class="sub">Packets heard per <span class="bucket">hour</span>, by type. Hatched = dashboard wasn't running, so no data (not zero).</p></div>
+        <button class="linkbtn" data-table="traffic">Table</button>
+      </div>
+      <div class="legend-row" id="trafficLegend"></div>
+      <div class="chart" id="traffic"></div>
+      <div class="tableview" id="traffic-table" hidden></div>
     </section>
-    <section class="card">
-      <div class="card-head"><div><h2>Nodes online</h2><p class="sub">Nodes our radio considers active (heard in the last 2 h).</p></div></div>
-      <div class="chart" id="online"></div>
-    </section>
-  </div>
 
-  <section class="card" id="airCard">
-    <div class="card-head">
-      <div><h2>Airtime</h2><p class="sub">How much of the time the channel carried a transmission our radio heard, and whose. Airtime is calculated from each packet's length and the LoRa settings (every copy counts: relays transmit too); the line is our radio's own measurement of how busy the channel was. Hatched = not logged.</p></div>
-    </div>
-    <p class="scope" id="airSummary"></p>
-    <div class="legend-row" id="airLegend"></div>
-    <div class="chart" id="airChart"></div>
-    <div class="grid2" style="margin-top:12px">
-      <div><h3 class="minor">On air near us <span class="muted">(the radio transmitting each copy)</span></h3><div id="airTx"></div></div>
-      <div><h3 class="minor">Whose traffic <span class="muted">(sender; relayed copies included)</span></h3><div id="airOrig"></div></div>
-    </div>
-    <p class="muted" id="airNote"></p>
-  </section>
-
-  <section class="card" id="cmpCard" hidden>
-    <div class="card-head">
-      <div><h2>Listening stations</h2><p class="sub">Every station's view of the same mesh, over the minutes at least two of them were logging. <b>Capture</b> = of a node's packets that any station heard while this one was listening too, the share it heard. Packets from the stations' own radios are left out.</p></div>
-    </div>
-    <p class="scope" id="mxScope"></p>
-    <div class="tablewrap" id="mxStations"></div>
-    <h3 class="minor" style="margin-top:14px">Location and health</h3>
-    <div class="tablewrap" id="mxHealth"></div>
-    <div id="mxTimeline" class="mx-timeline"></div>
-    <h3 class="minor" style="margin-top:14px">Which stations hear each node</h3>
-    <div class="legend-row" id="mxLegend"></div>
-    <div class="tablewrap" id="mxGrid"></div>
-    <div class="card-head" style="margin-top:22px">
-      <div><h3 class="minor" style="margin:0">Compare two stations</h3><p class="sub">The same packets side by side: signal at each, which relay delivered each copy, and paths that differ.</p></div>
-      <div class="ctrls"><select id="cmpA" aria-label="First station"></select><span class="muted">vs</span><select id="cmpB" aria-label="Second station"></select></div>
-    </div>
-    <p class="scope" id="cmpScope"></p>
-    <section class="kpis" id="cmpKpis" aria-label="Comparison summary"></section>
-    <div class="legend-row" id="cmpLegend"></div>
-    <div class="chart" id="cmpChart"></div>
-    <div class="grid2" style="margin-top:12px">
-      <div><h3 class="minor">How each station's copies arrived <span class="muted">(last relay)</span></h3><div id="cmpRelays"></div></div>
-      <div><h3 class="minor">Same packets, different paths</h3><div id="cmpPaths"></div></div>
-    </div>
-    <h3 class="minor" style="margin-top:14px">Per node</h3>
-    <div class="tablewrap" id="cmpNodes"></div>
-    <p class="muted" id="cmpNote"></p>
-  </section>
-
-  <section class="card" id="critCard">
-    <div class="card-head">
-      <div><h2>Critical relays</h2><p class="sub">Which radios the mesh, as your stations hear it, depends on. <b>Cuts off</b>: take that radio away and this many radios could reach none of your stations. <b>Central</b>: the share of shortest routes between other radios that pass through it.</p></div>
-    </div>
-    <p class="scope" id="critSummary"></p>
     <div class="grid2">
-      <div><h3 class="minor">Radios</h3><div id="critRadios"></div></div>
-      <div><h3 class="minor">Links <span class="muted">(whose loss would cut radios off)</span></h3><div id="critLinks"></div></div>
+      <section class="card">
+        <div class="card-head"><div><h2>Channel utilization</h2><p class="sub">How busy the airwaves are, as measured by our radio (% of time).</p></div></div>
+        <div class="chart" id="util"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div><h2>Nodes online</h2><p class="sub">Nodes our radio considers active (heard in the last 2 h).</p></div></div>
+        <div class="chart" id="online"></div>
+      </section>
     </div>
-    <p class="muted" id="critNote"></p>
-  </section>
 
-  <section class="card" id="topoCard">
-    <div class="card-head">
-      <div><h2>Radio links</h2><p class="sub">Which radios have been observed hearing each other directly: the RF links that carry the mesh, not who talks to whom. Measured = direct reception, traceroute or neighbor report; inferred = from relays.</p></div>
-      <a class="linkbtn" href="/visualizations.html">Graph, replay &amp; map →</a>
-    </div>
-    <div id="topoTable"></div>
-    <p class="muted" id="topoNote"></p>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Mesh health &amp; security</h2><p class="sub">Problems already visible in the logged data: airtime, over-frequent broadcasts, high hop limits, quiet routers, weakening links, old firmware, and key or identity issues. Click a row for its evidence.</p></div>
-    </div>
-    <p class="scope" id="healthSummary" style="margin:4px 0 8px"></p>
-    <div id="healthBody"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Coverage</h2><p class="sub">Position packets our radio heard, placed where the sender said it was and coloured by the signal we measured (darker = stronger). Filled = heard directly, which measures our radio's coverage.</p></div>
-      <div class="ctrls"><select id="covNode" title="Sender"></select>
-        <label class="chk"><input type="checkbox" id="covRelayed"> Include relayed</label>
-        <label class="chk"><input type="checkbox" id="covPrecise"> Precise only</label></div>
-    </div>
-    <div class="legend-row"><span>SNR −20 dB</span><span class="covscale"></span><span>+10 dB</span><span><i class="lg-node" style="border:2px solid var(--s1);background:transparent"></i>relayed</span></div>
-    <div id="covMap" class="topo topomap"></div>
-    <p class="muted" id="covNote"></p>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Traceroute explorer</h2><p class="sub">Every traceroute logged: ours (manual and scheduled) and any overheard. Paths drawn through known positions; dashed where they pass an estimated position.</p></div>
-      <div class="ctrls"><select id="trResult"><option value="all">All results</option><option value="ok">Answered</option><option value="fail">No answer</option></select>
-        <input id="trNode" class="filter" type="search" placeholder="Node…" style="width:120px">
-        <select id="trMax" title="Max relays"><option value="">Any hops</option><option>0</option><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
-    </div>
-    <div id="trMap" class="topo topomap" style="height:340px"></div>
-    <div id="trTable" style="margin-top:12px"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Readable vs private traffic</h2><p class="sub">Distinct packets heard over the air, by channel. Everything on the mesh is encrypted; "public" means the default LongFast channel whose key every radio has. Counted from every reception our radio logged (duplicates collapsed), aggregate only.</p></div>
-    </div>
-    <div id="radioChannels" class="radiochans"></div>
-    <p class="scope" id="privacySummary" style="margin:4px 0 8px"></p>
-    <div class="legend-row" id="privacyLegend"></div>
-    <div class="chart" id="privacyChart"></div>
-    <div id="privacyTable" style="margin-top:12px"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Weekly rhythm</h2><p class="sub">Average packets per hour by local day and hour, over the past 7 days (it ignores the range above, so there's always a full week), counting only hours the dashboard was running.</p></div>
-    </div>
-    <div class="heat" id="heat"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div><h2>Nodes</h2><p class="sub">Click a column to sort. <b>Seen</b> is the share of logged hours the node was heard at all; <b>Packets</b> is how much it sent.</p></div>
-      <input class="filter" id="nodeFilter" type="search" placeholder="Filter…" autocomplete="off" title="Name, id, hardware or role. role:… and hw:… match exactly; key:flagged lists radios with a compromised or shared key.">
-    </div>
-    <div class="tablewrap"><table class="nodes" id="nodes"></table></div>
-  </section>
-
-  <div class="grid2">
     <section class="card">
-      <div class="card-head"><div><h2>Node roles</h2><p class="sub">What each node is configured to do. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
-      <div id="roles"></div>
+      <div class="card-head">
+        <div><h2>Weekly rhythm</h2><p class="sub">Average packets per hour by local day and hour, over the past 7 days (it ignores the range above, so there's always a full week), counting only hours the dashboard was running.</p></div>
+      </div>
+      <div class="heat" id="heat"></div>
     </section>
+
     <section class="card">
-      <div class="card-head"><div><h2>Hardware</h2><p class="sub">Device models heard. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
-      <div id="hardware"></div>
+      <div class="card-head"><div><h2>New nodes</h2><p class="sub">First ever heard within this range.</p></div></div>
+      <div id="newnodes"></div>
     </section>
   </div>
 
-  <section class="card">
-    <div class="card-head"><div><h2>Firmware 2.8 adoption</h2><p class="sub">Radios numbering themselves the 2.8 way (derived from their key), per day, out of those whose key we've heard (accent = on 2.8). 2.8 makes position and telemetry sharing opt-in, so as this grows, fewer positions and battery readings is the firmware, not the mesh. <code>fw:2.8</code> in the node filter lists them. New US radios on 2.8 also default to LongTurbo, which a LongFast radio can't hear at all: they never appear here, so fewer radios heard can be the preset, not the mesh.</p></div></div>
-    <div id="fw28"></div>
-  </section>
+  <div class="atab" id="tab-radios" data-tab="radios" role="tabpanel" aria-labelledby="tabbtn-radios" hidden>
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Nodes</h2><p class="sub">Click a column to sort. <b>Seen</b> is the share of logged hours the node was heard at all; <b>Packets</b> is how much it sent.</p></div>
+        <input class="filter" id="nodeFilter" type="search" placeholder="Filter…" autocomplete="off" title="Name, id, hardware or role. role:… and hw:… match exactly; key:flagged lists radios with a compromised or shared key.">
+      </div>
+      <div class="tablewrap"><table class="nodes" id="nodes"></table></div>
+    </section>
 
-  <div class="grid3">
+    <div class="grid2">
+      <section class="card">
+        <div class="card-head"><div><h2>Node roles</h2><p class="sub">What each node is configured to do. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
+        <div id="roles"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div><h2>Hardware</h2><p class="sub">Device models heard. Bar = nodes; right = share of all packets. Click to filter the table.</p></div></div>
+        <div id="hardware"></div>
+      </section>
+    </div>
+
     <section class="card">
-      <div class="card-head"><div><h2>Packet types</h2><p class="sub">Every application port heard.</p></div></div>
-      <div id="ports"></div>
+      <div class="card-head"><div><h2>Firmware 2.8 adoption</h2><p class="sub">Radios numbering themselves the 2.8 way (derived from their key), per day, out of those whose key we've heard (accent = on 2.8). 2.8 makes position and telemetry sharing opt-in, so as this grows, fewer positions and battery readings is the firmware, not the mesh. <code>fw:2.8</code> in the node filter lists them. New US radios on 2.8 also default to LongTurbo, which a LongFast radio can't hear at all: they never appear here, so fewer radios heard can be the preset, not the mesh.</p></div></div>
+      <div id="fw28"></div>
     </section>
-    <section class="card">
-      <div class="card-head"><div><h2>Hops travelled</h2><p class="sub">How far packets came. 0 = heard directly.</p></div></div>
-      <div id="hops"></div>
+
+    <div class="grid3">
+      <section class="card">
+        <div class="card-head"><div><h2>Packet types</h2><p class="sub">Every application port heard.</p></div></div>
+        <div id="ports"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div><h2>Hops travelled</h2><p class="sub">How far packets came. 0 = heard directly.</p></div></div>
+        <div id="hops"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div><h2>Who relays to us</h2><p class="sub">Last hop before our radio, for multi-hop packets.</p></div></div>
+        <div id="relays"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="atab" id="tab-network" data-tab="network" role="tabpanel" aria-labelledby="tabbtn-network" hidden>
+    <section class="card" id="critCard">
+      <div class="card-head">
+        <div><h2>Critical relays</h2><p class="sub">Which radios the mesh, as your stations hear it, depends on. <b>Cuts off</b>: take that radio away and this many radios could reach none of your stations. <b>Central</b>: the share of shortest routes between other radios that pass through it.</p></div>
+      </div>
+      <p class="scope" id="critSummary"></p>
+      <div class="grid2">
+        <div><h3 class="minor">Radios</h3><div id="critRadios"></div></div>
+        <div><h3 class="minor">Links <span class="muted">(whose loss would cut radios off)</span></h3><div id="critLinks"></div></div>
+      </div>
+      <p class="muted" id="critNote"></p>
+      <h3 class="minor">Over time</h3>
+      <p class="scope" id="critHistSummary"></p>
+      <div id="critHistDays"></div>
+      <div id="critHistChanges"></div>
+      <div id="critHistTable"></div>
     </section>
+
+    <section class="card" id="linkCard">
+      <div class="card-head">
+        <div><h2>Link history</h2><p class="sub">How each link's signal has changed: the line is the median SNR per <span class="lkbucket">day</span>, the band the middle half of readings, shaded where nothing was logging. Dashed marks are steps of 5 dB or more, with what was logged around them. <b>Measured</b>: heard directly or traced. <b>Inferred</b>: the last relay's link, from its relay ID.</p></div>
+      </div>
+      <p class="scope" id="linkSummary"></p>
+      <div id="linkTable"></div>
+      <details id="linkCompare" class="lc">
+        <summary>Compare before and after a moment</summary>
+        <form id="lcForm" class="lc-form">
+          <label>Moment <input type="datetime-local" name="at" required></label>
+          <label>Days each side <select name="days"><option>3</option><option selected>7</option><option>14</option><option>30</option></select></label>
+          <button class="btn" type="submit">Compare</button>
+          <span id="lcPicks" class="lc-picks"></span>
+        </form>
+        <div id="lcOut"></div>
+      </details>
+      <p class="muted" id="linkNote"></p>
+    </section>
+
+    <section class="card" id="topoCard">
+      <div class="card-head">
+        <div><h2>Radio links</h2><p class="sub">Which radios have been observed hearing each other directly: the RF links that carry the mesh, not who talks to whom. Measured = direct reception, traceroute or neighbor report; inferred = from relays.</p></div>
+        <a class="linkbtn" href="/visualizations.html">Graph, replay &amp; map →</a>
+      </div>
+      <div id="topoTable"></div>
+      <p class="muted" id="topoNote"></p>
+    </section>
+
     <section class="card">
-      <div class="card-head"><div><h2>Who relays to us</h2><p class="sub">Last hop before our radio, for multi-hop packets.</p></div></div>
-      <div id="relays"></div>
+      <div class="card-head">
+        <div><h2>Traceroute explorer</h2><p class="sub">Every traceroute logged: ours (manual and scheduled) and any overheard. Paths drawn through known positions; dashed where they pass an estimated position.</p></div>
+        <div class="ctrls"><select id="trResult"><option value="all">All results</option><option value="ok">Answered</option><option value="fail">No answer</option></select>
+          <input id="trNode" class="filter" type="search" placeholder="Node…" style="width:120px">
+          <select id="trMax" title="Max relays"><option value="">Any hops</option><option>0</option><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
+      </div>
+      <div id="trMap" class="topo topomap" style="height:340px"></div>
+      <div id="trTable" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Coverage</h2><p class="sub">Position packets our radio heard, placed where the sender said it was and coloured by the signal we measured (darker = stronger). Filled = heard directly, which measures our radio's coverage.</p></div>
+        <div class="ctrls"><select id="covNode" title="Sender"></select>
+          <label class="chk"><input type="checkbox" id="covRelayed"> Include relayed</label>
+          <label class="chk"><input type="checkbox" id="covPrecise"> Precise only</label></div>
+      </div>
+      <div class="legend-row"><span>SNR −20 dB</span><span class="covscale"></span><span>+10 dB</span><span><i class="lg-node" style="border:2px solid var(--s1);background:transparent"></i>relayed</span></div>
+      <div id="covMap" class="topo topomap"></div>
+      <p class="muted" id="covNote"></p>
     </section>
   </div>
 
-  <div class="grid2 convgrid">
-    <section class="card">
-      <div class="card-head"><div><h2>Conversations</h2><p class="sub">Text messages grouped into threads (a 45-minute silence starts a new one).</p></div></div>
-      <div id="convs"></div>
+  <div class="atab" id="tab-channel" data-tab="channel" role="tabpanel" aria-labelledby="tabbtn-channel" hidden>
+    <section class="card" id="airCard">
+      <div class="card-head">
+        <div><h2>Airtime</h2><p class="sub">How much of the time the channel carried a transmission our radio heard, and whose. Airtime is calculated from each packet's length and the LoRa settings (every copy counts: relays transmit too); the line is our radio's own measurement of how busy the channel was. Hatched = not logged.</p></div>
+      </div>
+      <p class="scope" id="airSummary"></p>
+      <div class="legend-row" id="airLegend"></div>
+      <div class="chart" id="airChart"></div>
+      <div class="grid2" style="margin-top:12px">
+        <div><h3 class="minor">On air near us <span class="muted">(the radio transmitting each copy)</span></h3><div id="airTx"></div></div>
+        <div><h3 class="minor">Whose traffic <span class="muted">(sender; relayed copies included)</span></h3><div id="airOrig"></div></div>
+      </div>
+      <p class="muted" id="airNote"></p>
     </section>
-    <div class="stack">
+
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Readable vs private traffic</h2><p class="sub">Distinct packets heard over the air, by channel. Everything on the mesh is encrypted; "public" means the default LongFast channel whose key every radio has. Counted from every reception our radio logged (duplicates collapsed), aggregate only.</p></div>
+      </div>
+      <div id="radioChannels" class="radiochans"></div>
+      <p class="scope" id="privacySummary" style="margin:4px 0 8px"></p>
+      <div class="legend-row" id="privacyLegend"></div>
+      <div class="chart" id="privacyChart"></div>
+      <div id="privacyTable" style="margin-top:12px"></div>
+    </section>
+
+    <div class="grid2 convgrid">
       <section class="card">
-        <div class="card-head"><div><h2>Most talkative</h2><p class="sub">Text messages sent.</p></div></div>
-        <div id="talkers"></div>
+        <div class="card-head"><div><h2>Conversations</h2><p class="sub">Text messages grouped into threads (a 45-minute silence starts a new one).</p></div></div>
+        <div id="convs"></div>
       </section>
-      <section class="card">
-        <div class="card-head"><div><h2>New nodes</h2><p class="sub">First ever heard within this range.</p></div></div>
-        <div id="newnodes"></div>
-      </section>
+      <div class="stack">
+        <section class="card">
+          <div class="card-head"><div><h2>Most talkative</h2><p class="sub">Text messages sent.</p></div></div>
+          <div id="talkers"></div>
+        </section>
+      </div>
     </div>
+  </div>
+
+  <div class="atab" id="tab-health" data-tab="health" role="tabpanel" aria-labelledby="tabbtn-health" hidden>
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Mesh health &amp; security</h2><p class="sub">Problems already visible in the logged data: airtime, over-frequent broadcasts, high hop limits, quiet routers, weakening links, old firmware, and key or identity issues. Click a row for its evidence.</p></div>
+      </div>
+      <p class="scope" id="healthSummary" style="margin:4px 0 8px"></p>
+      <div id="healthBody"></div>
+    </section>
+
+    <section class="card" id="cmpCard" hidden>
+      <div class="card-head">
+        <div><h2>Listening stations</h2><p class="sub">Every station's view of the same mesh, over the minutes at least two of them were logging. <b>Capture</b> = of a node's packets that any station heard while this one was listening too, the share it heard. Packets from the stations' own radios are left out.</p></div>
+      </div>
+      <p class="scope" id="mxScope"></p>
+      <div class="tablewrap" id="mxStations"></div>
+      <h3 class="minor" style="margin-top:14px">Location and health</h3>
+      <div class="tablewrap" id="mxHealth"></div>
+      <div id="mxTimeline" class="mx-timeline"></div>
+      <h3 class="minor" style="margin-top:14px">Which stations hear each node</h3>
+      <div class="legend-row" id="mxLegend"></div>
+      <div class="tablewrap" id="mxGrid"></div>
+      <div class="card-head" style="margin-top:22px">
+        <div><h3 class="minor" style="margin:0">Compare two stations</h3><p class="sub">The same packets side by side: signal at each, which relay delivered each copy, and paths that differ.</p></div>
+        <div class="ctrls"><select id="cmpA" aria-label="First station"></select><span class="muted">vs</span><select id="cmpB" aria-label="Second station"></select></div>
+      </div>
+      <p class="scope" id="cmpScope"></p>
+      <section class="kpis" id="cmpKpis" aria-label="Comparison summary"></section>
+      <div class="legend-row" id="cmpLegend"></div>
+      <div class="chart" id="cmpChart"></div>
+      <div class="grid2" style="margin-top:12px">
+        <div><h3 class="minor">How each station's copies arrived <span class="muted">(last relay)</span></h3><div id="cmpRelays"></div></div>
+        <div><h3 class="minor">Same packets, different paths</h3><div id="cmpPaths"></div></div>
+      </div>
+      <h3 class="minor" style="margin-top:14px">Per node</h3>
+      <div class="tablewrap" id="cmpNodes"></div>
+      <p class="muted" id="cmpNote"></p>
+    </section>
   </div>
   </div>
 </main>

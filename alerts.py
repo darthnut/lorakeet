@@ -11,6 +11,7 @@ import threading
 import time
 from collections import deque
 
+import corruption
 import insights
 import nodeids
 import radioid
@@ -23,6 +24,7 @@ log = logging.getLogger("meshdash.alerts")
 # would stop that silently, so: over this window, debug lines kept arriving and packets kept arriving over the
 # air, yet not one reception line was recognised -> alert. (A radio on Wi-Fi sends no debug log: no alert.)
 MINING_WINDOW_S = 30 * 60
+NEW_PENDING_S = 24 * 3600   # a one-off undecryptable newcomer never heard again: not alerted
 MINING_MIN_LINES = 50
 MINING_MIN_PACKETS = 3
 
@@ -275,10 +277,34 @@ class Alerts:
         st["new_since"] = time.time()
         rows = self.store.query("SELECT from_id, MIN(ts) AS first FROM packets WHERE from_id IS NOT NULL GROUP BY from_id "
                                 "HAVING first >= ?", since)   # (a MeshCore packet often names no sender)
+        # A newcomer heard once, in a packet that won't decrypt, waits for a second packet (or a clean one): one damaged
+        # copy of another radio's packet looks exactly like that (corruption.py). Phantoms never alert; a one-off
+        # that's never heard again is dropped after NEW_PENDING_S.
+        pending = st.setdefault("new_pending", {})
         for r in rows:
-            name = self.mesh.describe(r["from_id"])["name"]
-            self.raise_alert("new-node", f"New node: {name}", "First time this node has been heard.", r["from_id"], "info")
+            pending.setdefault(r["from_id"], r["first"])
+        if not pending:
+            return self._toast_new(s)
+        flagged = corruption.flags(self.db_path, max_age=0 if rows else corruption.CACHE_S)["senders"]   # fresh for newcomers
+        for nid, first in list(pending.items()):
+            r = self.store.query("SELECT COUNT(DISTINCT pkt_id) AS n, SUM(portnum != 'ENCRYPTED') AS clean FROM packets "
+                                 "WHERE from_id = ?", nid)[0]
+            n, clean = r["n"], r["clean"]
+            if corruption.phantom(flagged.get(nid)):
+                del pending[nid]
+                continue
+            if not (clean or (n or 0) >= 2 or not radioid.is_meshtastic(nid)):
+                if time.time() - first > NEW_PENDING_S:
+                    del pending[nid]
+                continue
+            del pending[nid]
+            name = self.mesh.describe(nid)["name"]
+            self.raise_alert("new-node", f"New node: {name}", "First time this node has been heard.", nid, "info")
             st.setdefault("new_batch", []).append(name)
+        self._toast_new(s)
+
+    def _toast_new(self, s):
+        st = self.state
         batch = st.get("new_batch") or []
         if batch and s["notifyNewNodes"] and time.time() - st.get("new_toast", 0) >= s["newNodeBatchMin"] * 60:
             notify(f"{len(batch)} new mesh node{'s' if len(batch) > 1 else ''}",

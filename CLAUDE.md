@@ -212,6 +212,14 @@ nonexistent radio.port).
 
 ## Analytics (`analytics.py`, `/analytics.html`)
 
+- **Tabs** (`TAB_RENDER` in analytics.js, `.atab` panels, `#atabs`): Overview (traffic, channel use, nodes online,
+  weekly rhythm, new nodes), Radios (the table, roles, hardware, 2.8, packet types, hops, relays), Network (critical
+  relays + over time, link history, radio links, traceroutes, coverage), Channel (airtime, readable vs private,
+  conversations, talkers), Health (health findings, listening stations). `renderAll` draws the scope, the KPIs and
+  ONLY the open tab; tabs with their own endpoints cache per range/station, and the Leaflet maps are only built once
+  their tab is visible. Hash `#<tab>` (and `#links` = Network), localStorage `meshdash.analyticsTab`. A card added
+  later goes in one tab's panel and its renderer in that tab's function.
+
 - Computed in SQL over a read-only connection; hourly buckets up to 8 days, daily beyond, local time.
 - **Coverage:** an hour is covered if the radio's per-minute reports or any packet landed in it.
   Uncovered buckets are `null` (drawn hatched), and rates divide by covered time only.
@@ -256,6 +264,34 @@ nonexistent radio.port).
 - **LongTurbo** (2.8's default preset for new US radios: 500 kHz, its own frequency slot) can't be heard by a
   LongFast radio, so those radios are invisible to a LongFast station: nothing to detect or log. The README and
   the Analytics 2.8 card say so, so a shrinking radio count isn't misread.
+- **Critical relays over time** (`graphmetrics.history`, `/api/analytics/critical/history?range=&window=`): one topology
+  pass with `collect=` (every edge observation's time; `since=` reaches a window before the range), then per day the
+  graph of edges seen in the `window` days up to that day's end, analysed like the card (`analyse`, everyone). Relay
+  observations drop when an end wasn't heard yet (`linkhistory.first_heard`); phantoms leave. Changes need HOLD_DAYS:
+  single point of failure starts/ends (with the cut list), centrality moves >= 10 points, or >= 5 and x2. None before
+  the first full window (the graph is still filling in). Events: linkhistory.station_events that day or the day before.
+- **Link history** (`linkhistory.py`, `/api/analytics/links`, `/api/analytics/links/compare?at=&days=`): observations per
+  unordered radio pair = links table `direct`/`traceroute` rows (measured) + rx_hops last hops whose relay byte
+  `topology.relay_resolver` resolves (relayer -> station, inferred). Per hour (ranges up to 2 days) or day: median,
+  p25/p75, n, `covered` (analytics coverage). `find_steps`: binary segmentation over midnights + station event times;
+  a split needs |median shift| >= 5 dB, >= 8 readings over >= 2 days each side (7-day windows) and non-overlapping
+  middle halves; the best split is the most SEPARATED one (shift / robust spread), not the biggest shift (a late cut
+  mixing both sides can show a bigger gap). Station events (`station_events`, from main.events: every station's):
+  `radio_settings`, and `network` only when it switches between two NAMED networks ("no network" in between is a
+  dropout). `compare` skips phantoms (corruption.py) in the radios-only-before/after lists. Pages: the Analytics
+  card (`renderLinks`, `linkRowsHtml`/`linkSpark`, shared with node.js), `#links` opens the comparison; the Stations
+  page's "Link history" sets the station picker and goes there. Validated on the real log: finds the 2026-10-13 desk
+  antenna swap (+13 dB on the farthest link) and a station's move (-23 dB, matched to its Wi-Fi change).
+- **Damaged packets** (`corruption.py`, worked out on request like keyflags, never stored): `certain` = a header with
+  hop_limit > hop_start (relays only lower it); `likely` = a sender heard in <= 2 packets, never decrypted, no identity,
+  its id <= 2 bits from a busy radio (20+ decrypted packets), header-only (16-byte) frames excepted; `possible` = a
+  busy radio's packet on a public channel hash that won't decrypt. A certain/likely sender is a phantom
+  (`corruption.phantom`): analytics counts (`kpis.damagedSenders`), topology and health leave it out (health gives it
+  one `damaged-sender` finding), the new-radio alert never fires for it, and a one-off undecryptable newcomer waits
+  for a second or clean packet (`new_pending`, dropped after a day). `corrupt` on describe/node_json, `corrupt` rows
+  + filter in packet search, `corruption` (with the header compared to the likely original's) in the anatomy;
+  `damageBadge()` in prov.js. Found 2026-10-18: a busy radio's position packet relayed with bits 0xC0 flipped in the
+  sender and the hop-start field.
 - **Key warnings** (`keyflags.py`, `GET /api/keyflags`): a radio whose newest announced public key is on the
   firmware's weak-key list ("compromised") or is announced by other radios too ("shared"; the firmware 2.8
   renumber case is exempt). Uses every station's identity log, worked out on request (cached 120 s), never

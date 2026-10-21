@@ -6,6 +6,46 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.2 (2026-10-20)
+
+**New**
+- **Analytics in tabs:** Overview, Radios, Network, Channel and Health, under the headline numbers. Each tab loads its
+  own analyses the first time it's opened, so the page opens with one request instead of about a dozen. The last tab
+  you used comes back next time, and each has its own address (`analytics.html#network`).
+- **Critical relays over time** (Analytics, Critical relays card): the analysis run on each day's graph (the links seen
+  in the week up to it): single points of failure per day, each radio's centrality day by day with the days it was a
+  single point of failure shaded, and the changes: a radio becoming (or no longer being) the only way in for others,
+  naming them, and big centrality shifts, matched with what was logged then (a station moving, radio settings).
+- **Link history** (Analytics, each radio's page, and a "Link history" button per station on the Stations page): every
+  link's signal over time (the median SNR per day, the middle half of readings as a band, gaps where nothing was
+  logging), the steps where a link changed by 5 dB or more, found automatically and matched with what was logged
+  around them (radio settings saved, a station joining a different Wi-Fi network, which usually means it moved),
+  and a before/after comparison around any moment: every link's signal and readings per day either side, links
+  gained or lost, radios heard only before or only after. Links heard directly or traced are measured; a relay's
+  link to your station, from its relay ID, is inferred and labelled so.
+- **Packets damaged on the air are marked:** a radio's 16-bit check lets about 1 damaged packet in 65,000 through,
+  and a relay passes the damage on to every station. Lorakeet now marks a packet whose header can't be real (more
+  hops left than it started with), a "radio" that's really a damaged copy of a busy radio's packet (heard once, never
+  decryptable, its id a bit or two from that radio's), and a busy radio's packet that won't decrypt with a public
+  key. Such phantoms no longer count as radios, raise "new radio" alerts or appear on the network graph; they're
+  badged (≈), get one health finding naming the likely original, and the Packets browser has a "Damage" filter. The
+  packet anatomy shows the damaged header next to the original radio's usual one, flipped bits included. A newcomer
+  heard once in a packet that won't decrypt now waits for a second packet before its "new radio" alert. Found when a
+  phantom turned out to be a real radio's position packet with the same two bits flipped in two header bytes.
+
+**Fixed**
+- **Faster with several stations:** the map's live traffic feed took about 6 seconds to load once five stations were
+  logging (it looked up who heard every packet of the last three days before keeping the newest 200); it now takes a
+  quarter of a second. The Analytics summary for all stations combined is about twice as fast.
+- **A radio no longer looks renamed when a station starts up:** a Meshtastic radio holds a stand-in ("Meshtastic
+  a90d", no hardware, no key) for nodes it has heard of but not from. Lorakeet logged that stand-in as the node's new
+  identity, so a long-known radio showed up renamed with no hardware in its history. Stand-ins aren't logged now, and
+  ones already logged are left out of the identity history, names and roles.
+- **Weak keys shared by many radios aren't called cloned:** when several radios have the same key from Meshtastic's
+  list of known weak keys, the health finding and the key badge now say it's the firmware problem (keys made with too
+  little randomness, or devices flashed from one image), not a copied device or config, and how to fix it.
+- **Packets page:** when filters change quickly, a slower earlier search can no longer replace the newer results.
+
 ## 0.5.1 (2026-10-16)
 
 **New**

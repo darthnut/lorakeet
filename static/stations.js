@@ -114,7 +114,8 @@ function renderStations() {
     const how = s.here ? "this computer" : s.via ? `from peer: ${esc(s.via.label)}` : p ? (p.revoked ? `<span class="bad">revoked</span> (${esc(p.label)})${relabel}` : `paired: ${esc(p.label)}${relabel}`)
       : s.sharedToken ? '<span title="Set up by hand with the shared [sync] token. It keeps working; pair it again to give it its own token you can revoke.">shared token</span>' : "—";
     const loc = s.location ? `${(+s.location[0]).toFixed(4)}, ${(+s.location[1]).toFixed(4)}${s.override.location ? " <span class=\"muted\">(set here)</span>" : ""}` : '<span class="muted">not set</span>';
-    const acts = s.here ? '<span class="muted">see Radio</span>' : [
+    const hist = `<a class="linkbtn" href="/analytics.html#links" data-lk="${esc(s.here ? "" : s.id)}" title="Its links' signal over time, and a before/after comparison">Link history</a>`;
+    const acts = s.here ? `<span class="muted">see Radio</span> · ${hist}` : [hist,
       `<button class="linkbtn" data-act="rename" data-s="${esc(s.id)}">Rename</button>`,
       `<button class="linkbtn" data-act="locate" data-s="${esc(s.id)}">Set location</button>`,
       p && !p.revoked ? `<button class="linkbtn" data-act="revoke" data-p="${esc(p.id)}">Revoke</button>` : "",
@@ -302,4 +303,11 @@ $("peerCodeBtn").addEventListener("click", async () => {
     <p class="note">Send it to them privately. On their hub: Stations → Peers → <b>Send to another hub</b>, paste it, and choose what you'll see. It works for one hub and you can revoke it any time. It's shown only now. It points their hub at ${r.addresses.map((u) => `<code>${esc(u)}</code>`).join(", ")}, so they must be able to reach that (same network, or Tailscale).</p></div></div>`;
   $("peerCodeCopy").onclick = async () => { try { await navigator.clipboard.writeText(r.code); $("peerCodeCopy").textContent = "Copied"; } catch { $("peerCodeBox").select(); } };
   load();
+});
+
+// "Link history": the Analytics page for this station, at the Link history card with the comparison open
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-lk]");
+  if (!a) return;
+  try { if (a.dataset.lk) localStorage.setItem("meshdash.station", a.dataset.lk); else localStorage.removeItem("meshdash.station"); } catch { /* storage blocked */ }
 });

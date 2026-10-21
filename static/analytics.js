@@ -191,7 +191,7 @@ function renderNodes(data) {
     const hops = n.minHops == null ? "—" : n.minHops === n.maxHops ? `${esc(n.minHops)}` : `${esc(n.minHops)}–${esc(n.maxHops)}`;
     const tag = n.isBase ? " ☀" : "";
     return `<tr data-id="${esc(n.id)}">
-      <td><div class="nm" title="${esc(n.name)}">${esc(n.name)}${tag}${keyBadge(n.keyFlag, { short: true })}${n.v28 ? " " + v28Tag(true) : ""}<small>${esc([n.short, (n.hw || "").replace(/_/g, " ").toLowerCase(), n.role && n.role !== "CLIENT" ? n.role.replace(/_/g, " ").toLowerCase() : ""].filter(Boolean).join(" · "))}</small></div></td>
+      <td><div class="nm" title="${esc(n.name)}">${esc(n.name)}${tag}${keyBadge(n.keyFlag, { short: true })}${damageBadge(n.corrupt, { short: true })}${n.v28 ? " " + v28Tag(true) : ""}<small>${esc([n.short, (n.hw || "").replace(/_/g, " ").toLowerCase(), n.role && n.role !== "CLIENT" ? n.role.replace(/_/g, " ").toLowerCase() : ""].filter(Boolean).join(" · "))}</small></div></td>
       <td class="num"><div class="pbar"><span>${nf.format(n.packets)}</span><span class="b"><i style="width:${((n.packets / maxP) * 100).toFixed(1)}%"></i></span></div></td>
       <td class="num" ${est ? `title="Estimated from only ${data.kpis.coveredHours} logged hour${data.kpis.coveredHours === 1 ? "" : "s"}"` : ""}>${n.perDay == null ? "—" : `${est ? "~" : ""}${fmt(n.perDay, n.perDay < 10 ? 1 : 0)}`}</td>
       <td class="num"><div class="pbar"><span>${n.presence == null ? "—" : `${Math.round(n.presence * 100)}%`}</span><span class="b"><i style="width:${((n.presence || 0) * 100).toFixed(1)}%"></i></span></div></td>
@@ -399,6 +399,180 @@ async function renderCritical(range) {
     value: (v, row) => `cuts off ${v} · ${row.l.measured ? "measured" : "inferred"}`,
     title: (row) => `<b>${esc(row.l.aName)} – ${esc(row.l.bName)}</b> (${row.l.measured ? "measured" : "inferred"} link)<br>Without it, ${row.l.cutsOff} radio${row.l.cutsOff === 1 ? "" : "s"} couldn't reach your stations: ${list(row.l.cutList)}` });
   $("critNote").textContent = `The mesh as your station${s.stations.length === 1 ? "" : "s"} heard it in this range: ${nf.format(s.radios)} radios, ${nf.format(s.links)} links, ${fmt((s.inferredShare || 0) * 100, 0)} % of them inferred (relay IDs, MeshCore paths). A radio that looks critical may have links you never heard; one that looks redundant may not be. Your stations themselves aren't ranked.`;
+}
+
+/* ---------------------------------------------------------------- link history (linkhistory.py) */
+const LINKS = { range: null, station: null, data: null, all: false };
+const LK_DOMAIN = [-22, 12];   // one SNR scale (dB) for every row, so rows compare at a glance
+const dayFmt = (t) => new Date(t * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+
+// one link's history as a sparkline: middle-half band, median line (broken where there were no readings), shading
+// where nothing was logging, dashed marks at steps
+function linkSpark(l, bucket, w = 220, h = 34) {
+  const s = l.series;
+  if (!s.length) return "";
+  const step = bucket === "hour" ? 3600 : 86400, half = step / 2;
+  const t0 = s[0].t, t1 = s[s.length - 1].t + step;
+  const X = (t) => ((t - t0) / (t1 - t0)) * w;
+  const Y = (v) => h - 2 - ((Math.max(LK_DOMAIN[0], Math.min(LK_DOMAIN[1], v)) - LK_DOMAIN[0]) / (LK_DOMAIN[1] - LK_DOMAIN[0])) * (h - 4);
+  let band = "", line = "", gaps = "";
+  const runs = [[]];
+  for (const b of s) {
+    if (!b.covered) gaps += `<rect x="${X(b.t).toFixed(1)}" y="0" width="${(X(b.t + step) - X(b.t)).toFixed(1)}" height="${h}" class="lk-gap"/>`;
+    if (b.n) runs[runs.length - 1].push(b); else if (runs[runs.length - 1].length) runs.push([]);
+  }
+  for (const r of runs.filter((x) => x.length)) {
+    const up = r.map((b) => `${X(b.t + half).toFixed(1)},${Y(b.p75).toFixed(1)}`);
+    const dn = r.map((b) => `${X(b.t + half).toFixed(1)},${Y(b.p25).toFixed(1)}`).reverse();
+    band += `<polygon class="lk-band" points="${up.concat(dn).join(" ")}"/>`;
+    line += r.length === 1 ? `<circle class="lk-dot" cx="${X(r[0].t + half).toFixed(1)}" cy="${Y(r[0].med).toFixed(1)}" r="2"/>`
+      : `<polyline class="lk-line" points="${r.map((b) => `${X(b.t + half).toFixed(1)},${Y(b.med).toFixed(1)}`).join(" ")}"/>`;
+  }
+  const zero = `<line class="lk-zero" x1="0" x2="${w}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}"/>`;
+  const marks = (l.steps || []).map((st) => `<line class="lk-step" x1="${X(st.ts).toFixed(1)}" x2="${X(st.ts).toFixed(1)}" y1="0" y2="${h}"/>`).join("");
+  return `<svg class="lk-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="${esc(`${l.aName} to ${l.bName}: signal over time, median ${fmt(l.med, 1)} dB`)}">${gaps}${zero}${band}${line}${marks}</svg>`;
+}
+function linkTip(l, bucket, e, svg) {
+  const r = svg.getBoundingClientRect(), s = l.series, step = bucket === "hour" ? 3600 : 86400;
+  const b = s[Math.max(0, Math.min(s.length - 1, Math.floor(((e.clientX - r.left) / r.width) * s.length)))];
+  const st = (l.steps || []).find((x) => x.ts >= b.t && x.ts < b.t + step);
+  showTip(e, `<b>${esc(l.aName)} – ${esc(l.bName)}</b><br>${esc(bucket === "hour" ? when(b.t) : dayFmt(b.t))}: ${!b.covered ? "nothing logging" : b.n ? `median ${fmt(b.med, 1)} dB (middle half ${fmt(b.p25, 1)} to ${fmt(b.p75, 1)}) · ${nf.format(b.n)} reading${b.n === 1 ? "" : "s"}` : "no readings"}${st ? `<br><span class="t">Step: ${fmt(st.before.med, 1)} → ${fmt(st.after.med, 1)} dB${st.events.length ? ` · ${esc(st.events[0].text)}` : ""}</span>` : ""}`);
+}
+const stepText = (st) => `${st.delta > 0 ? "▲ +" : "▼ "}${fmt(st.delta, 1)} dB around ${dayFmt(st.ts)}`;
+
+function linkRowsHtml(links, bucket, opts = {}) {
+  if (!links.length) return `<p class="muted">${esc(opts.empty || "No link with enough readings in this range.")}</p>`;
+  const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
+  return `<div class="tablewrap"><table class="nodes lk-table"><thead><tr><th>Link</th><th>Signal over time</th><th class="num">Median</th><th>Change</th><th class="num">Readings/day</th></tr></thead><tbody>${links.map((l, i) => `
+    <tr data-i="${i}"><td>${who(l.a, l.aName)} – ${who(l.b, l.bName)}<small class="muted"> ${l.measured ? "measured" : "inferred"}${l.status === "new" ? ' · <span class="tag">new link</span>' : l.status === "quiet" ? ' · <span class="tag low">went quiet</span>' : ""}</small></td>
+      <td>${linkSpark(l, bucket)}</td>
+      <td class="num">${fmt(l.med, 1)} dB</td>
+      <td>${(l.steps || []).length ? l.steps.map((st) => `<div class="lk-chg" title="${esc(`${fmt(st.before.med, 1)} → ${fmt(st.after.med, 1)} dB (${st.nBefore} and ${st.nAfter} readings)${st.events.length ? ". Logged nearby: " + st.events.map((e) => e.text).join("; ") : ""}`)}">${stepText(st)}${st.events.length ? ` <span class="muted">· ${esc(st.events[0].text.split(" (")[0])}</span>` : ""}</div>`).join("") : '<span class="muted">steady</span>'}</td>
+      <td class="num">${fmt(l.perDay, l.perDay < 10 ? 1 : 0)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function wireLinkRows(el, links, bucket) {
+  el.querySelectorAll("tr[data-i]").forEach((tr) => {
+    const l = links[+tr.dataset.i], svg = tr.querySelector("svg");
+    if (!svg) return;
+    svg.addEventListener("mousemove", (e) => linkTip(l, bucket, e, svg));
+    svg.addEventListener("mouseleave", hideTip);
+  });
+}
+async function renderLinks(range) {
+  const st = window.LK_STATION || "";
+  if (LINKS.range !== range || LINKS.station !== st || !LINKS.data) {
+    try {
+      const d = await fetch(`/api/analytics/links?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      Object.assign(LINKS, { data: d, range, station: st });
+    } catch (e) { $("linkSummary").textContent = `Couldn't load link history: ${e.message}`; return; }
+  }
+  const d = LINKS.data, steps = d.links.flatMap((l) => l.steps.map((s) => ({ ...s, l })));
+  const notable = d.links.filter((l) => l.steps.length || l.status);
+  document.querySelectorAll(".lkbucket").forEach((e) => (e.textContent = d.bucket));
+  $("linkSummary").innerHTML = d.links.length
+    ? `${nf.format(d.links.length)} link${d.links.length === 1 ? "" : "s"} with enough readings: ${steps.length ? `<b>${steps.length}</b> step${steps.length === 1 ? "" : "s"} of ${d.thresholds.stepDb} dB or more` : `no steps of ${d.thresholds.stepDb} dB or more`}${notable.length ? `, ${notable.length} link${notable.length === 1 ? "" : "s"} changed, new or quiet` : ""} ${prov("inferred", "Steps are found from the readings: a moment where the median moves by 5 dB or more and the two sides' middle halves don't overlap.")}.`
+    : "No link with enough readings in this range yet.";
+  const shown = LINKS.all ? d.links : d.links.slice(0, Math.max(12, notable.length));
+  $("linkTable").innerHTML = linkRowsHtml(shown, d.bucket) + (d.links.length > 12 ? `<p><button class="btn" id="lkMore">${LINKS.all ? "Show fewer" : `Show all ${nf.format(d.links.length)}`}</button></p>` : "");
+  wireLinkRows($("linkTable"), shown, d.bucket);
+  $("lkMore")?.addEventListener("click", () => { LINKS.all = !LINKS.all; renderLinks(range); });
+  // quick picks for the comparison: each step, and each logged station event, newest first
+  const picks = new Map();
+  for (const s of steps) picks.set(Math.round(s.ts), `${dayFmt(s.ts)}: ${s.l.aName} – ${s.l.bName} ${stepText(s)}`);
+  for (const e of d.events) picks.set(Math.round(e.ts), `${dayFmt(e.ts)}: ${e.text}`);
+  $("lcPicks").innerHTML = [...picks].sort((a, b) => b[0] - a[0]).slice(0, 6)
+    .map(([t, label]) => `<button type="button" class="chip" data-t="${t}" title="${esc(label)}">${esc(dayFmt(t))}</button>`).join("");
+  const f = $("lcForm");
+  if (!f.at.value) setLocalInput(f.at, steps.length ? Math.max(...steps.map((s) => s.ts)) : Date.now() / 1000 - 7 * 86400);
+  $("linkNote").textContent = "Only a direct reception measures a link: a radio you hear only through relays shows its relay's link to you. SNR stops rising for strong links (a radio in the same house reads about +6 to +10 dB whatever the antenna), so antenna changes show on the distant ones.";
+}
+function setLocalInput(input, t) {
+  const d = new Date(t * 1000);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  input.value = d.toISOString().slice(0, 16);
+}
+$("lcPicks").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-t]");
+  if (b) { setLocalInput($("lcForm").at, +b.dataset.t); $("lcForm").requestSubmit(); }
+});
+$("lcForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, at = new Date(f.at.value).getTime() / 1000;
+  $("lcOut").innerHTML = '<p class="muted">Comparing…</p>';
+  try {
+    const d = await fetch(`/api/analytics/links/compare?at=${at}&days=${f.days.value}${stationQS()}`).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    renderCompareLinks(d);
+  } catch (err) { $("lcOut").innerHTML = `<p class="muted">Couldn't compare: ${esc(err.message)}</p>`; }
+});
+function renderCompareLinks(d) {
+  const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
+  const w = d.windows, cov = (k) => (w[k].coveredHours ? `${fmt(w[k].coveredHours / 24, 1)} days logged` : "nothing logged");
+  const side = (s, perDay) => (s ? `${fmt(s.med, 1)} dB <small class="muted">${fmt(perDay, perDay < 10 ? 1 : 0)}/day</small>` : '<span class="muted">—</span>');
+  const rows = d.links.slice(0, 40).map((l) => `<tr><td>${who(l.a, l.aName)} – ${who(l.b, l.bName)}<small class="muted"> ${l.measured ? "measured" : "inferred"}</small></td>
+    <td class="num">${side(l.before, l.perDayBefore)}</td><td class="num">${side(l.after, l.perDayAfter)}</td>
+    <td>${l.status === "gained" ? '<span class="tag">new after</span>' : l.status === "lost" ? '<span class="tag low">gone after</span>' : l.delta == null ? "" : `${l.delta > 0 ? "▲ +" : l.delta < 0 ? "▼ " : ""}${fmt(l.delta, 1)} dB`}</td></tr>`).join("");
+  const names = (xs) => xs.slice(0, 30).map((x) => who(x.id, x.name)).join(", ") + (xs.length > 30 ? ` and ${xs.length - 30} more` : "");
+  $("lcOut").innerHTML = `<p class="scope">${d.days} day${d.days === 1 ? "" : "s"} before ${esc(when(d.at))} (${cov("before")}) against ${d.days} after (${cov("after")}). Signal is the median SNR; readings per day count logged time only.</p>
+    ${d.events.length ? `<p class="muted">Logged in that time: ${d.events.slice(0, 6).map((e) => `${esc(dayFmt(e.ts))} ${esc(e.text)}`).join("; ")}${d.events.length > 6 ? `; and ${d.events.length - 6} more` : ""}</p>` : ""}
+    <div class="tablewrap"><table class="nodes"><thead><tr><th>Link</th><th class="num">Before</th><th class="num">After</th><th>Change</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No links in either window.</td></tr>'}</tbody></table></div>
+    <div class="grid2"><div><h3 class="minor">Heard only before (${d.radios.onlyBefore.length})</h3><p>${names(d.radios.onlyBefore) || '<span class="muted">none</span>'}</p></div>
+    <div><h3 class="minor">Heard only after (${d.radios.onlyAfter.length})</h3><p>${names(d.radios.onlyAfter) || '<span class="muted">none</span>'}</p></div></div>
+    <p class="muted">${nf.format(d.radios.both)} radio${d.radios.both === 1 ? "" : "s"} heard in both. Radios that are probably damaged packets aren't counted.</p>`;
+}
+
+/* critical relays over time (graphmetrics.history): each day's graph = the links seen in the week up to it */
+const CRITH = { range: null, station: null, data: null };
+async function renderCriticalHistory(range) {
+  const st = window.LK_STATION || "";
+  if (CRITH.range !== range || CRITH.station !== st || !CRITH.data) {
+    $("critHistSummary").textContent = "Working out each day's graph…";
+    try {
+      const d = await fetch(`/api/analytics/critical/history?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      Object.assign(CRITH, { data: d, range, station: st });
+    } catch (e) { $("critHistSummary").textContent = `Couldn't work out critical relays over time: ${e.message}`; return; }
+  }
+  const d = CRITH.data, days = d.days.filter((x) => x.links);
+  if (days.length < 2) { $("critHistSummary").textContent = "Needs at least two days of links."; $("critHistDays").innerHTML = $("critHistChanges").innerHTML = $("critHistTable").innerHTML = ""; return; }
+  const a = days[0], z = days[days.length - 1];
+  $("critHistSummary").innerHTML = `Each day's graph is the links seen in the ${d.windowDays} days up to it. Single points of failure: <b>${a.singlePoints}</b> on ${esc(dayFmt(a.t))}, <b>${z.singlePoints}</b> now; radios that reach your stations through only one of them: ${a.dependOnOne} → ${z.dependOnOne} ${prov("inferred", "Worked out from the observed link graph, one day at a time.")}.`;
+  // single points of failure per day: one bar per day (a count, so bars from zero), hover for the day's numbers
+  const W = 640, H = 70, n = d.days.length, bw = W / n, maxP = Math.max(1, ...d.days.map((x) => x.singlePoints));
+  $("critHistDays").innerHTML = `<svg class="ch-days" viewBox="0 0 ${W} ${H + 16}" width="100%" height="${H + 16}" role="img" aria-label="Single points of failure per day">${d.days.map((x, i) => {
+    const h = x.links ? Math.max(x.singlePoints ? 3 : 0, (x.singlePoints / maxP) * (H - 14)) : 0;
+    return `<g data-i="${i}"><rect class="ch-hit" x="${(i * bw).toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}"/>${x.links ? `<rect class="ch-bar" x="${(i * bw + 2).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${Math.max(1, bw - 4).toFixed(1)}" height="${h.toFixed(1)}" rx="2"/>` : `<rect class="lk-gap" x="${(i * bw).toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}"/>`}${x.singlePoints && (n <= 20 || i % Math.ceil(n / 20) === 0) ? `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${(H - h - 3).toFixed(1)}" class="ch-n">${x.singlePoints}</text>` : ""}${i % Math.ceil(n / 8) === 0 ? `<text x="${(i * bw + 2).toFixed(1)}" y="${H + 13}" class="ch-x">${esc(dayFmt(x.t))}</text>` : ""}</g>`;
+  }).join("")}</svg>`;
+  $("critHistDays").querySelectorAll("g[data-i]").forEach((g) => {
+    const x = d.days[+g.dataset.i];
+    g.addEventListener("mousemove", (e) => showTip(e, `<b>${esc(dayFmt(x.t))}</b><br>${x.links ? `${x.singlePoints} single point${x.singlePoints === 1 ? "" : "s"} of failure · ${x.dependOnOne} radio${x.dependOnOne === 1 ? "" : "s"} depend on one<br>${x.radios} radios, ${x.links} links in that week's graph` : "no links seen"}`));
+    g.addEventListener("mouseleave", hideTip);
+  });
+  const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
+  $("critHistChanges").innerHTML = d.changes.length ? `<ul class="ch-list">${d.changes.slice(0, 12).map((c) => `<li><b>${esc(dayFmt(c.t))}</b> · ${who(c.id, c.name)}: ${esc(c.text)}${c.cutList?.length ? ` (${c.cutList.slice(0, 5).map((x) => who(x.id, x.name)).join(", ")}${c.cutList.length > 5 ? "…" : ""})` : ""}${c.events.length ? ` <span class="muted">· logged then: ${esc(c.events[0].text.split(" (")[0])}</span>` : ""}</li>`).join("")}</ul>`
+    : '<p class="muted">No radio became or stopped being a single point of failure, and no big centrality change, in this range.</p>';
+  // per radio: centrality per day (one hue), with the days it was a single point of failure shaded
+  const maxB = Math.max(0.05, ...d.radios.flatMap((r) => r.series.map((s) => s.b || 0)));
+  const spark = (r, w = 200, h = 30) => {
+    const s = r.series, bw2 = w / s.length, Y = (v) => h - 2 - (v / maxB) * (h - 4);
+    const crit = s.map((x, i) => (x.c ? `<rect class="ch-crit" x="${(i * bw2).toFixed(1)}" y="0" width="${bw2.toFixed(1)}" height="${h}"/>` : "")).join("");
+    const runs = [[]];
+    s.forEach((x, i) => { if (x.b != null) runs[runs.length - 1].push(`${(i * bw2 + bw2 / 2).toFixed(1)},${Y(x.b).toFixed(1)}`); else if (runs[runs.length - 1].length) runs.push([]); });
+    return `<svg class="lk-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="${esc(r.name)}: centrality per day">${crit}${runs.filter((x) => x.length).map((p) => (p.length === 1 ? `<circle class="lk-dot" cx="${p[0].split(",")[0]}" cy="${p[0].split(",")[1]}" r="2"/>` : `<polyline class="lk-line" points="${p.join(" ")}"/>`)).join("")}</svg>`;
+  };
+  const rows = d.radios.slice(0, 15);
+  $("critHistTable").innerHTML = rows.length ? `<div class="tablewrap"><table class="nodes lk-table"><thead><tr><th>Radio</th><th>Centrality per day <span class="muted">(shaded: a single point of failure)</span></th><th class="num">Now</th><th class="num">Peak</th><th class="num">Days critical</th></tr></thead><tbody>${rows.map((r, i) => `
+    <tr data-i="${i}"><td>${who(r.id, r.name)}</td><td>${spark(r)}</td><td class="num">${r.now ? `${fmt(r.now.b * 100, 0)} %${r.now.c ? ` · cuts off ${r.now.c}` : ""}` : '<span class="muted">not heard</span>'}</td>
+      <td class="num">${fmt(r.peakCentral * 100, 0)} %</td><td class="num">${r.daysCritical || "—"}</td></tr>`).join("")}</tbody></table></div>` : "";
+  $("critHistTable").querySelectorAll("tr[data-i]").forEach((tr) => {
+    const r = rows[+tr.dataset.i], svg = tr.querySelector("svg");
+    svg.addEventListener("mousemove", (e) => {
+      const b = svg.getBoundingClientRect(), x = r.series[Math.max(0, Math.min(r.series.length - 1, Math.floor(((e.clientX - b.left) / b.width) * r.series.length)))];
+      showTip(e, `<b>${esc(r.name)}</b> · ${esc(dayFmt(x.t))}<br>${x.b == null ? "not in that week's graph" : `${fmt(x.b * 100, 1)} % of shortest routes · ${x.d} link${x.d === 1 ? "" : "s"}${x.c ? `<br>Without it, ${x.c} radio${x.c === 1 ? "" : "s"} couldn't reach your stations: ${(x.l || []).map((y) => esc(y.name)).join(", ")}` : ""}`}`);
+    });
+    svg.addEventListener("mouseleave", hideTip);
+  });
 }
 
 /* ---------------------------------------------------------------- airtime */
@@ -661,39 +835,78 @@ function renderKpis(d) {
   ].join("");
 }
 
+/* ---------------------------------------------------------------- tabs: each renders only when it's open
+   Overview and Radios use the one /api/analytics response; Network, Channel and Health fetch their own analyses on
+   first open (each caches per range and station), so opening the page runs one request, not a dozen. */
+const TAB_RENDER = {
+  overview(d) {
+    $("trafficLegend").innerHTML = d.groups.map((g) => `<span><i style="background:${gcol(g)}"></i>${esc(g)}</span>`).join("") + '<span><i class="gapkey"></i>not logged</span>';
+    trafficChart($("traffic"), d);
+    lineChart($("util"), d, "chUtil", { unit: "%", digits: 1, label: "Channel utilization" });
+    lineChart($("online"), d, "online", { digits: 0, label: "Nodes online" });
+    heatmap($("heat"), d);
+    $("newnodes").innerHTML = d.newNodes.length ? `<div class="bars">${d.newNodes.slice(0, 15).map((n) => `<div class="r" style="grid-template-columns:1fr auto"><span class="l"><a class="nlink" href="${nodeHref(n.id)}">${esc(n.name)}</a></span><span class="n" style="min-width:auto">${esc(when(n.firstEver))}</span></div>`).join("")}${d.newNodes.length > 15 ? `<p class="muted">+${d.newNodes.length - 15} more</p>` : ""}</div>` : '<p class="muted">No new nodes in this range.</p>';
+    if (!$("traffic-table").hidden) renderTrafficTable();
+  },
+  radios(d) {
+    renderNodes(d);
+    renderTypes(d);
+    renderFw28(d);
+    bars($("ports"), d.ports.map((p) => ({ label: pretty(p.port), value: p.count, color: gcol(p.group) })),
+      { title: (r) => `<b>${esc(r.label)}</b><br>${nf.format(r.value)} packets` });
+    const hopsKnown = d.hops.filter((h) => h.hops != null), unknown = d.hops.find((h) => h.hops == null);
+    bars($("hops"), [...hopsKnown.map((h) => ({ label: h.hops === 0 ? "0 (direct)" : `${h.hops}`, value: h.count })), ...(unknown ? [{ label: "unknown", value: unknown.count, color: "var(--text-muted)" }] : [])],
+      { title: (r) => `<b>${esc(r.label)} hop${r.label === "1" ? "" : "s"}</b><br>${nf.format(r.value)} packets${r.label === "unknown" ? "<br><span class='t'>sender's firmware doesn't report hop count</span>" : ""}` });
+    bars($("relays"), d.relays.map((r) => {
+      const c = r.candidates;
+      const label = c.length === 1 ? c[0].name : c.length > 1 ? `…${r.byte} (${c.length} candidates)` : `…${r.byte} (unknown node)`;
+      return { label, value: r.count, cands: c, labelHtml: c.length === 1 ? `<a class="nlink" href="${nodeHref(c[0].id)}">${esc(c[0].name)}</a>` : null };
+    }), { empty: "No relayed packets yet.", title: (r) => `<b>${esc(r.label)}</b><br>${nf.format(r.value)} packets relayed to us${r.cands.length > 1 ? `<br><span class="t">${r.cands.map((c) => esc(c.name)).join(", ")}</span>` : ""}` });
+  },
+  network(d) {
+    renderCritical(d.range);
+    renderCriticalHistory(d.range);
+    renderLinks(d.range);
+    renderTopology(d.range);
+    insightsRange(d.range);
+    renderTraces(d.range);
+    renderCoverage(d.range);
+  },
+  channel(d) {
+    renderAirtime(d.range);
+    renderPrivacy(d);
+    bars($("talkers"), d.talkers.map((t) => ({ label: t.name, value: t.count, labelHtml: `<a class="nlink" href="${nodeHref(t.id)}">${esc(t.name)}</a>` })), { empty: "No text messages in this range." });
+    CONV_SHOWN = 20; renderConvs(d);
+  },
+  health(d) {
+    insightsRange(d.range);
+    renderHealth(d.range);
+    renderMatrix(d.range);
+    renderCompare(d.range);
+  },
+};
+let TAB = (() => { try { const t = localStorage.getItem("meshdash.analyticsTab"); return TAB_RENDER[t] ? t : "overview"; } catch { return "overview"; } })();
+
+// insights.js caches its three analyses per range; the Network and Health tabs each use some of them
+function insightsRange(range) {
+  if (INS.range !== range) { INS.range = range; INS.health = INS.cov = INS.tr = null; INS.est = null; }
+}
+
+function showTab(t) {
+  TAB = t;
+  try { localStorage.setItem("meshdash.analyticsTab", t); } catch { /* storage blocked */ }
+  for (const panel of document.querySelectorAll(".atab")) panel.hidden = panel.dataset.tab !== t;
+  for (const b of $("atabs").querySelectorAll("button[data-tab]")) {
+    const on = b.dataset.tab === t;
+    b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1;
+  }
+}
+
 function renderAll() {
   const d = A.data; if (!d) return;
   document.querySelectorAll(".bucket").forEach((e) => (e.textContent = d.bucket));
   renderScope(d); renderKpis(d);
-  $("trafficLegend").innerHTML = d.groups.map((g) => `<span><i style="background:${gcol(g)}"></i>${esc(g)}</span>`).join("") + '<span><i class="gapkey"></i>not logged</span>';
-  trafficChart($("traffic"), d);
-  lineChart($("util"), d, "chUtil", { unit: "%", digits: 1, label: "Channel utilization" });
-  lineChart($("online"), d, "online", { digits: 0, label: "Nodes online" });
-  heatmap($("heat"), d);
-  renderTopology(d.range);
-  renderAirtime(d.range);
-  renderCritical(d.range);
-  renderMatrix(d.range);
-  renderCompare(d.range);
-  renderPrivacy(d);
-  renderInsights(d.range);
-  renderNodes(d);
-  renderTypes(d);
-  renderFw28(d);
-  bars($("ports"), d.ports.map((p) => ({ label: pretty(p.port), value: p.count, color: gcol(p.group) })),
-    { title: (r) => `<b>${esc(r.label)}</b><br>${nf.format(r.value)} packets` });
-  const hopsKnown = d.hops.filter((h) => h.hops != null), unknown = d.hops.find((h) => h.hops == null);
-  bars($("hops"), [...hopsKnown.map((h) => ({ label: h.hops === 0 ? "0 (direct)" : `${h.hops}`, value: h.count })), ...(unknown ? [{ label: "unknown", value: unknown.count, color: "var(--text-muted)" }] : [])],
-    { title: (r) => `<b>${esc(r.label)} hop${r.label === "1" ? "" : "s"}</b><br>${nf.format(r.value)} packets${r.label === "unknown" ? "<br><span class='t'>sender's firmware doesn't report hop count</span>" : ""}` });
-  bars($("relays"), d.relays.map((r) => {
-    const c = r.candidates;
-    const label = c.length === 1 ? c[0].name : c.length > 1 ? `…${r.byte} (${c.length} candidates)` : `…${r.byte} (unknown node)`;
-    return { label, value: r.count, cands: c, labelHtml: c.length === 1 ? `<a class="nlink" href="${nodeHref(c[0].id)}">${esc(c[0].name)}</a>` : null };
-  }), { empty: "No relayed packets yet.", title: (r) => `<b>${esc(r.label)}</b><br>${nf.format(r.value)} packets relayed to us${r.cands.length > 1 ? `<br><span class="t">${r.cands.map((c) => esc(c.name)).join(", ")}</span>` : ""}` });
-  bars($("talkers"), d.talkers.map((t) => ({ label: t.name, value: t.count, labelHtml: `<a class="nlink" href="${nodeHref(t.id)}">${esc(t.name)}</a>` })), { empty: "No text messages in this range." });
-  $("newnodes").innerHTML = d.newNodes.length ? `<div class="bars">${d.newNodes.slice(0, 15).map((n) => `<div class="r" style="grid-template-columns:1fr auto"><span class="l"><a class="nlink" href="${nodeHref(n.id)}">${esc(n.name)}</a></span><span class="n" style="min-width:auto">${esc(when(n.firstEver))}</span></div>`).join("")}${d.newNodes.length > 15 ? `<p class="muted">+${d.newNodes.length - 15} more</p>` : ""}</div>` : '<p class="muted">No new nodes in this range.</p>';
-  CONV_SHOWN = 20; renderConvs(d);
-  if (!$("traffic-table").hidden) renderTrafficTable();
+  TAB_RENDER[TAB](d);
 }
 
 function renderTrafficTable() {
@@ -725,14 +938,32 @@ function setRange(range) {
   for (const b of $("ranges").children) b.classList.toggle("on", b.dataset.range === range);
 }
 function route() {
-  const m = location.hash.match(/node=([^&]+)/);
+  const h = location.hash.slice(1);
+  const m = h.match(/node=([^&]+)/);
   const nid = m ? decodeURIComponent(m[1]) : null;
   $("nodeView").hidden = !nid; $("overview").hidden = !!nid;
   hideTip();
   if (nid) { openNode(nid, A.range); window.scrollTo(0, 0); return; }
+  // #overview, #radios, #network, #channel, #health; #links = the Network tab's link history (the Stations page)
+  showTab(/(^|&)links/.test(h) ? "network" : TAB_RENDER[h] ? h : TAB);
   if (!A.data || A.data.range !== A.range) load(A.range); else renderAll();
+  if (/(^|[#&])links/.test(location.hash)) {   // from the Stations page: open the before/after comparison
+    $("linkCompare").open = true;
+    setTimeout(() => $("linkCard").scrollIntoView({ block: "start" }), 300);
+  }
 }
 addEventListener("hashchange", route);
+$("atabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]"); if (!b) return;
+  if (location.hash === `#${b.dataset.tab}`) { showTab(b.dataset.tab); renderAll(); } else location.hash = b.dataset.tab;
+});
+$("atabs").addEventListener("keydown", (e) => {   // arrow keys move between tabs (the ARIA tabs pattern)
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+  const names = Object.keys(TAB_RENDER), i = names.indexOf(TAB) + (e.key === "ArrowRight" ? 1 : -1);
+  const t = names[(i + names.length) % names.length];
+  location.hash = t;
+  $(`tabbtn-${t}`).focus();
+});
 $("ranges").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-range]"); if (!b) return;
   setRange(b.dataset.range); route();
