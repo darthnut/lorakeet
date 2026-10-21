@@ -124,7 +124,7 @@ def _compute_node(db, nid, range_key, local, describe):
     positions = [dict(r) for r in q("SELECT ts, lat, lon, alt, precision_bits FROM positions WHERE node = ? AND ts >= ? "
                                     "ORDER BY ts", nid, since)]
     identity = [dict(r) for r in q("SELECT ts, long_name, short_name, hw_model, role, public_key FROM node_info "
-                                   "WHERE node = ? ORDER BY ts", nid)]
+                                   f"WHERE node = ? AND {radioid.REAL_IDENTITY} ORDER BY ts", nid)]
     latest_tel = {}
     for r in q("SELECT kind, data, MAX(ts) AS ts FROM telemetry_full WHERE node = ? GROUP BY kind", nid):
         try:

@@ -385,6 +385,34 @@ pre.raw .anat-link { display: inline-block; margin-bottom: 6px; font: 600 12px s
 .kf-badge { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
   line-height: 18px; white-space: nowrap; vertical-align: 1px; cursor: help; color: var(--text-primary); border: 1px solid var(--warning); background: color-mix(in srgb, var(--warning) 18%, transparent); }
 .kf-badge.kf-compromised { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 18%, transparent); }
+.kf-badge.dmg-badge { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.kf-badge.dmg-possible { border-style: dashed; background: transparent; }
+.dmg-table { border-collapse: collapse; margin: 6px 0 2px; font-size: 12.5px; }
+.dmg-table th, .dmg-table td { padding: 2px 10px 2px 0; text-align: left; }
+.dmg-table .x { font-family: var(--mono, ui-monospace, monospace); color: var(--warning); }
+.lk-spark { display: block; overflow: visible; }
+.lk-spark .lk-band { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+.lk-spark .lk-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.lk-spark .lk-dot { fill: var(--accent); }
+.lk-spark .lk-zero { stroke: var(--border); stroke-width: 1; }
+.lk-spark .lk-step { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.lk-spark .lk-gap { fill: color-mix(in srgb, var(--text-muted) 12%, transparent); }
+.lk-table td { vertical-align: middle; }
+.ch-days { display: block; margin: 4px 0 8px; overflow: visible; }
+.ch-days .ch-hit { fill: transparent; }
+.ch-days .ch-bar { fill: var(--warning); }
+.ch-days .ch-n { font-size: 10px; text-anchor: middle; fill: var(--text-secondary, var(--text-muted)); }
+.ch-days .ch-x { font-size: 10px; fill: var(--text-muted); }
+.lk-spark .ch-crit { fill: color-mix(in srgb, var(--warning) 22%, transparent); }
+.ch-list { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.lk-chg { white-space: nowrap; font-size: 12.5px; }
+.lc { margin-top: 10px; }
+.lc > summary { cursor: pointer; font-weight: 600; }
+.lc-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; margin: 10px 0; }
+.lc-picks { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.lc-picks .chip { border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); border-radius: 999px;
+  padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.lc-picks .chip:hover { color: var(--text-primary); border-color: var(--accent); }
 .kf-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45; color: var(--text-primary);
   border: 1px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 /* likely firmware 2.8 (prov.js v28Tag) */

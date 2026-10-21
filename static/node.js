@@ -83,8 +83,9 @@ async function renderNode() {
   $("nodeView").innerHTML = `
     <p class="scope"><a href="#" class="back">← All nodes</a> · Showing ${esc(when(d.since))} – now · ${s.coveredHours} h logged</p>
     ${relayOnly}
+    ${d.corrupt ? `<p class="kf-note">≈ ${esc(d.corrupt.why)}${d.corrupt.original ? ` ${nlink(d.corrupt.original, "The likely original")}.` : ""}</p>` : ""}
     ${d.keyFlag ? `<p class="kf-note">⚠ ${esc(keyFlagText(d.keyFlag))}${d.keyFlagWith?.length ? ` Same key: ${d.keyFlagWith.map((o) => nlink(o.id, o.name)).join(", ")}.` : ""}</p>` : ""}
-    <div class="nvhead"><div><h1>${esc(d.name)}${d.isBase ? ' <span class="tag base">base</span>' : ""}${d.isLocal ? ' <span class="tag">this radio</span>' : ""}${keyBadge(d.keyFlag)} ${v28Tag(d.v28)}</h1><div class="muted">${esc(sub)}</div></div>
+    <div class="nvhead"><div><h1>${esc(d.name)}${d.isBase ? ' <span class="tag base">base</span>' : ""}${d.isLocal ? ' <span class="tag">this radio</span>' : ""}${keyBadge(d.keyFlag)}${damageBadge(d.corrupt)} ${v28Tag(d.v28)}</h1><div class="muted">${esc(sub)}</div></div>
       <div class="ctrls"><button class="star ${window.meshWatch?.isWatched(d.id) ? "on" : ""}" id="nvStar" title="Watch this node: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(d.id) ? "★" : "☆"}</button>
       <a class="btn" href="/api/analytics/node.csv?id=${encodeURIComponent(d.id)}&range=${encodeURIComponent(d.range)}${stationQS()}" download>Download CSV</a></div></div>
     <section class="kpis">
@@ -113,6 +114,7 @@ async function renderNode() {
       ${card("Movement", d.positions.length ? `${d.positions.length} position report${d.positions.length === 1 ? "" : "s"} in range. Circles show the precision the node shares at.` : "", d.positions.length ? '<div id="nvMap" class="nvmap"></div>' : '<p class="muted">No position reports in this range.</p>')}
       ${card("Radio links", "Links seen involving this node: direct reception, traceroutes, neighbor reports.", '<div id="nvLinks"></div>')}
     </div>
+    ${card("Links over time", "Each of its links' signal: the median SNR per day, the band the middle half of readings, dashed marks at steps of 5 dB or more. Measured = heard directly or traced; inferred = from relay IDs.", '<div id="nvLinkHist"><p class="muted">Loading…</p></div>')}
     <div class="grid2">
       ${card("Latest telemetry", "Most recent report of each kind, as sent.", telHtml)}
       ${card("Identity history", "A row each time its name, hardware, role or key changed.", identity)}
@@ -140,6 +142,7 @@ async function renderNode() {
   })), { empty: d.stats.direct ? "Everything was heard directly." : "No relayed packets in range." });
   bars($("nvPorts"), d.ports.map((p) => ({ label: pretty(p.port), value: p.count, color: gcol(p.group) })), { empty: "Nothing heard in range." });
   const SRC = { direct: "heard directly", traceroute: "traceroute", neighborinfo: "neighbor report" };
+  nodeLinkHistory(d.id, d.range);
   bars($("nvLinks"), d.neighbors.map((n) => ({ label: n.name, labelHtml: `${nlink(n.id, n.name)} <span class="muted">${esc(SRC[n.source] || n.source)}${n.snr != null ? ` · ${fmt(n.snr, 1)} dB` : ""}</span>`, value: n.count })), { empty: "No links seen in range." });
   drawMovement(d);
   $("nvStar")?.addEventListener("click", async (e) => {
@@ -179,3 +182,16 @@ function drawMovement(d) {
 document.addEventListener("click", (e) => {
   if (e.target.closest("a.back")) { e.preventDefault(); history.pushState("", "", location.pathname); route(); }
 });
+
+// this radio's links over time (linkhistory.py; the same rows as the Analytics "Link history" card)
+async function nodeLinkHistory(id, range) {
+  const el = $("nvLinkHist");
+  try {
+    const d = await fetch(`/api/analytics/links?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+    if (d.error) throw new Error(d.error);
+    if (!$("nvLinkHist")) return;   // navigated away meanwhile
+    const mine = d.links.filter((l) => l.a === id || l.b === id);
+    el.innerHTML = linkRowsHtml(mine, d.bucket, { empty: "Not enough readings of any of its links in this range." });
+    wireLinkRows(el, mine, d.bucket);
+  } catch (e) { el.innerHTML = `<p class="muted">Couldn't load its link history: ${esc(e.message)}</p>`; }
+}

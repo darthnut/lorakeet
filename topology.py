@@ -15,6 +15,7 @@ import bisect
 import json
 from collections import defaultdict
 
+import corruption
 import radioid
 from analytics import (_connect, alias_map, smooth_track, _coverage, _window, measured_neighbors, port_group, resolve_relay, scope_local,
                        station_ids, station_location)
@@ -71,8 +72,11 @@ def compute(db_path, range_key, local_id, describe):
         db.close()
 
 
-def _compute(db, range_key, local, describe):
-    since, until, *_ = _window(db, range_key)
+def _compute(db, range_key, local, describe, since=None, collect=None):
+    """since: start earlier than the range (graphmetrics.history needs a window before its first day). collect: a
+    list that gets every edge observation as (a, b, source, ts), for a graph at any moment, not just the range's."""
+    rng_since, until, *_ = _window(db, range_key)
+    since = rng_since if since is None else min(since, rng_since)
     q = lambda sql, *a: db.execute(sql, a).fetchall()  # noqa: E731
     tracks = station_tracks(db, since, until)
     locate = _track_locator(tracks)
@@ -88,6 +92,8 @@ def _compute(db, range_key, local, describe):
         if snr is not None:
             e["snr"].append(snr)
         e["last"] = max(e["last"], ts or 0)
+        if collect is not None and ts is not None:
+            collect.append((key[0], key[1], source, ts))
         for end in (a, b):  # a moving station: remember where it was when this link was seen
             if end in tracks:
                 e["where"].setdefault(end, []).append(locate(end, ts))
@@ -173,6 +179,11 @@ def _compute(db, range_key, local, describe):
             continue
         for i, (a, b) in enumerate(zip(nodes_on, nodes_on[1:])):
             add(a, b, "path", r["snr"] if i == len(nodes_on) - 2 else None, r["ts"])   # the SNR is the last hop's
+
+    # a phantom (a damaged copy of another radio's packet, corruption.py) isn't a radio: no node, no links
+    ph = {i for e in edges.values() for i in (e["a"], e["b"]) if corruption.phantom(describe(i).get("corrupt"))}
+    if ph:
+        edges = {k: e for k, e in edges.items() if e["a"] not in ph and e["b"] not in ph}
 
     # nodes: every endpoint, with identity, latest position and activity in range
     ids = {i for e in edges.values() for i in (e["a"], e["b"])}

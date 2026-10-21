@@ -28,8 +28,9 @@ def test_map_lists_the_radios_and_opens_one(page, demo_url):
 
 
 def test_analytics_overview_and_a_node_page(page, demo_url):
-    page.goto(demo_url + "/analytics.html")
+    page.goto(demo_url + "/analytics.html#overview")
     expect(page.locator("#kpis")).to_contain_text("Packets heard")
+    page.locator("#tabbtn-radios").click()            # the radios table lives on the Radios tab
     rows = page.locator("#nodes tbody tr")
     expect(rows.first).to_be_visible()
     assert rows.count() >= 20
@@ -38,6 +39,38 @@ def test_analytics_overview_and_a_node_page(page, demo_url):
     expect(page.locator("#nodeView")).to_be_visible()
     assert "#node=" in page.url
     expect(page.locator("#nodeView svg").first).to_be_attached()
+    clean(page)
+
+
+def test_analytics_tabs_load_only_what_they_show(page, demo_url):
+    asked = []
+    page.on("request", lambda r: asked.append(r.url) if "/api/" in r.url else None)
+    page.goto(demo_url + "/analytics.html#overview")
+    expect(page.locator("#traffic svg").first).to_be_attached(timeout=15_000)
+    expect(page.locator("#tab-network")).to_be_hidden()
+    heavy = ("/api/analytics/topology", "/api/analytics/critical", "/api/analytics/links", "/api/analytics/airtime",
+             "/api/insights/")
+    assert not [u for u in asked if any(h in u for h in heavy)]     # Overview runs only the main summary
+    for tab, el in (("network", "#critSummary"), ("channel", "#airSummary"), ("health", "#healthSummary"), ("radios", "#nodes tbody tr")):
+        page.locator(f"#tabbtn-{tab}").click()
+        assert page.url.endswith(f"#{tab}")
+        expect(page.locator(f"#tab-{tab}")).to_be_visible()
+        expect(page.locator(el).first).not_to_be_empty(timeout=30_000)
+    page.reload()                                       # the open tab comes back after a reload
+    expect(page.locator("#tab-radios")).to_be_visible()
+    clean(page)
+
+
+def test_link_history_card_and_compare(page, demo_url):
+    page.goto(demo_url + "/analytics.html#links")
+    expect(page.locator("#linkSummary")).to_contain_text("link", timeout=15_000)
+    expect(page.locator("#linkTable .lk-spark").first).to_be_attached()
+    expect(page.locator("#linkCompare")).to_have_attribute("open", "")      # #links opens the comparison
+    with page.expect_response(lambda r: "/api/analytics/links/compare" in r.url, timeout=30_000):
+        page.locator("#lcForm button[type=submit]").click()
+    expect(page.locator("#lcOut table")).to_be_visible(timeout=15_000)
+    expect(page.locator("#critHistSummary")).not_to_be_empty(timeout=30_000)     # critical relays over time
+    expect(page.locator("#critHistSummary")).not_to_contain_text("Couldn't")
     clean(page)
 
 
@@ -75,13 +108,16 @@ def test_visualizations_show_menu_filters_and_colours(page, demo_url):
 
 
 def test_packets_table_and_anatomy(page, demo_url):
-    page.goto(demo_url + "/packets.html")
-    rows = page.locator("#ptable tbody tr")
-    expect(rows.first).to_be_visible()
-    rows.first.click()
+    # Waits on the two requests the page makes rather than on fixed timeouts: under a full run the demo server is
+    # slow, and a click on a row before the list arrived, or a count taken mid-render, failed now and then.
+    with page.expect_response(lambda r: "/api/packets/search" in r.url, timeout=30_000):
+        page.goto(demo_url + "/packets.html")
+    rows = page.locator("#ptable tbody tr.has-raw")
+    expect(rows.first).to_be_visible(timeout=15_000)
+    with page.expect_response(lambda r: "/anatomy" in r.url, timeout=30_000):
+        rows.first.click()
     anat = page.locator(".anat-row .anat-layer")
-    expect(anat.first).to_be_visible()
-    assert anat.count() >= 3  # radio, header, encryption...
+    expect(anat.nth(2)).to_be_visible(timeout=15_000)  # radio, header, encryption...
     clean(page)
 
 

@@ -44,3 +44,43 @@ def test_on_the_demo_mesh(tmp_path):
     r = graphmetrics.compute(path, "7d", home, lambda i: {"name": i})
     assert r["stats"]["radios"] > 10 and r["radios"] and all(0 <= x["betweenness"] <= 1 for x in r["radios"])
     assert home not in {x["id"] for x in r["radios"]}
+
+
+def test_history_finds_the_day_a_radio_became_a_single_point_of_failure(tmp_path):
+    """Critical relays day by day: RELAY_R links the station all along; FAR_R shows up on day 10, reachable only
+    through it, so from day 10 RELAY_R would cut FAR_R off. The station's Wi-Fi changed that day too."""
+    import json
+    import time as _t
+    from datetime import datetime, timedelta
+
+    import store as store_mod
+    from synth import describe as _describe
+    STATION, RELAY_R, FAR_R = "!a0000001", "!c0000011", "!c0000012"
+    path = tmp_path / "mesh.db"
+    st = store_mod.Store(path)
+    st.claim_station(STATION)
+    start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=19)
+    for d in range(20):
+        for h in (2, 8, 14, 20):
+            t = (start + timedelta(days=d, hours=h)).timestamp()
+            if t > _t.time():
+                break
+            st.insert("links", ts=t, a=RELAY_R, b=STATION, snr=-8, source="direct", station=STATION)
+            st.insert("packets", ts=t, from_id=RELAY_R, pkt_id=int(t), portnum="TELEMETRY_APP", hops=0, station=STATION, raw="{}")
+            if d >= 10:
+                st.insert("links", ts=t + 5, a=FAR_R, b=RELAY_R, snr=-12, source="traceroute", station=STATION)
+    moved = (start + timedelta(days=10, hours=1)).timestamp()
+    for net, t in (("HomeWifi", start.timestamp() + 60), ("OtherWifi", moved)):
+        st.insert("events", ts=t, kind="network", detail=json.dumps({"network": net}), station=STATION)
+    st.close()
+    h = graphmetrics.history(path, "30d", STATION, _describe)
+    spof = [c for c in h["changes"] if c["kind"] == "spof"]
+    assert len(spof) == 1 and spof[0]["id"] == RELAY_R
+    assert datetime.fromtimestamp(spof[0]["t"]).date() == (start + timedelta(days=10)).date()
+    assert [x["id"] for x in spof[0]["cutList"]] == [FAR_R]
+    assert any("HomeWifi to OtherWifi" in e["text"] for e in spof[0]["events"])
+    by_day = {datetime.fromtimestamp(x["t"]).date(): x for x in h["days"]}
+    assert by_day[(start + timedelta(days=5)).date()]["singlePoints"] == 0
+    assert by_day[(start + timedelta(days=12)).date()]["singlePoints"] == 1
+    r = next(r for r in h["radios"] if r["id"] == RELAY_R)
+    assert r["daysCritical"] >= 9 and r["now"]["c"] == 1

@@ -60,8 +60,19 @@ function keyBadge(flag, opts = {}) {
   const kind = typeof flag === "string" ? flag : flag?.kind;
   if (!KEY_FLAG[kind]) return "";
   const n = typeof flag === "object" ? (flag.with || []).length : 0;
-  const t = KEY_FLAG[kind][1] + (n ? ` Shared with ${n} other radio${n > 1 ? "s" : ""}.` : "");
+  // a weak key on several radios: the firmware problem (keyflags.WEAK_SHARED_WHY), not a copied config
+  const t = KEY_FLAG[kind][1] + (n ? (kind === "compromised"
+    ? ` The same weak key is on ${n} other radio${n > 1 ? "s" : ""}: a firmware problem, not a copied config.`
+    : ` Shared with ${n} other radio${n > 1 ? "s" : ""}.`) : "");
   return `<span class="kf-badge kf-${kind}" title="${t.replace(/"/g, "&quot;")}" aria-label="${KEY_FLAG[kind][0]}">⚠${opts.short ? "" : ` ${KEY_FLAG[kind][0]}`}</span>`;
+}
+// Damaged-packet badge (corruption.py): a "radio" that's probably a damaged copy of another radio's packet, or a
+// packet that probably arrived damaged. flag = {confidence, why, original?}. Inferred, so it says "probably".
+const DAMAGE_LABEL = { certain: "Damaged packet", likely: "Probably a damaged packet", possible: "Possibly damaged" };
+function damageBadge(flag, opts = {}) {
+  if (!flag || !DAMAGE_LABEL[flag.confidence]) return "";
+  const t = `${DAMAGE_LABEL[flag.confidence]} (inferred): ${flag.why}`;
+  return `<span class="kf-badge dmg-badge dmg-${flag.confidence}" title="${t.replace(/"/g, "&quot;")}" aria-label="${DAMAGE_LABEL[flag.confidence]}">≈${opts.short ? "" : ` ${DAMAGE_LABEL[flag.confidence]}`}</span>`;
 }
 // "2.8" tag (nodeids.py): the radio's node number is crc32 of its key, which only firmware 2.8+ does.
 const V28_TIP = "Likely firmware 2.8: its node number is derived from its public key, which only 2.8 and later do. (Radios still on 2.7 or earlier, or whose key we haven't heard, can't be told apart.)";

@@ -65,3 +65,21 @@ def from_meshcore_key(public_key):
     if not re.fullmatch(r"[0-9a-f]{12,}", h):
         raise ValueError("a MeshCore public key is hex, at least 12 digits")
     return "mc:" + h[:12]
+
+
+# A Meshtastic radio that hears a node before that node's NodeInfo makes up a stand-in user for it: long name
+# "Meshtastic <last 4 hex>", short name "<last 4 hex>", hardware UNSET, no public key. It says nothing about the
+# node, so it's not an identity: a station whose fresh radio held one made a long-known radio look renamed to
+# "Meshtastic a90d" with no hardware. Real NodeInfo always names its hardware (DIY boards send PRIVATE_HW).
+def is_placeholder_user(nid, user):
+    """The firmware's stand-in user for a node it has no NodeInfo for (user: the library's dict, camelCase)."""
+    if not user or (user.get("hwModel") or "UNSET") != "UNSET" or user.get("publicKey"):
+        return False
+    tail = str(nid)[-4:]
+    return (user.get("longName") or "") in ("", f"Meshtastic {tail}") and (user.get("shortName") or "") in ("", tail)
+
+
+# the same test for node_info rows already logged (SQL, for WHERE clauses): keep a row unless it is a stand-in
+REAL_IDENTITY = ("NOT (IFNULL(hw_model, 'UNSET') IN ('', 'UNSET') AND IFNULL(public_key, '') = '' "
+                 "AND IFNULL(long_name, '') IN ('', 'Meshtastic ' || substr(node, -4)) "
+                 "AND IFNULL(short_name, '') IN ('', substr(node, -4)))")

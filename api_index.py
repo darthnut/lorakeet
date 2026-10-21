@@ -80,6 +80,18 @@ ENDPOINTS = [
      "params": {"range": RANGE, "station": STATION, "all": "1 = every radio, not just the top 25"},
      "summary": "Critical relays: each radio's centrality on the link graph and the radios (and links) whose loss would "
                 "cut others off from every listening station."},
+    {"method": "GET", "path": "/api/analytics/critical/history", "tier": "read",
+     "params": {"range": RANGE, "station": STATION, "window": "days of links in each day's graph (default 7)"},
+     "summary": "Critical relays day by day: each radio's centrality and what it would cut off on each day's graph (the "
+                "links seen in the week up to it), the days a radio became or stopped being a single point of failure, big "
+                "centrality changes, and station events logged near them."},
+    {"method": "GET", "path": "/api/analytics/links", "tier": "read", "params": {"range": RANGE, "station": STATION},
+     "summary": "Link history: each radio link's signal per hour or day (median, middle half, count; gaps where nothing was "
+                "logging), the steps where it changed by 5 dB or more, and station events (radio settings, a new Wi-Fi network)."},
+    {"method": "GET", "path": "/api/analytics/links/compare", "tier": "read",
+     "params": {"at": "unix time to compare around", "days": "days on each side (default 7, max 60)", "station": STATION},
+     "summary": "Before/after: every link's signal and packets per day either side of a moment, links gained or lost, "
+                "and radios heard only before or only after."},
     {"method": "GET", "path": "/api/analytics/topology", "tier": "read", "params": {"range": RANGE, "station": STATION},
      "summary": "Physical RF links between radios (measured and inferred from relay bytes)."},
     {"method": "GET", "path": "/api/analytics/replay", "tier": "read", "params": {"range": "default 24h", "station": STATION},
@@ -108,7 +120,7 @@ ENDPOINTS = [
                 "network": "meshtastic or meshcore (packets: which mesh it was heard on)",
                 "channel": "channel index (packets) or hash (rx_hops)", "hopsMin": "", "hopsMax": "", "snrMin": "",
                 "kind": "broadcast or directed", "q": "text in the summary", "since": "unix time", "until": "unix time",
-                "keyflag": "any, compromised or shared", "payload": "mc_rx: payload type, e.g. ADVERT",
+                "keyflag": "any, compromised or shared", "corrupt": "any, certain, likely or possible (probably damaged on the air)", "payload": "mc_rx: payload type, e.g. ADVERT",
                 "path": "mc_rx: came through a repeater whose public key starts with these hex digits", "arrival": "air, lora, mqtt, udp, api, local or unknown",
                 "limit": "default 200", "offset": "", "station": STATION},
      "summary": "Filter and page through the logged packets, receptions or transmissions."},

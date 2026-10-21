@@ -284,7 +284,7 @@ function renderList() {
     const tags = [n.protocol === "meshcore" ? '<span class="tag mc" title="A MeshCore radio">MC</span>' : "",
       n.isBase ? '<span class="tag base">base</span>' : "", n.isLocal ? '<span class="tag">this radio</span>' : "",
       n.isStation ? '<span class="tag">station</span>' : "", n.remote && !n.heardHere ? `<span class="tag" title="Heard only by the listening station ${esc(n.remote.stationName)}">via ${esc(n.remote.stationName)}</span>` : "",
-      n.battery != null && n.battery <= 20 ? '<span class="tag low">⚠ low batt</span>' : "", keyBadge(n.keyFlag), v28Tag(n.v28), n.lat == null && !n.isLocal ? '<span class="tag">no position</span>' : ""].join("");
+      n.battery != null && n.battery <= 20 ? '<span class="tag low">⚠ low batt</span>' : "", keyBadge(n.keyFlag), damageBadge(n.corrupt), v28Tag(n.v28), n.lat == null && !n.isLocal ? '<span class="tag">no position</span>' : ""].join("");
     const sig = n.isLocal ? "" : n.hopsAway === 0 ? `SNR ${fmt(n.snr, 1)} dB` : n.hopsAway != null ? `${n.hopsAway} hop${n.hopsAway === 1 ? "" : "s"}` : "";
     return `<li data-id="${esc(n.id)}"><span class="sdot ${status(n)}"></span>
       <div style="min-width:0"><div class="nm">${esc(n.longName)}${tags}</div><div class="sub">${esc([prettyHw(n.hwModel), n.relayOnly ? "seen relaying" : prettyRole(n.role)].filter(Boolean).join(" · "))}</div></div>
@@ -824,7 +824,8 @@ async function renderDetail(id) {
   const mc = n.protocol === "meshcore", act = !n.isLocal && !mc && S.status.protocol !== "meshcore";
   const hw = mc && (!n.hwModel || /^unknown$/i.test(n.hwModel)) ? "" : prettyHw(n.hwModel);
   el.innerHTML = `<button class="back" id="back">← All nodes</button>
-    <h2>${esc(n.longName)} ${n.isBase ? '<span class="tag base">base</span>' : ""}${keyBadge(n.keyFlag)} ${v28Tag(n.v28)}</h2>
+    <h2>${esc(n.longName)} ${n.isBase ? '<span class="tag base">base</span>' : ""}${keyBadge(n.keyFlag)}${damageBadge(n.corrupt)} ${v28Tag(n.v28)}</h2>
+    ${n.corrupt ? `<p class="kf-note">≈ ${esc(n.corrupt.why)}</p>` : ""}
     <div class="hw">${esc([n.shortName, hw, mc && !n.role ? "" : prettyRole(n.role)].filter(Boolean).join(" · "))} · <span class="num">${esc(n.id)}</span></div>
     ${n.keyFlag ? `<p class="kf-note">⚠ ${esc(keyFlagText(n.keyFlag))}${n.keyFlag.with.length ? ` Same key: ${n.keyFlag.with.map((o, i) => esc(n.keyFlag.withNames?.[i] || S.nodes.get(o)?.longName || o)).join(", ")}.` : ""}</p>` : ""}
     ${n.isLocal ? "" : `<div class="actions">${act ? '<button class="btn" id="dMsg">Message</button><button class="btn" id="dTrace">Traceroute</button>' : ""}<button class="star ${window.meshWatch?.isWatched(n.id) ? "on" : ""}" id="dStar" title="Watch: alert when it goes quiet or its battery runs low">${window.meshWatch?.isWatched(n.id) ? "★" : "☆"}</button><a class="btn" href="/analytics.html#node=${encodeURIComponent(n.id)}" style="text-decoration:none;color:inherit">Analytics</a><span class="err" id="dErr"></span></div>`}

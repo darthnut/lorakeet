@@ -12,6 +12,7 @@ from pubsub import pub
 from serial.tools import list_ports
 
 import analytics
+import corruption
 from channels import radio_channels, radio_lora
 from config import CFG
 from fwlog import ANSI, parse_rx, parse_tx, strip_text_prefix
@@ -26,6 +27,11 @@ from link import RadioLink
 
 
 log = logging.getLogger("meshdash")
+
+
+def corrupt_flag(nid):
+    """A sender that's probably a damaged copy of another radio's packet (corruption.py), or None."""
+    return corruption.badge(corruption.flags(runtime.DATA_DIR / "mesh.db")["senders"].get(nid))
 
 
 def key_flag(nid):
@@ -265,10 +271,12 @@ class Mesh(RadioLink):
         self._clock_checked = False
         self._last_snapshot = self._last_follow = 0  # tick(): node DB snapshot, follow the base
         self.known = {r["node"]: r for r in store.query(
-            "SELECT node, MAX(ts), long_name, short_name, hw_model, role FROM node_info GROUP BY node")}
+            f"SELECT node, MAX(ts), long_name, short_name, hw_model, role FROM node_info WHERE {radioid.REAL_IDENTITY} "
+            "GROUP BY node")}
         self.identity = {r["node"]: r["sig"] for r in store.query(
             "SELECT node, MAX(ts), IFNULL(long_name,'')||'|'||IFNULL(short_name,'')||'|'||IFNULL(hw_model,'')||'|'"
-            "||IFNULL(role,'')||'|'||IFNULL(public_key,'') AS sig FROM node_info GROUP BY node")}
+            f"||IFNULL(role,'')||'|'||IFNULL(public_key,'') AS sig FROM node_info WHERE {radioid.REAL_IDENTITY} "
+            "GROUP BY node")}
         self.node_cache = {}      # last known node DB, served while the radio is unplugged
         pub.subscribe(self._on_receive, "meshtastic.receive")
         pub.subscribe(self._on_lost, "meshtastic.connection.lost")
@@ -498,6 +506,9 @@ class Mesh(RadioLink):
                     touched.add(r["node"])
         elif table == "node_info":
             for r in rows:
+                if radioid.is_placeholder_user(r["node"], {"longName": r["long_name"], "shortName": r["short_name"],
+                                                           "hwModel": r["hw_model"], "publicKey": r["public_key"]}):
+                    continue  # an older collector's firmware stand-in (radioid.is_placeholder_user): not a name
                 self.known[r["node"]] = {k: r[k] for k in ("node", "long_name", "short_name", "hw_model", "role")}
                 touched.add(r["node"])
         elif table == "packets":
@@ -625,8 +636,8 @@ class Mesh(RadioLink):
 
     def _track_identity(self, nid, user):
         """Insert a node_info row when a node's name/hardware/role/key first appears or changes."""
-        if not user:
-            return
+        if not user or radioid.is_placeholder_user(nid, user):
+            return  # (the firmware's stand-in for a node it has no NodeInfo for says nothing about the node)
         # role is omitted from the dict when it's the default; normalise so it matches what we store
         user = {**user, "role": user.get("role") or "CLIENT"}
         sig = "|".join(str(user.get(k) or "") for k in ("longName", "shortName", "hwModel", "role", "publicKey"))
@@ -971,7 +982,7 @@ class Mesh(RadioLink):
         if not nid:   # a MeshCore channel message names its sender only in its text ("Name: message")
             return {"name": "(sender not named)", "short": "?", "hw": None, "role": None, "announced": False,
                     "isBase": False, "isLocal": False, "keyFlag": None, "v28": False}
-        n = (self._nodes().get(nid) or {}).get("user") or {}
+        n = self._live_user(nid)
         k = self.known.get(nid) or {}
         name = n.get("longName") or k.get("long_name") or (runtime.BASE_NAME if nid == runtime.BASE_ID else nid)
         announced = bool(n.get("longName") or k)
@@ -981,11 +992,17 @@ class Mesh(RadioLink):
         return {"name": name, "short": n.get("shortName") or k.get("short_name") or short_label(nid, name),
                 "hw": n.get("hwModel") or k.get("hw_model"), "role": role, "announced": announced,
                 "isBase": nid == runtime.BASE_ID, "isLocal": nid == self.local_id, "keyFlag": key_flag(nid),
+                "corrupt": corrupt_flag(nid),
                 "v28": likely_28(nid)}
 
+    def _live_user(self, nid):
+        """The radio's node DB user for nid, or {} if it's only the firmware's stand-in (radioid.is_placeholder_user):
+        a stand-in mustn't hide the name we logged, nor make a node that never announced itself look announced."""
+        u = (self._nodes().get(nid) or {}).get("user") or {}
+        return {} if radioid.is_placeholder_user(nid, u) else u
+
     def name(self, nid):
-        n = self._nodes().get(nid)
-        return ((n or {}).get("user", {}).get("longName") or (self.known.get(nid) or {}).get("long_name")
+        return (self._live_user(nid).get("longName") or (self.known.get(nid) or {}).get("long_name")
                 or (runtime.BASE_NAME if nid == runtime.BASE_ID else nid))
 
     def node_json(self, nid):
@@ -1037,6 +1054,7 @@ class Mesh(RadioLink):
             "relayOnly": nid == runtime.BASE_ID and rx.get("ts") is None and n.get("lastHeard") is None,
             "v28": likely_28(nid),
             "keyFlag": dict(kf, withNames=[self.name(o) for o in kf["with"]]) if (kf := key_flag(nid)) else None,
+            "corrupt": corrupt_flag(nid),
         }
 
     def state(self):
