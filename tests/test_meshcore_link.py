@@ -265,3 +265,47 @@ def test_receptions_before_the_radio_says_who_it_is_wait_for_it(tmp_path):
     assert {r["station"] for r in st.query("SELECT station FROM mc_rx")} == {lk.local_id}
     assert lk.local_id.startswith("mc:") and not st.query("SELECT 1 FROM packets WHERE station = '!a0000001'")
     st.close()
+
+
+class _AnswersThenFails:
+    """A MeshCore radio that answers create_serial, then fails or is paused part way through the setup."""
+    def __init__(self, link=None, fail=False):
+        import types
+        self.link, self.fail, self.closed = link, fail, False
+        self.commands = types.SimpleNamespace(send_appstart=self.appstart)
+
+    def subscribe(self, *a):
+        pass
+
+    async def appstart(self):
+        if self.fail:
+            raise RuntimeError("the radio went quiet")
+
+    async def start_auto_message_fetching(self):
+        if self.link:
+            self.link.paused = True          # the pause lands mid-connect
+
+    async def disconnect(self):
+        self.closed = True
+
+
+def _connect_with(link, monkeypatch, radio):
+    import meshcore
+
+    async def create(*a, **k):
+        return radio
+    monkeypatch.setattr(meshcore.MeshCore, "create_serial", create)
+    monkeypatch.setattr(link, "_pick_port", lambda: "COM99")
+    link.connect()
+
+
+def test_a_connect_that_fails_part_way_lets_go_of_the_port(link, monkeypatch):
+    radio = _AnswersThenFails(fail=True)
+    _connect_with(link, monkeypatch, radio)
+    assert radio.closed and not link.connected and link.mc is None
+
+
+def test_a_pause_during_the_connect_lets_go_of_the_port(link, monkeypatch):
+    radio = _AnswersThenFails(link)
+    _connect_with(link, monkeypatch, radio)
+    assert radio.closed and not link.connected and link.mc is None and link.paused

@@ -82,6 +82,7 @@ class MeshCoreLink(Mesh):
         port = self._pick_port()
         if not port:
             return
+        mc = None
         try:
             mc = self._run(MeshCore.create_serial(port, 115200))
             if mc is None:
@@ -96,14 +97,24 @@ class MeshCoreLink(Mesh):
                 self.event("connect_failed", port=port, error=str(e))
             self.last_connect_error = str(e)
             self.mc = None
+            if mc is not None:   # it answered, then failed: close it, or its port stays held (Windows locks it)
+                self._disconnect_quietly(mc)
             self._no_answer = self._no_answer + 1 if "answered" in str(e) else 0
             if self._no_answer >= RESET_AFTER_FAILS:
                 self._reset_radio(port)
             return
         self._no_answer = 0
         with self.lock:
-            self.mc, self.port = mc, port
-            self.connected, self.connected_at, self.last_rx = True, time.time(), time.monotonic()
+            # paused while it was connecting: let go now (as Mesh._connect does), checked in the same lock as the
+            # connection is set so a pause can't slip in between
+            paused = self.paused
+            if not paused:
+                self.mc, self.port = mc, port
+                self.connected, self.connected_at, self.last_rx = True, time.time(), time.monotonic()
+        if paused:
+            log.info("logging was paused while connecting: letting go of %s", port)
+            self._disconnect_quietly(mc)
+            return
         self.last_connect_error = None
         self.event("connected", port=port, local=self.local_id, protocol=self.PROTOCOL, self_info=self.self_info)
         self.broadcast("status", self.status())
@@ -143,15 +154,18 @@ class MeshCoreLink(Mesh):
             me["position"] = {"latitude": info.get("adv_lat"), "longitude": info.get("adv_lon")}
         return {self.local_id: me}
 
+    def _disconnect_quietly(self, mc):
+        try:
+            self._run(mc.disconnect(), timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+
     def drop_link(self):
         mc, self.mc = self.mc, None
         with self.lock:
             self.connected = False
         if mc is not None:
-            try:
-                self._run(mc.disconnect(), timeout=10)
-            except Exception:  # noqa: BLE001
-                pass
+            self._disconnect_quietly(mc)
             self.event("disconnected", port=self.port)
 
     def tick(self):

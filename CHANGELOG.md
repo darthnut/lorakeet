@@ -6,6 +6,69 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.3 (2026-10-28)
+
+**New**
+- **Unusual right now** (Analytics, Overview): steady radios behaving unlike themselves, each judged against its own
+  last two weeks instead of a fixed threshold: unusually quiet (silent longer than it ever usually is), sending or
+  relaying much less (or more) than usual, or heard much weaker at a station. Only time your stations were logging
+  counts, and radios that come and go (trackers, visitors) aren't judged. The warnings also become alerts (Settings:
+  "Alert when a radio behaves unlike itself", on by default), raised once and resolved when the radio is back to normal.
+- **Daily patterns in link history:** a link whose signal swings over the day (temperature and humidity do this) shows
+  its daily shape and swing under its name. Steps are now found with that swing taken out, so an ordinary afternoon
+  dip is never mistaken for a change, and the weaker-signal check allows for it too.
+- **Weather at your stations** (opt-in: Settings → Weather, or `[weather] enabled = true`): hourly temperature,
+  humidity, rain and wind from Open-Meteo for the ~10 km square each station is in. Only the square's centre is sent,
+  once an hour; stations in one square share a request, and a hub fetches for every station it knows. The Health tab
+  shows each square's weather and the links whose signal follows it ("1.2 dB weaker per 10 °C warmer"), link history
+  rows say so too, and the weaker-signal check takes out what the temperature explains, so a heat-wave dip isn't
+  reported as a failing link. Kept in its own `weather.db`, next to mesh.db.
+- **Noise at your stations** (Analytics, Health): the noise floor each station's radio measures at its antenna, over
+  time and over the day, with lasting steps (matched with station events) and noisy spells; the share of receptions
+  that failed their checksum; and how often the radio restarted. Noise is usually local (a USB 3 device, a power
+  supply, a computer) and costs range for everything that station hears. "Unusual right now" gains two station
+  checks: **noisier than usual**, and **radio keeps restarting** (8 or more restarts in a day: usually a USB port
+  cutting out on over-current or a weak supply). A weaker link at a station whose own noise rose says it may be the
+  station, not the link.
+- **Station reach and gaps** (Visualizations, Coverage, View: "Station reach and gaps"): each fixed station with a
+  line to every radio it hears directly, and the radios no station hears directly, only through relays, shaded on
+  the map in ~3 km squares. The clusters near your stations are where another station would hear what yours can't.
+  Click a station for its direct neighbours (distance, signal, and which only it hears), or a square for the radios
+  there.
+
+**Changed**
+- **Fewer new-radio alerts when a lot arrive at once.** A station that just started logging, or moved (its Wi-Fi changed
+  to another network), hears dozens of radios for the first time: for its first 48 hours they go into one alert per
+  station that keeps updating, with no notifications. And 5 or more new radios at one station within an hour (a
+  regional flood, a busy event) become one alert, with one notification, that grows until an hour passes with no more.
+  Both are adjustable under Settings → Alerts. (One station's first night at a new house had raised 134 alerts.)
+- **Faster lookups by radio and by packet.** Two new indexes on receptions: a packet's anatomy, a radio's "last
+  heard" and the hub's public-channel check are hundreds of times faster on a large log (database layout 4: added
+  on first start, ~3% more disk). A moving station's drive map no longer queries each packet it sent one by one: a
+  month of the car's drives went from 45 s to 0.3 s.
+
+**Fixed**
+- The map's live feed left out packets that name no sender, which is most MeshCore packets.
+- A MeshCore radio that answered and then failed part way through connecting kept its USB port held (on Windows,
+  every later connect then failed), and pausing logging while a MeshCore radio was connecting didn't let go of it.
+- Auto-traceroute's busy-channel check read a figure the radio reports only every ~15 minutes, so it usually saw
+  nothing and could send into a busy channel. It now reads the once-a-minute one.
+- After a hub restarted, radios only another station heard showed on the map as heard here, at that station's signal.
+- With no radio connected, a multi-station hub's "Unusual right now" and health checks mixed every station's rows
+  together; they now use the combined view.
+- The first-run setup page wrote lorakeet.toml readable by other users of the computer; it can hold the hub pairing
+  token, so it's now private, like every later save.
+- Smaller: the combined view's message list could merge messages naming no sender; the noise card dropped the
+  connection on an unexpected error instead of showing it; the database size warning named a drive letter; the first
+  radio connection after boot could wait up to 20 s for no reason.
+- A malformed number in a page's request (`?limit=abc`) now gets a clear "bad request" instead of a dropped
+  connection and a traceback in the log. A station's event that isn't the shape expected no longer breaks the
+  stations timeline. A firmware log line that won't parse is now counted, so the alert for a changed log format
+  can notice it.
+- A sent message's delivery status could be set on an older message that had the same packet id (ids come round
+  again after a radio restarts).
+- Airtime in the combined view counted every reception without a packet id from one radio as a single transmission.
+
 ## 0.5.2 (2026-10-20)
 
 **New**

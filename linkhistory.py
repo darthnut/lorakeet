@@ -25,6 +25,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 import radioid
+import weather
 from analytics import RANGES, _connect, _coverage, scope_local, station_ids
 from topology import relay_resolver
 
@@ -36,6 +37,10 @@ MAX_STEPS = 3
 EVENT_NEAR_S = 12 * 3600
 MIN_OBS = 3          # a link needs this many readings in range to be listed
 MAX_LINKS = 300
+DAILY_MIN_PER_HOUR = 3   # a link's daily pattern needs this many readings in an hour of the day ...
+DAILY_MIN_HOURS = 12     # ... in this many of the 24 hours
+DAILY_MIN_DAY = 6        # (days with fewer readings don't count towards it)
+DAILY_MIN_SWING = 1.5    # a smaller swing than this (dB) is no pattern worth adjusting for
 
 
 def _q(db, sql, *a):
@@ -155,6 +160,45 @@ def station_events(db, since, until):
     return out
 
 
+def daily_pattern(obs):
+    """A link's usual shape over the day: {"offsets": 24 dB offsets from its daily median (index = local hour), "swing",
+    "weakest", "strongest"}, or None. Each reading is taken relative to its own day's median first, so a step (an
+    antenna, a move) doesn't leak into the hours it happened in; then the median per hour of the day, smoothed over
+    neighbouring hours. Temperature and humidity move LoRa signal through the day; this is how much."""
+    by_day = defaultdict(list)
+    for t, s in obs:
+        by_day[datetime.fromtimestamp(t).date()].append((t, s))
+    by_hour = defaultdict(list)
+    for rows in by_day.values():
+        if len(rows) < DAILY_MIN_DAY:
+            continue
+        m = statistics.median(s for _, s in rows)
+        for t, s in rows:
+            by_hour[datetime.fromtimestamp(t).hour].append(s - m)
+    raw = {h: statistics.median(v) for h, v in by_hour.items() if len(v) >= DAILY_MIN_PER_HOUR}
+    if len(raw) < DAILY_MIN_HOURS:
+        return None
+    offs = []
+    for h in range(24):
+        near = [raw[(h + d) % 24] for d in (-1, 0, 1) if (h + d) % 24 in raw]
+        offs.append(round(statistics.mean(near), 2) if near else 0.0)
+    centre = statistics.median(offs)
+    offs = [round(o - centre, 2) for o in offs]
+    swing = max(offs) - min(offs)
+    if swing < DAILY_MIN_SWING:
+        return None
+    return {"offsets": offs, "swing": round(swing, 1), "weakest": min(range(24), key=lambda h: offs[h]),
+            "strongest": max(range(24), key=lambda h: offs[h])}
+
+
+def deseasoned(obs, pattern):
+    """Readings with the link's daily pattern taken out (unchanged without one)."""
+    if not pattern:
+        return obs
+    o = pattern["offsets"]
+    return [(t, s - o[datetime.fromtimestamp(t).hour]) for t, s in obs]
+
+
 def find_steps(obs, cuts=(), events=()):
     """Where a link's signal stepped. obs: sorted [(ts, snr)]. cuts: extra candidate split times (event times).
     Returns [{ts, before, after, delta, nBefore, nAfter, events}] in time order."""
@@ -214,7 +258,7 @@ def history(db_path, range_key, station, describe):
         covered = {h if bucket == "hour" else h[:10] for h in _coverage(db, since, local)}
         stations = set(station_ids(db, local))
         events = station_events(db, since, until)
-        links = []
+        links, wx = [], {}
         for (a, b), v in observations(db, since, until, local).items():
             obs = v["obs"]
             if len(obs) < MIN_OBS:
@@ -228,7 +272,9 @@ def history(db_path, range_key, station, describe):
                 st = _stats(by_bucket.get(key, []))
                 series.append({"t": start.timestamp(), **(st or {}), "covered": key in covered})
             mine = [e for e in events if e["station"] in (a, b)]
-            steps = find_steps(obs, [e["ts"] for e in mine], mine)
+            pattern = daily_pattern(obs)
+            # steps on readings with the daily pattern taken out: an afternoon dip every day isn't a change
+            steps = find_steps(deseasoned(obs, pattern), [e["ts"] for e in mine], mine)
             days = sorted({datetime.fromtimestamp(t).date() for t, _ in obs})
             cov_days = len({k[:10] for k in covered}) or 1
             status = None
@@ -239,11 +285,14 @@ def history(db_path, range_key, station, describe):
             st_end = next((x for x in (b, a) if x in stations), None)
             radio = a if st_end == b else b if st_end == a else a
             other = st_end or (b if radio == a else a)
+            if st_end and st_end not in wx:
+                wx[st_end] = weather.at_station(db, db_path, st_end, since, until)
             links.append({
                 "a": radio, "b": other, "aName": describe(radio)["name"], "bName": describe(other)["name"],
                 "station": st_end, "sources": dict(v["sources"]), "measured": bool(v["sources"]["direct"] or v["sources"]["traceroute"]),
                 **_stats([s for _, s in obs]), "first": obs[0][0], "last": obs[-1][0], "perDay": round(len(obs) / cov_days, 1),
-                "series": series, "steps": steps, "status": status,
+                "series": series, "steps": steps, "status": status, "daily": pattern,
+                "weather": weather.fit(obs, wx[st_end]) if st_end and wx[st_end] else None,
             })
         links.sort(key=lambda x: (-max((abs(s["delta"]) for s in x["steps"]), default=0), x["status"] is None, -x["n"]))
         return {"range": range_key, "since": since, "until": until, "bucket": bucket, "links": links[:MAX_LINKS],

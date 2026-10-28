@@ -7,6 +7,7 @@
    minute. Click a square for what was heard there. */
 
 const DV = { data: null, key: null, map: null, layer: null, sel: null, fitted: null,
+  view: (() => { try { return localStorage.getItem("meshdash.dvView") || "drive"; } catch { return "drive"; } })(),
   metric: (() => { try { return localStorage.getItem("meshdash.dvMetric") || "radios"; } catch { return "radios"; } })(),
   bin: (() => { try { return Number(localStorage.getItem("meshdash.dvBin")) || 250; } catch { return 250; } })(),
   sent: (() => { try { return localStorage.getItem("meshdash.dvSent") !== "0"; } catch { return true; } })(),
@@ -19,7 +20,21 @@ const DV_METRICS = {
 };
 const DV_STEPS = [0.16, 0.3, 0.44, 0.6, 0.76];   // fill opacity of the accent colour, light to dark
 
+// the map both coverage views draw on
+function dvEnsureMap() {
+  if (!DV.map) {
+    DV.map = L.map($("driveMap"), { zoomControl: true, attributionControl: true });
+    lkBaseTiles().addTo(DV.map);
+    DV.layer = L.layerGroup().addTo(DV.map);
+  }
+  DV.map.invalidateSize();
+}
+
 async function drawDrive(range) {
+  $("dvView").value = DV.view;
+  $("dvDriveCtl").hidden = DV.view !== "drive";
+  $("dvReachCtl").hidden = DV.view !== "reach";
+  if (DV.view === "reach") return drawReach(range);   // reach.js
   const key = `${range}|${DV.bin}|${window.LK_STATION || ""}`;
   if (DV.key !== key) {
     $("dvNote").textContent = "Loading…";
@@ -30,12 +45,8 @@ async function drawDrive(range) {
       DV.data = d; DV.key = key; DV.sel = null;
     } catch (e) { $("dvNote").textContent = `Couldn't load coverage: ${e.message}`; return; }
   }
-  if (!DV.map) {
-    DV.map = L.map($("driveMap"), { zoomControl: true, attributionControl: true });
-    lkBaseTiles().addTo(DV.map);
-    DV.layer = L.layerGroup().addTo(DV.map);
-  }
-  DV.map.invalidateSize();
+  if (DV.view !== "drive") return;   // switched while it loaded
+  dvEnsureMap();
   $("dvMetric").value = DV.metric;
   $("dvBin").innerHTML = DV.data.bins.map((b) => `<option value="${b}"${b === DV.bin ? " selected" : ""}>${b < 1000 ? `${b} m` : `${b / 1000} km`}</option>`).join("");
   renderDrive();
@@ -196,6 +207,13 @@ function dvSelect(c, quiet = false) {
   if (!quiet) { $("vzCell").open = true; renderDrive(); }
 }
 
+$("dvView").addEventListener("change", (e) => {
+  DV.view = e.target.value;
+  try { localStorage.setItem("meshdash.dvView", DV.view); } catch { /* storage blocked */ }
+  DV.sel = null; DV.fitted = null;
+  $("dvCell").innerHTML = '<p class="muted">Click a square on the map.</p>';
+  drawDrive(A.range);
+});
 $("dvMetric").addEventListener("change", (e) => {
   DV.metric = e.target.value;
   try { localStorage.setItem("meshdash.dvMetric", DV.metric); } catch { /* storage blocked */ }

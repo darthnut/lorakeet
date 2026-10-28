@@ -147,25 +147,39 @@ def _sent(db, st, fixes, fts, since, until, others, resolve, describe):
     for pid, ts in db.execute("SELECT pkt_id, ts FROM messages WHERE station = ?1 AND from_id = ?1 AND outgoing = 1 "
                               "AND pkt_id IS NOT NULL AND ts BETWEEN ?2 AND ?3", (st, since, until)):
         ids.setdefault(pid, ts)
+    # everything about those packets in four queries over the range, not four per packet (45 s for a station's
+    # month once it had sent a thousand); copies and echoes come within seconds, so an hour either side catches them
+    lo, hi = since - 3600, until + 3600
+    copies, echoes_of, what_of, text_of = {}, {}, {}, {}
+    for pid, at, hops, snr in db.execute("SELECT pkt_id, station, hops, snr FROM rx_hops WHERE from_id = ?1 "
+                                         "AND station != ?1 AND station IS NOT NULL AND ts BETWEEN ?2 AND ?3", (st, lo, hi)):
+        copies.setdefault(pid, []).append((at, hops, snr))
+    for pid, relay in db.execute("SELECT pkt_id, relay FROM rx_hops WHERE station = ?1 AND from_id = ?1 "
+                                 "AND ts BETWEEN ?2 AND ?3", (st, lo, hi)):
+        echoes_of.setdefault(pid, []).append(relay)
+    for pid, port in db.execute("SELECT pkt_id, portnum FROM packets WHERE station = ?1 AND from_id = ?1 "
+                                "AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (st, lo, hi)):
+        what_of.setdefault(pid, port)
+    for pid, text in db.execute("SELECT pkt_id, text FROM messages WHERE station = ?1 AND from_id = ?1 "
+                                "AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (st, lo, hi)):
+        text_of.setdefault(pid, text)
     out = []
     for pid, ts in sorted(ids.items(), key=lambda x: x[1]):
         i = bisect.bisect_right(fts, ts) - 1
         if i < 0 or ts - fts[i] > MAX_FIX_AGE_S:
             continue
         heard = {}
-        for at, hops, snr in db.execute("SELECT station, hops, snr FROM rx_hops WHERE from_id = ? AND pkt_id = ? "
-                                        "AND station != ? AND station IS NOT NULL", (st, pid, st)):
+        for at, hops, snr in copies.get(pid, ()):
             if at in others and (at not in heard or (snr or -99) > (heard[at]["snr"] or -99)):
                 heard[at] = {"station": at, "name": describe(at)["name"], "hops": hops, "snr": snr}
-        echoes = db.execute("SELECT relay FROM rx_hops WHERE station = ?1 AND from_id = ?1 AND pkt_id = ?2", (st, pid)).fetchall()
-        relays = sorted({(resolve(r)[0] or f"0x{r:02x}") for (r,) in echoes if r is not None})
-        what = db.execute("SELECT portnum FROM packets WHERE station = ?1 AND from_id = ?1 AND pkt_id = ?2", (st, pid)).fetchone()
-        text = db.execute("SELECT text FROM messages WHERE station = ?1 AND from_id = ?1 AND pkt_id = ?2", (st, pid)).fetchone()
+        echoes = echoes_of.get(pid, [])
+        relays = sorted({(resolve(r)[0] or f"0x{r:02x}") for r in echoes if r is not None})
+        what, text = what_of.get(pid), text_of.get(pid)
         out.append({"ts": ts, "lat": fixes[i][1], "lon": fixes[i][2], "station": st, "pkt": pid,
                     "result": "station" if heard else "mesh" if echoes else "none",
                     "heardBy": sorted(heard.values(), key=lambda h: h["name"]), "echoes": len(echoes),
                     "relays": [[r, describe(r)["name"] if radioid.protocol_of(r) else f"unresolved {r}"] for r in relays],
-                    "what": (text[0][:40] if text and text[0] else None) or (what[0] if what else "packet")})
+                    "what": (text[:40] if text else None) or what or "packet"})
     return out
 
 

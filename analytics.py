@@ -173,7 +173,7 @@ _COMBINED = [
     _first("packets", "CASE WHEN pkt_id IS NULL THEN rowid ELSE COALESCE(from_id, '') || ':' || pkt_id END",
            f"NOT {_OTHER_STATION} AND NOT {_IMPORTED}"),
     f"CREATE TEMP VIEW rx_hops AS SELECT {{SEL}} FROM {{SRC}} WHERE NOT {_OTHER_STATION}",
-    _first("messages", "CASE WHEN outgoing = 1 OR pkt_id IS NULL THEN rowid ELSE from_id || ':' || pkt_id END"),
+    _first("messages", "CASE WHEN outgoing = 1 OR pkt_id IS NULL THEN rowid ELSE COALESCE(from_id, '') || ':' || pkt_id END"),
     _first("links", "a, b, source, snr, CAST(ts / 120 AS INT)"),
     _first("telemetry", "node, battery, voltage, ch_util, air_util, uptime, temperature, CAST(ts / 120 AS INT)"),
     # a station's own GPS fixes (source 'own') are each kept: they're its track, not a reception to de-duplicate
@@ -238,30 +238,34 @@ def _connect(path, station=None):
     if station and station != ALL_STATIONS and not radioid.is_radio_id(station):
         raise ValueError(f"not a station id: {station!r}")
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
-    db.row_factory = sqlite3.Row
-    aliases = _alias_views(db, path)
-    src = (lambda t: (f"_a_{t}", "*")) if aliases else (lambda t: (f"main.{t}", "rowid AS rowid, *"))
-    if station == ALL_STATIONS:
-        db.execute(f"CREATE TEMP TABLE _stations AS SELECT DISTINCT station AS id FROM {src('packets')[0]} WHERE station IS NOT NULL")
-        for sql in _COMBINED:
-            t = sql.split()[3]  # CREATE TEMP VIEW <table> ...
-            db.execute(sql.replace("{SRC}", src(t)[0]).replace("{SEL}", src(t)[1]))
-        # The de-duplicated packets view runs a window over every packet each time it's read, and one analysis reads
-        # it a dozen-plus times (the Analytics summary: 28 queries, ~0.15 s each on 17k packets). Work it out once
-        # per connection instead (~0.2 s), indexed like the table.
-        db.execute("CREATE TEMP TABLE _combined_packets AS SELECT * FROM packets")
-        db.execute("DROP VIEW temp.packets")
-        db.execute("CREATE TEMP VIEW packets AS SELECT * FROM _combined_packets")
-        db.execute("CREATE INDEX temp._combined_packets_ts ON _combined_packets(ts)")
-        db.execute("CREATE INDEX temp._combined_packets_from ON _combined_packets(from_id, ts)")
-    elif station:
-        station = aliases.get(station, station)  # asked for by its pre-2.8 number
-        for t in STATION_TABLES:
-            frm, sel = src(t)
-            db.execute(f"CREATE TEMP VIEW {t} AS SELECT {sel} FROM {frm} WHERE station = '{station}'")
-    elif aliases:
-        for t in STATION_TABLES:
-            db.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM _a_{t}")
+    try:
+        db.row_factory = sqlite3.Row
+        aliases = _alias_views(db, path)
+        src = (lambda t: (f"_a_{t}", "*")) if aliases else (lambda t: (f"main.{t}", "rowid AS rowid, *"))
+        if station == ALL_STATIONS:
+            db.execute(f"CREATE TEMP TABLE _stations AS SELECT DISTINCT station AS id FROM {src('packets')[0]} WHERE station IS NOT NULL")
+            for sql in _COMBINED:
+                t = sql.split()[3]  # CREATE TEMP VIEW <table> ...
+                db.execute(sql.replace("{SRC}", src(t)[0]).replace("{SEL}", src(t)[1]))
+            # The de-duplicated packets view runs a window over every packet each time it's read, and one analysis reads
+            # it a dozen-plus times (the Analytics summary: 28 queries, ~0.15 s each on 17k packets). Work it out once
+            # per connection instead (~0.2 s), indexed like the table.
+            db.execute("CREATE TEMP TABLE _combined_packets AS SELECT * FROM packets")
+            db.execute("DROP VIEW temp.packets")
+            db.execute("CREATE TEMP VIEW packets AS SELECT * FROM _combined_packets")
+            db.execute("CREATE INDEX temp._combined_packets_ts ON _combined_packets(ts)")
+            db.execute("CREATE INDEX temp._combined_packets_from ON _combined_packets(from_id, ts)")
+        elif station:
+            station = aliases.get(station, station)  # asked for by its pre-2.8 number
+            for t in STATION_TABLES:
+                frm, sel = src(t)
+                db.execute(f"CREATE TEMP VIEW {t} AS SELECT {sel} FROM {frm} WHERE station = '{station}'")
+        elif aliases:
+            for t in STATION_TABLES:
+                db.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM _a_{t}")
+    except BaseException:   # setup failed part way: don't leak the connection
+        db.close()
+        raise
     return db
 
 

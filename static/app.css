@@ -398,6 +398,24 @@ pre.raw .anat-link { display: inline-block; margin-bottom: 6px; font: 600 12px s
 .lk-spark .lk-step { stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
 .lk-spark .lk-gap { fill: color-mix(in srgb, var(--text-muted) 12%, transparent); }
 .lk-table td { vertical-align: middle; }
+.lk-daily { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 3px; }
+.lk-daily small { white-space: nowrap; }
+.lk-dspark { flex: none; }
+.lk-dspark .lk-zero { stroke: var(--border); }
+.lk-dspark .up { fill: var(--accent); }
+.lk-dspark .dn { fill: color-mix(in srgb, var(--accent) 45%, transparent); }
+.wx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.wx-sq { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; line-height: 1.5; min-width: 0; }
+.wx-t { font-size: 1.25em; font-weight: 600; }
+.wx-spark { display: block; margin-top: 6px; max-width: 100%; height: auto; }
+.wx-spark .lk-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.wx-spark .wx-rain { fill: color-mix(in srgb, var(--accent) 35%, transparent); }
+.wx-attr { margin-top: 10px; font-size: 0.85em; }
+.lk-wx small { white-space: normal; }
+.anom-list { list-style: none; margin: 0; padding: 0; }
+.anom-list li { padding: 7px 0; border-top: 1px solid var(--border); line-height: 1.5; }
+.anom-list li:first-child { border-top: 0; }
+.anom-list .tag { margin-right: 6px; }
 .ch-days { display: block; margin: 4px 0 8px; overflow: visible; }
 .ch-days .ch-hit { fill: transparent; }
 .ch-days .ch-bar { fill: var(--warning); }

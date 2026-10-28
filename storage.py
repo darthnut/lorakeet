@@ -164,7 +164,7 @@ class Storage:
             if not self.state.get("size_notified_over") or now - last > 7 * 86400:
                 gb = st["dbBytes"] / 1024**3
                 notify("Lorakeet: database is over 1 GB",
-                       f"mesh.db is {gb:.2f} GB on D:. Nothing is deleted and logging continues. "
+                       f"mesh.db is {gb:.2f} GB. Nothing is deleted and logging continues. "
                        "Open the dashboard (127.0.0.1:5190) for options.")
                 self.on_event("size_warning", bytes=st["dbBytes"])
                 self.state.update(size_notified_over=True, size_notified_ts=now)

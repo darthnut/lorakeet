@@ -444,11 +444,20 @@ function linkRowsHtml(links, bucket, opts = {}) {
   if (!links.length) return `<p class="muted">${esc(opts.empty || "No link with enough readings in this range.")}</p>`;
   const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
   return `<div class="tablewrap"><table class="nodes lk-table"><thead><tr><th>Link</th><th>Signal over time</th><th class="num">Median</th><th>Change</th><th class="num">Readings/day</th></tr></thead><tbody>${links.map((l, i) => `
-    <tr data-i="${i}"><td>${who(l.a, l.aName)} – ${who(l.b, l.bName)}<small class="muted"> ${l.measured ? "measured" : "inferred"}${l.status === "new" ? ' · <span class="tag">new link</span>' : l.status === "quiet" ? ' · <span class="tag low">went quiet</span>' : ""}</small></td>
+    <tr data-i="${i}"><td>${who(l.a, l.aName)} – ${who(l.b, l.bName)}<small class="muted"> ${l.measured ? "measured" : "inferred"}${l.status === "new" ? ' · <span class="tag">new link</span>' : l.status === "quiet" ? ' · <span class="tag low">went quiet</span>' : ""}</small>${l.daily ? `<div class="lk-daily" title="${esc(`Its usual shape over the day: ${l.daily.swing} dB between its weakest hour (around ${hourName(l.daily.weakest)}) and strongest (around ${hourName(l.daily.strongest)}). Steps are found with this taken out.`)}">${dailySpark(l.daily)}<small class="muted">${fmt(l.daily.swing, 1)} dB daily swing, weakest ${hourName(l.daily.weakest)}</small></div>` : ""}${l.weather?.follows ? `<div class="lk-wx"><small class="muted">${esc(wxText(l.weather))}</small></div>` : ""}</td>
       <td>${linkSpark(l, bucket)}</td>
       <td class="num">${fmt(l.med, 1)} dB</td>
       <td>${(l.steps || []).length ? l.steps.map((st) => `<div class="lk-chg" title="${esc(`${fmt(st.before.med, 1)} → ${fmt(st.after.med, 1)} dB (${st.nBefore} and ${st.nAfter} readings)${st.events.length ? ". Logged nearby: " + st.events.map((e) => e.text).join("; ") : ""}`)}">${stepText(st)}${st.events.length ? ` <span class="muted">· ${esc(st.events[0].text.split(" (")[0])}</span>` : ""}</div>`).join("") : '<span class="muted">steady</span>'}</td>
       <td class="num">${fmt(l.perDay, l.perDay < 10 ? 1 : 0)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+const hourName = (h) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
+// a link's daily pattern: 24 small bars around zero (above = stronger than its daily median, below = weaker)
+function dailySpark(p, w = 72, h = 16) {
+  const m = Math.max(1, ...p.offsets.map(Math.abs)), bw = w / 24, mid = h / 2;
+  return `<svg class="lk-dspark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><line x1="0" x2="${w}" y1="${mid}" y2="${mid}" class="lk-zero"/>${p.offsets.map((o, i) => {
+    const bh = Math.max(0.5, (Math.abs(o) / m) * (mid - 1));
+    return `<rect x="${(i * bw + 0.5).toFixed(1)}" y="${(o >= 0 ? mid - bh : mid).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${bh.toFixed(1)}" class="${o >= 0 ? "up" : "dn"}"/>`;
+  }).join("")}</svg>`;
 }
 function wireLinkRows(el, links, bucket) {
   el.querySelectorAll("tr[data-i]").forEach((tr) => {
@@ -573,6 +582,142 @@ async function renderCriticalHistory(range) {
     });
     svg.addEventListener("mouseleave", hideTip);
   });
+}
+
+/* ---------------------------------------------------------------- unusual right now (anomalies.py) */
+const ANOM = { station: null, at: 0, data: null };
+const ANOM_KIND = { quiet: "Quiet", traffic: "Traffic", relay: "Relaying", signal: "Signal" };
+async function renderAnomalies() {
+  const st = window.LK_STATION || "";
+  if (ANOM.station !== st || !ANOM.data || Date.now() - ANOM.at > 5 * 60_000) {   // "now": refreshed every few minutes
+    try {
+      const d = await fetch(`/api/insights/anomalies?x=1${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      Object.assign(ANOM, { data: d, station: st, at: Date.now() });
+    } catch (e) { $("anomBody").innerHTML = `<p class="muted">Couldn't check: ${esc(e.message)}</p>`; return; }
+  }
+  const list = ANOM.data.anomalies;
+  if (!list.length) { $("anomBody").innerHTML = `<p class="muted">Nothing unusual: every steady radio is behaving like its last ${ANOM.data.baselineDays} days.</p>`; return; }
+  $("anomBody").innerHTML = `<ul class="anom-list">${list.map((a) => `<li class="anom-${esc(a.severity)}">
+      <span class="tag ${a.severity === "warn" ? "low" : ""}">${esc(ANOM_KIND[a.kind] || a.kind)}</span>
+      <a class="nlink" href="${nodeHref(a.node.id)}">${esc(a.node.name)}</a>: <b>${esc(a.title.toLowerCase())}</b>
+      <div class="muted">${esc(a.detail)} ${prov("inferred", "Judged against this radio's own last two weeks.")}</div></li>`).join("")}</ul>`;
+}
+
+/* ---------------------------------------------------------------- noise (noise.py) */
+const NZ = { key: null, data: null };
+function nzSpark(s, bucket, lo, hi, w = 220, h = 34) {
+  const step = bucket === "hour" ? 3600 : 86400, pts = s.series;
+  if (!pts.length) return "";
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t + step, X = (t) => ((t - t0) / (t1 - t0)) * w;
+  const Y = (v) => h - 2 - ((Math.max(lo, Math.min(hi, v)) - lo) / Math.max(1, hi - lo)) * (h - 4);
+  let band = "", line = "", gaps = "";
+  const runs = [[]];
+  for (const b of pts) {
+    if (!b.covered) gaps += `<rect x="${X(b.t).toFixed(1)}" y="0" width="${(X(b.t + step) - X(b.t)).toFixed(1)}" height="${h}" class="lk-gap"/>`;
+    if (b.n) runs[runs.length - 1].push(b); else if (runs[runs.length - 1].length) runs.push([]);
+  }
+  for (const r of runs.filter((x) => x.length)) {
+    const up = r.map((b) => `${X(b.t + step / 2).toFixed(1)},${Y(b.hi).toFixed(1)}`);
+    const dn = r.map((b) => `${X(b.t + step / 2).toFixed(1)},${Y(b.lo).toFixed(1)}`).reverse();
+    band += `<polygon class="lk-band" points="${up.concat(dn).join(" ")}"/>`;
+    line += r.length === 1 ? `<circle class="lk-dot" cx="${X(r[0].t + step / 2).toFixed(1)}" cy="${Y(r[0].med).toFixed(1)}" r="2"/>`
+      : `<polyline class="lk-line" points="${r.map((b) => `${X(b.t + step / 2).toFixed(1)},${Y(b.med).toFixed(1)}`).join(" ")}"/>`;
+  }
+  const steps = (s.steps || []).map((x) => `<line class="lk-step" x1="${X(x.ts).toFixed(1)}" x2="${X(x.ts).toFixed(1)}" y1="0" y2="${h}"/>`).join("");
+  return `<svg class="lk-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Noise floor over the range">${gaps}${band}${steps}${line}</svg>`;
+}
+async function renderNoise(range) {
+  const key = `${range}|${window.LK_STATION || ""}`;
+  if (NZ.key !== key) {
+    $("nzBody").innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const d = await fetch(`/api/analytics/noise?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      Object.assign(NZ, { key, data: d });
+    } catch (e) { $("nzBody").innerHTML = `<p class="muted">Couldn't load the noise readings: ${esc(e.message)}</p>`; return; }
+  }
+  const d = NZ.data;
+  if (!d.stations.length) { $("nzBody").innerHTML = '<p class="muted">No noise readings from your stations\' radios in this range.</p>'; return; }
+  const all = d.stations.flatMap((s) => s.series.flatMap((b) => (b.n ? [b.lo, b.hi] : [])));
+  const lo = Math.floor(Math.min(...all) / 5) * 5, hi = Math.ceil(Math.max(...all) / 5) * 5;
+  const rows = d.stations.map((s) => {
+    const n = s.noise, f = s.failed, rs = s.restarts;
+    const restartTag = rs.lastDay >= d.thresholds.restartsWarn
+      ? ` <span class="tag low" title="${esc(`${rs.lastDay} restarts in the last day: power is the usual cause (a USB port cutting out on over-current, a weak supply or cable).`)}">restarting: ${nf.format(rs.lastDay)} in 24 h</span>` : "";
+    const notes = [
+      s.daily ? `${fmt(s.daily.swing, 1)} dB daily swing, noisiest around ${hourName(s.daily.strongest)}` : "",
+      ...s.steps.map((x) => `${x.delta > 0 ? "+" : ""}${fmt(x.delta, 0)} dB from ${esc(when(x.ts))}${x.events?.length ? ` (${esc(x.events.map((e) => e.text).join("; "))})` : ""}`),
+      s.spells.length ? `${nf.format(s.spells.length)} noisy spell${s.spells.length === 1 ? "" : "s"} (${d.thresholds.spellDb} dB+ above usual), last ${esc(when(s.spells[s.spells.length - 1].start))}, peak ${fmt(s.spells[s.spells.length - 1].peak, 0)} dBm` : "",
+    ].filter(Boolean);
+    return `<tr><td><a class="nlink" href="${nodeHref(s.station)}">${esc(s.name)}</a>${s.hw ? `<small class="muted"> ${esc(prettyHw(s.hw))}</small>` : ""}${restartTag}
+        ${notes.length ? `<div class="lk-wx"><small class="muted">${notes.join(" · ")}</small></div>` : ""}</td>
+      <td>${nzSpark(s, d.bucket, lo, hi)}</td>
+      <td class="num">${n ? `${fmt(n.med, 0)} dBm<br><small class="muted">${fmt(n.lo, 0)} to ${fmt(n.hi, 0)}</small>` : "—"}</td>
+      <td class="num">${f ? (f.pct != null ? `${fmt(f.pct, 1)} %<br><small class="muted">${nf.format(f.bad)} of ${nf.format(f.bad + f.received)}</small>` : `${nf.format(f.bad)}<br><small class="muted">errors</small>`) : "—"}</td>
+      <td class="num">${nf.format(rs.inRange)}</td></tr>`;
+  }).join("");
+  $("nzBody").innerHTML = `<div class="tablewrap"><table class="nodes lk-table"><thead><tr><th>Station</th><th>Noise floor over time <small class="muted">(${lo} to ${hi} dBm, higher = noisier)</small></th><th class="num">Noise floor ${prov("reported", "Measured by the station's radio itself, about every 15 minutes (MeshCore: 5). Median, then the 10th to 90th percentile.")}</th><th class="num">Failed ${prov("reported", "Receptions that failed their checksum: damaged on the air, collided, or too far under the noise to decode cleanly. From the radio's own counters.")}</th><th class="num">Restarts ${prov("observed", "The radio's uptime going backwards between its reports: a reboot, a crash or lost power. Connecting to a radio over USB restarts some boards too, so a Lorakeet restart counts.")}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---------------------------------------------------------------- weather (weather.py) */
+const WX = { key: null, data: null };
+const fF = (c) => Math.round(c * 9 / 5 + 32);
+// "1.2 dB weaker per 10 °C warmer": how a link moves with the weather it follows
+function wxText(w) {
+  const col = w.follows, f = w[col], per = col === "temp_c" ? 10 : 10, d = f.slope * per;
+  const dir = d < 0 ? "weaker" : "stronger";
+  return `follows the ${col === "temp_c" ? "temperature" : "humidity"}: ${fmt(Math.abs(d), 1)} dB ${dir} per ${per}${col === "temp_c" ? " °C warmer" : "% more humid"}`;
+}
+function wxSpark(sq, lo, hi, w = 260, h = 40) {
+  const s = sq.series.filter((p) => p.temp != null);
+  if (s.length < 2) return "";
+  const t0 = s[0].t, t1 = s[s.length - 1].t, X = (t) => ((t - t0) / Math.max(1, t1 - t0)) * w;
+  const Y = (v) => h - 2 - ((v - lo) / Math.max(1, hi - lo)) * (h - 4);
+  const pts = s.map((p) => `${X(p.t).toFixed(1)},${Y(p.temp).toFixed(1)}`).join(" ");
+  const rain = sq.series.filter((p) => p.precip > 0).map((p) => `<rect class="wx-rain" x="${X(p.t).toFixed(1)}" y="${h - Math.min(h, 3 + p.precip * 6)}" width="1.5" height="${Math.min(h, 3 + p.precip * 6)}"/>`).join("");
+  return `<svg class="wx-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Temperature over the range, ${fmt(lo, 0)} to ${fmt(hi, 0)} °C">${rain}<polyline class="lk-line" points="${pts}"/></svg>`;
+}
+async function renderWeather(range) {
+  const key = `${range}|${window.LK_STATION || ""}`;
+  if (WX.key !== key) {
+    $("wxBody").innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const d = await fetch(`/api/analytics/weather?range=${encodeURIComponent(range)}${stationQS()}`).then((r) => r.json());
+      if (d.error) throw new Error(d.error);
+      Object.assign(WX, { key, data: d });
+    } catch (e) { $("wxBody").innerHTML = `<p class="muted">Couldn't load the weather: ${esc(e.message)}</p>`; return; }
+  }
+  const d = WX.data;
+  if (!d.squares.length) {
+    $("wxBody").innerHTML = d.enabled
+      ? '<p class="muted">Weather is on; the first fetch happens within a minute of starting (it needs a station with a location or a recent GPS fix).</p>'
+      : '<p class="muted">Weather is off. Turn it on in <a href="/settings.html#weather">Settings → Weather</a>: it sends only the centre of the ~10 km square each station is in to Open-Meteo, once an hour.</p>';
+    return;
+  }
+  const temps = d.squares.flatMap((q) => q.series.map((p) => p.temp).filter((v) => v != null));
+  const lo = Math.min(...temps), hi = Math.max(...temps);
+  const sq = d.squares.map((q) => {
+    const n = q.now, day = q.day;
+    const names = q.stations.length ? q.stations.map((s) => `<a class="nlink" href="${nodeHref(s.id)}">${esc(s.name)}</a>${s.moving ? ' <span class="muted">(moving)</span>' : ""}`).join(", ") : '<span class="muted">no station here now</span>';
+    return `<div class="wx-sq">
+      <div class="wx-head"><b>${names}</b> <span class="muted">· square ${esc(q.cell)}${q.elevation != null ? `, ${fmt(q.elevation, 0)} m` : ""}</span></div>
+      ${n ? `<div class="wx-now"><span class="wx-t">${fmt(n.temp_c, 1)} °C</span> <span class="muted">(${fF(n.temp_c)} °F)</span> · ${fmt(n.rh, 0)}% humidity · wind ${fmt(n.wind_kmh, 0)} km/h${n.precip_mm ? ` · raining ${fmt(n.precip_mm, 1)} mm/h` : ""} <span class="muted">at ${esc(when(n.ts))}</span></div>` : ""}
+      ${day ? `<div class="muted">Last 24 h: ${fmt(day.minC, 0)} to ${fmt(day.maxC, 0)} °C, ${fmt(day.precipMm, 1)} mm of rain</div>` : ""}
+      ${wxSpark(q, lo, hi)}
+      ${q.lastError ? `<div class="muted">Last fetch failed: ${esc(q.lastError)}</div>` : ""}
+    </div>`;
+  }).join("");
+  const who = (id, name) => `<a class="nlink" href="${nodeHref(id)}">${esc(name || id)}</a>`;
+  const links = d.links.length
+    ? `<div class="tablewrap"><table class="nodes"><thead><tr><th>Link</th><th>How it follows the weather</th><th class="num">Correlation ${prov("inferred", "Pearson's r between the link's hourly median signal and the station's weather, over the hours with both. A correlation, not proof of cause: a warm afternoon is also a busy one.")}</th><th class="num">Hours</th></tr></thead><tbody>${d.links.map((l) => {
+      const f = l.weather[l.weather.follows];
+      return `<tr><td>${who(l.a, l.aName)} – ${who(l.b, l.bName)}</td><td>${esc(wxText(l.weather))}</td><td class="num">${fmt(f.r, 2)}</td><td class="num">${nf.format(f.n)}</td></tr>`;
+    }).join("")}</tbody></table></div>`
+    : `<p class="muted">${d.checked ? `None of the ${nf.format(d.checked)} links with enough readings and weather follows it closely (correlation 0.4 or more) in this range.` : "No link has 48 hours of readings with weather yet in this range."}</p>`;
+  $("wxBody").innerHTML = `<div class="wx-grid">${sq}</div>
+    <h3 class="minor" style="margin-top:14px">Links that follow the weather</h3>${links}
+    <p class="muted wx-attr">${esc(d.attribution)} (<a href="https://open-meteo.com/" target="_blank" rel="noopener">open-meteo.com</a>, CC BY 4.0). Model data for the square, not a measurement at your antenna. Bars under the line: rain.</p>`;
 }
 
 /* ---------------------------------------------------------------- airtime */
@@ -840,6 +985,7 @@ function renderKpis(d) {
    first open (each caches per range and station), so opening the page runs one request, not a dozen. */
 const TAB_RENDER = {
   overview(d) {
+    renderAnomalies();
     $("trafficLegend").innerHTML = d.groups.map((g) => `<span><i style="background:${gcol(g)}"></i>${esc(g)}</span>`).join("") + '<span><i class="gapkey"></i>not logged</span>';
     trafficChart($("traffic"), d);
     lineChart($("util"), d, "chUtil", { unit: "%", digits: 1, label: "Channel utilization" });
@@ -883,6 +1029,8 @@ const TAB_RENDER = {
     renderHealth(d.range);
     renderMatrix(d.range);
     renderCompare(d.range);
+    renderNoise(d.range);
+    renderWeather(d.range);
   },
 };
 let TAB = (() => { try { const t = localStorage.getItem("meshdash.analyticsTab"); return TAB_RENDER[t] ? t : "overview"; } catch { return "overview"; } })();

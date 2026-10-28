@@ -103,6 +103,13 @@ allow_changes = false   # watch radios, pause/resume logging, change alert setti
 allow_transmit = false  # send text messages and run traceroutes: they go out on the mesh under your radio's name
 # Radio settings, channels and keys, pairing and peering are never offered to an LLM: use the Radio and Stations pages.
 
+[weather]
+# Hourly weather (temperature, humidity, rain, wind) where each of your stations is, from Open-Meteo, so Lorakeet can
+# tell a link that follows the weather from one that really changed. Off until you turn it on. What's sent: the centre
+# of the ~10 km grid square each station is in (0.1 degree), nothing else; stations in one square share a request.
+# The hub fetches for every station it knows. Weather data by Open-Meteo.com (CC BY 4.0, free for non-commercial use).
+enabled = false
+
 [sync]
 # Several listening stations, one database. A "collector" (a station) logs what its own radio hears (keeping a
 # local copy, so nothing is lost while offline) and sends it to a "hub", which stores every station's data with a

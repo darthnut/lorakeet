@@ -22,7 +22,7 @@ log = logging.getLogger("meshdash")
 # one Lorakeet open their ports one at a time, at least STAGGER_S apart.
 STAGGER_S = 20
 _open_lock = threading.Lock()
-_last_open = [0.0]   # time.monotonic() of the last port opening; [] so tests can reset it
+_last_open = [-STAGGER_S]   # time.monotonic() of the last port opening (none yet: no wait at boot); [] so tests can reset it; [] so tests can reset it
 
 
 class RadioLink:

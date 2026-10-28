@@ -60,7 +60,7 @@ def _compute(db, range_key, local, describe):
     # identified by sender, packet id, hop count and relay byte (a relay's retransmission differs in those).
     combined = is_combined(db)
     rx_sql = ("SELECT MIN(ts) AS ts, from_id, relay, hops, MAX(length) AS length, pkt_id, channel, MIN(station) AS at "
-              "FROM rx_hops WHERE ts >= ? AND from_id != COALESCE(station, ?) GROUP BY from_id, pkt_id, hops, relay"
+              "FROM rx_hops WHERE ts >= ? AND from_id != COALESCE(station, ?) GROUP BY from_id, COALESCE(pkt_id, -rowid), hops, relay"
               if combined else
               "SELECT ts, from_id, relay, hops, length, pkt_id, channel, COALESCE(station, ?) AS at FROM rx_hops "
               "WHERE ts >= ? AND from_id != ?")
