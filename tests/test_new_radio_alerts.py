@@ -33,9 +33,13 @@ def setup(tmp_path, monkeypatch, history_days=30):
 
 
 def newcomers(st, a, ids, station=LOCAL):
-    a.state["new_since"] = time.time() - 0.001    # this pass only: earlier ones were already handled
+    # this pass only: every packet earlier passes logged is before new_since, however fast the machine (a 1 ms window
+    # failed on CI, where two passes ran within it and the earlier newcomers counted again)
+    last = st.query("SELECT MAX(ts) AS t FROM packets")[0]["t"] or 0
+    t = max(time.time(), last + 0.01)
+    a.state["new_since"] = t - 0.001
     for i, nid in enumerate(ids):
-        pk(st, time.time(), nid, 100 + i, station)
+        pk(st, t + i * 1e-4, nid, 100 + i, station)
     st.flush()
     a._check_new_nodes(a.settings())
     st.flush()
