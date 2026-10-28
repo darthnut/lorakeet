@@ -11,6 +11,7 @@ import threading
 import time
 from collections import deque
 
+import anomalies
 import corruption
 import insights
 import nodeids
@@ -25,6 +26,7 @@ log = logging.getLogger("meshdash.alerts")
 # air, yet not one reception line was recognised -> alert. (A radio on Wi-Fi sends no debug log: no alert.)
 MINING_WINDOW_S = 30 * 60
 NEW_PENDING_S = 24 * 3600   # a one-off undecryptable newcomer never heard again: not alerted
+NEW_BURST_WINDOW_S = 3600   # newcomers at one station within this window count as one burst
 MINING_MIN_LINES = 50
 MINING_MIN_PACKETS = 3
 
@@ -42,6 +44,8 @@ DEFAULTS = {
     "notifyLowBattery": True,
     "notifyNewNodes": True,        # batched: at most one notification per newNodeBatchMin
     "newNodeBatchMin": 15,
+    "newStationQuietH": 48,        # a station that just started logging or moved: its newcomers roll into one alert
+    "newNodeBurst": 5,             # this many newcomers at one station within an hour: one alert for all of them
     "notifyHealth": True,          # daily health report: notify on NEW warnings
     "autoTraceroute": CFG["alerts"]["auto_traceroute"],  # transmits: off for new installs unless configured
     "autoTracerouteMin": 60,       # at most one scheduled traceroute per this many minutes
@@ -50,7 +54,10 @@ DEFAULTS = {
     "autoTracerouteRefreshHours": 24,  # re-trace a node at most this often
     "stationSilenceMin": 30,       # hub: a collector station that hasn't synced this long
     "notifyStation": True,
+    "anomalyAlerts": True,         # a steady radio behaving unlike itself (anomalies.py): alert on warnings
+    "notifyAnomalies": True,       # ... and notify
 }
+ANOMALY_EVERY_S = 15 * 60
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS alerts (ts REAL, kind TEXT, node TEXT, title TEXT, detail TEXT,
@@ -146,6 +153,9 @@ class Alerts:
                     self._check_new_nodes(s)
                     self._check_stations(s)
                     self._check_mining()
+                    if s["anomalyAlerts"] and time.time() - self.state.get("anomalyRun", 0) >= ANOMALY_EVERY_S:
+                        self.state["anomalyRun"] = time.time()
+                        self._check_anomalies(s)
                     if time.time() - last_health > 86400:
                         self._daily_health(s)
                         last_health = time.time()
@@ -254,6 +264,23 @@ class Alerts:
                                  "Batches are arriving again; anything logged meanwhile is being caught up.",
                                  sid, "info", s["notifyStation"])
 
+    def _check_anomalies(self, s):
+        """Steady radios behaving unlike themselves (anomalies.py): one alert per warning while it lasts, resolved when
+        it's over. The open ones (anomaly key -> alert row) are kept in settings 'anomaly_open', so a restart doesn't
+        announce them again."""
+        found = {a["key"]: a for a in anomalies.detect(self.db_path, "*", self.mesh.describe) if a["severity"] == "warn"}
+        if "anomalyOpen" not in self.state:
+            self.state["anomalyOpen"] = {k: r for k, r in (self._get("anomaly_open") or {}).items()
+                                         if self.store.query("SELECT 1 FROM alerts WHERE rowid = ? AND resolved_ts IS NULL", r)}
+        open_ = self.state["anomalyOpen"]
+        for key, a in found.items():
+            if key not in open_:
+                open_[key] = self.raise_alert("anomaly", f"{a['node']['name']}: {a['title'].lower()}", a["detail"],
+                                              a["node"]["id"], "warn", s["notifyAnomalies"])
+        for key in [k for k in open_ if k not in found]:
+            self.store.execute("UPDATE alerts SET resolved_ts = ? WHERE rowid = ?", time.time(), open_.pop(key))
+        self._set("anomaly_open", open_)
+
     def _check_battery(self, s):
         latch = self.state.setdefault("lowbatt", set())
         for nid in self._watched(s):
@@ -286,6 +313,7 @@ class Alerts:
         if not pending:
             return self._toast_new(s)
         flagged = corruption.flags(self.db_path, max_age=0 if rows else corruption.CACHE_S)["senders"]   # fresh for newcomers
+        ready = []
         for nid, first in list(pending.items()):
             r = self.store.query("SELECT COUNT(DISTINCT pkt_id) AS n, SUM(portnum != 'ENCRYPTED') AS clean FROM packets "
                                  "WHERE from_id = ?", nid)[0]
@@ -298,10 +326,92 @@ class Alerts:
                     del pending[nid]
                 continue
             del pending[nid]
-            name = self.mesh.describe(nid)["name"]
-            self.raise_alert("new-node", f"New node: {name}", "First time this node has been heard.", nid, "info")
-            st.setdefault("new_batch", []).append(name)
+            ready.append(nid)
+        self._announce_new(s, ready)
         self._toast_new(s)
+
+    def _warmup(self, s, station, now):
+        """Why a station's newcomers are rolled up rather than announced one by one: (kind, since) for a station that
+        started logging or moved (Wi-Fi switched to another named network) within newStationQuietH, else None."""
+        quiet = s["newStationQuietH"] * 3600
+        first = self.store.query("SELECT MIN(ts) AS t FROM packets WHERE station = ?", station)[0]["t"]
+        if first and now - first < quiet:
+            return "started", first
+        nets = []
+        for r in self.store.query("SELECT ts, detail FROM events WHERE station = ? AND kind = 'network' AND ts >= ? ORDER BY ts",
+                                  station, now - quiet - 30 * 86400):
+            try:
+                net = json.loads(r["detail"] or "{}").get("network")
+            except ValueError:
+                net = None
+            if net and net != "no network" and (not nets or nets[-1][1] != net):
+                nets.append((r["ts"], net))
+        if len(nets) >= 2 and now - nets[-1][0] < quiet:
+            return "moved", nets[-1][0]
+        return None
+
+    def _announce_new(self, s, ready):
+        """One alert per newcomer, except at a station that just started or moved (the quiet period) or during a burst
+        (newNodeBurst within an hour): those roll into one alert per station, updated as more arrive. Rolled-up alerts
+        are kept in settings 'new_digest' (station -> {rowid, ids, names, last, why}) so a restart continues them."""
+        st, now = self.state, time.time()
+        if "newDigest" not in st:
+            st["newDigest"] = {k: d for k, d in (self._get("new_digest") or {}).items()
+                               if self.store.query("SELECT 1 FROM alerts WHERE rowid = ?", d.get("rowid"))}
+        digests, recent = st["newDigest"], st.setdefault("new_recent", {})
+        by_station = {}
+        for nid in ready:
+            r = self.store.query("SELECT station FROM packets WHERE from_id = ? ORDER BY ts LIMIT 1", nid)
+            by_station.setdefault((r[0]["station"] if r else None) or "", []).append(nid)
+        changed = False
+        for station, ids in by_station.items():
+            recent[station] = [t for t in recent.get(station, []) if now - t < NEW_BURST_WINDOW_S]
+            why = self._warmup(s, station, now) if station else None
+            d = digests.get(station)
+            # still open: the same quiet period (started/moved) it was opened for, or a burst with a newcomer in the last hour
+            open_ = bool(d) and ((why is not None and d["why"] == why[0] and d["since"] == why[1])
+                                 or (d["why"] == "burst" and now - d["last"] < NEW_BURST_WINDOW_S))
+            if not (why or open_ or len(ids) + len(recent[station]) >= s["newNodeBurst"]):
+                for nid in ids:
+                    name = self.mesh.describe(nid)["name"]
+                    self.raise_alert("new-node", f"New node: {name}", "First time this node has been heard.", nid, "info")
+                    st.setdefault("new_batch", []).append(name)
+                    recent[station].append(now)
+                continue
+            kind = why[0] if why else "burst"
+            if not open_:
+                d = digests[station] = {"rowid": None, "ids": [], "names": [], "last": now, "why": kind,
+                                        "since": why[1] if why else now}
+            ids = [n for n in ids if n not in d["ids"]]    # never counted twice
+            if not ids:
+                continue
+            d["ids"] += ids
+            d["names"] += [self.mesh.describe(n)["name"] for n in ids]
+            d["last"] = now
+            self._write_digest(s, station, d, toast=d["rowid"] is None and kind == "burst")
+            changed = True
+        if changed:
+            self._set("new_digest", digests)
+
+    def _write_digest(self, s, station, d, toast):
+        sname = self.mesh.describe(station)["name"]
+        n = len(d["ids"])
+        title = f"{n} new radio{'s' if n != 1 else ''} heard by {sname}"
+        when = time.strftime("%b %d %H:%M", time.localtime(d["since"]))
+        why = {"started": f"{sname} started logging on {when}: the radios it hears in its first "
+                          f"{s['newStationQuietH']:g} hours are rolled into this one alert.",
+               "moved": f"{sname} moved (its Wi-Fi changed to another network on {when}): the radios it hears in its "
+                        f"first {s['newStationQuietH']:g} hours there are rolled into this one alert.",
+               "burst": f"{sname} heard a burst of radios it had never heard (from {when}), rolled into this one alert."}[d["why"]]
+        names = ", ".join(d["names"][:40]) + (f" and {n - 40} more" if n > 40 else "")
+        detail = f"{why} {names}."
+        if d["rowid"] is None:
+            d["rowid"] = self.raise_alert("new-nodes", title, detail, station, "info", toast and s["notifyNewNodes"])
+            return
+        self.store.execute("UPDATE alerts SET title = ?, detail = ?, ts = ?, read = 0 WHERE rowid = ?",
+                           title, detail, time.time(), d["rowid"])
+        self.mesh.broadcast("alert", {"rowid": d["rowid"], "ts": time.time(), "kind": "new-nodes", "node": station,
+                                      "title": title, "detail": detail, "severity": "info", "read": 0})
 
     def _toast_new(self, s):
         st = self.state
@@ -331,8 +441,9 @@ class Alerts:
         last = self._get("auto_tr_last") or 0
         if time.time() - last < s["autoTracerouteMin"] * 60:
             return
+        # our radio's once-a-minute deviceMetrics: localStats carries it only every ~15 min (as insights.health)
         cu = self.store.query("SELECT json_extract(data, '$.channelUtilization') AS cu FROM telemetry_full "
-                              "WHERE kind='localStats' AND node = ? AND ts > ? ORDER BY ts DESC LIMIT 1",
+                              "WHERE kind='deviceMetrics' AND node = ? AND ts > ? ORDER BY ts DESC LIMIT 1",
                               self.mesh.local_id or "", time.time() - 600)
         if cu and cu[0]["cu"] is not None and cu[0]["cu"] > s["autoTracerouteMaxChUtil"]:
             self.last_auto = {"ts": time.time(), "target": None, "reason": f"skipped: channel busy ({cu[0]['cu']:.1f}%)"}

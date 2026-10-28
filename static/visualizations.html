@@ -118,6 +118,12 @@
     <details class="vz-panel vz-box vz-drivebox" id="vzDrive" open>
       <summary>Coverage</summary>
       <div class="vz-box-body">
+        <label class="dv-row">View
+          <select id="dvView">
+            <option value="drive">Drive routes</option>
+            <option value="reach">Station reach and gaps</option>
+          </select></label>
+        <div id="dvDriveCtl">
         <label class="dv-row">Colour by
           <select id="dvMetric">
             <option value="radios">Radios heard</option>
@@ -128,6 +134,15 @@
         <label class="dv-row">Cell size <select id="dvBin"></select></label>
         <label class="dv-row dv-check" title="Everything outside the squares a station passed through is dimmed: unexplored means unknown, not no coverage"><span>Dim unexplored areas</span><input type="checkbox" id="dvDim"></label>
         <label class="dv-row dv-check" title="Each dot is a packet this station sent from there: did another of our stations hear it, did a relay repeat it, or is there no sign it was heard?"><span>Where the mesh heard it</span><input type="checkbox" id="dvSent"></label>
+        </div>
+        <div id="dvReachCtl" hidden>
+        <label class="dv-row" title="Radios heard only through relays, this far from the nearest station shown">Gaps within
+          <select id="rcFar">
+            <option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option>
+            <option value="100">100 km</option><option value="0">any distance</option>
+          </select></label>
+        <label class="dv-row dv-check" title="A line from each station to every radio it heard directly"><span>Lines to direct neighbours</span><input type="checkbox" id="rcLines"></label>
+        </div>
         <div id="dvLegend" class="dv-legend"></div>
         <p class="dv-note" id="dvNote"></p>
       </div>
@@ -165,6 +180,7 @@
 <script src="replay.js"></script>
 <script src="groovy.js"></script>
 <script src="drive.js"></script>
+<script src="reach.js"></script>
 <script src="viz.js"></script>
 <script src="alerts.js"></script>
 </body>

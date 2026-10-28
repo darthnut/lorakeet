@@ -33,6 +33,9 @@
 - **(practice)** Stations, hubs and peers talk through `/api/ingest` with a protocol number (currently 1).
 - **(proposal)** A hub accepts stations and peers running the previous `y` release, so they don't all have to be
   updated on the same day. A protocol change that can't keep that promise is called out in the CHANGELOG.
+- **(practice)** A hub passes a station's packets to its peers only when they're proven public: an over-the-air copy
+  logged by that same station carries a public channel's fingerprint. The proof is only as honest as the station
+  that reports it. A paired station could report false fingerprints or copies, so pair only stations you run or trust.
 
 ## Meshtastic firmware
 

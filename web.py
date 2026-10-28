@@ -29,8 +29,12 @@ from config import CFG
 from config import public as config_public
 import drive
 import insights
+import anomalies
 import corruption
 import linkhistory
+import reach
+import noise
+import weather
 import keyflags
 import login as login_mod
 from mesh import messages_for_this_radio, serial_ports
@@ -61,6 +65,7 @@ PREFS_EDITABLE = {
     "logging": ("store_recipients",),
     "remote": ("enabled", "allow"),
     "mcp": ("allow_changes", "allow_transmit"),
+    "weather": ("enabled",),
 }
 SLOW_REQUEST_S = 5    # requests slower than this are logged (with the path), to find what holds the database
 
@@ -111,7 +116,8 @@ def meshcore_packet_anatomy(store, mesh, row, hashtag=None):
     # the logging radio's own settings, as it reported them when it connected (SELF_INFO)
     ev = store.query("SELECT detail FROM events WHERE kind = 'connected' AND station IS ? AND detail LIKE '%self_info%' "
                      "ORDER BY ts DESC LIMIT 1", row["station"])
-    radio = (json.loads(ev[0]["detail"]).get("self_info") or {}) if ev and ev[0]["detail"] else {}
+    d = json.loads(ev[0]["detail"]) if ev and ev[0]["detail"] else {}
+    radio = (d.get("self_info") or {}) if isinstance(d, dict) else {}
     nodes = [r["node"] for r in store.query("SELECT DISTINCT node FROM node_info WHERE node LIKE 'mc:%'")]
     return meshcore_anatomy.build(row, receptions, radio, nodes, lambda i: {"name": mesh.name(i)}, hashtag)
 
@@ -284,6 +290,9 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
             t0 = time.time()
             try:
                 return self._get()
+            except ValueError as e:   # a malformed number in the query (?limit=abc): the asker's mistake, not ours
+                log.info("bad request %s: %s", self.path[:200], e)
+                return self._json({"error": f"bad request: {e}"}, 400)
             finally:
                 dt = time.time() - t0
                 if dt > SLOW_REQUEST_S and not self.path.startswith("/api/events"):
@@ -321,7 +330,8 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 out = {}
                 for r in store.query("SELECT ts, kind, detail, station FROM events WHERE kind IN ('power', 'network') "
                                      "AND ts >= ? ORDER BY ts", time.time() - hours * 3600):
-                    out.setdefault(r["station"] or "", []).append({"ts": r["ts"], "kind": r["kind"], **json.loads(r["detail"] or "{}")})
+                    d = json.loads(r["detail"] or "{}")
+                    out.setdefault(r["station"] or "", []).append({"ts": r["ts"], "kind": r["kind"], **(d if isinstance(d, dict) else {})})
                 return self._json({"hours": hours, "stations": out})
             if path == "/api/brief":  # one-line status for the tray icon
                 return self._json({"version": runtime.VERSION, "connected": mesh.connected, "paused": mesh.paused,
@@ -376,13 +386,14 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 since = time.time() - 3 * 86400
                 return self._json(store.query(
                     "WITH st AS (SELECT DISTINCT station AS id FROM packets WHERE station IS NOT NULL), "
+                    # (a MeshCore packet usually names no sender: from_id NULL must neither drop it nor merge it)
                     "p AS (SELECT rowid AS rid, ts, ROW_NUMBER() OVER (PARTITION BY CASE WHEN pkt_id IS NULL THEN rowid "
-                    "ELSE from_id || ':' || pkt_id END ORDER BY ts) AS n FROM packets WHERE ts > ? "
-                    "AND NOT (from_id IN (SELECT id FROM st) AND from_id != station)), "
+                    "ELSE COALESCE(from_id, '') || ':' || pkt_id END ORDER BY ts) AS n FROM packets WHERE ts > ? "
+                    "AND NOT (from_id IS NOT NULL AND from_id IN (SELECT id FROM st) AND from_id != station)), "
                     "top AS (SELECT rid FROM p WHERE n = 1 ORDER BY ts DESC LIMIT ?) "
                     "SELECT x.rowid AS rowid, x.ts, x.from_id, x.to_id, x.portnum, x.channel, x.snr, x.rssi, x.hops, x.via_mqtt, "
                     f"x.summary, x.relay, x.pkt_id, x.pki, x.station, {packetsearch.arrival_sql('x.raw')} AS arrival, "
-                    "(SELECT GROUP_CONCAT(DISTINCT q.station) FROM packets q WHERE q.from_id = x.from_id AND q.pkt_id = x.pkt_id "
+                    "(SELECT GROUP_CONCAT(DISTINCT q.station) FROM packets q WHERE q.from_id IS x.from_id AND q.pkt_id = x.pkt_id "
                     "AND q.ts > ?) AS stations FROM top JOIN packets x ON x.rowid = top.rid ORDER BY x.ts DESC",
                     since, limit, since - 86400))
             if path.startswith("/api/packet/") and path.endswith("/anatomy"):
@@ -465,6 +476,36 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 except Exception as e:  # noqa: BLE001
                     log.exception("critical relays failed")
                     return self._json({"error": f"critical relays failed: {e}"}, 500)
+            if path == "/api/analytics/noise":   # noise floor, failed receptions and radio restarts per station (noise.py)
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    return self._json(noise.report(runtime.DATA_DIR / "mesh.db", qs.get("range", "7d"), station, describe))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("noise failed")
+                    return self._json({"error": f"noise failed: {e}"}, 500)
+            if path == "/api/analytics/weather":   # weather at the stations (weather.py) and the links that follow it
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    dbp = runtime.DATA_DIR / "mesh.db"
+                    h = linkhistory.history(dbp, qs.get("range", "7d"), station, describe)
+                    db = analytics._connect(dbp, station)
+                    try:
+                        sq = weather.summary(db, dbp, h["stations"], describe, h["since"], h["until"])
+                    finally:
+                        db.close()
+                    links = [{k: l[k] for k in ("a", "b", "aName", "bName", "station", "measured", "med", "n", "daily", "weather")}
+                             for l in h["links"] if l.get("weather") and l["weather"].get("follows")]
+                    links.sort(key=lambda l: -abs(l["weather"][l["weather"]["follows"]]["r"]))
+                    return self._json({"enabled": bool(CFG["weather"]["enabled"]), "attribution": weather.ATTRIBUTION,
+                                       "range": h["range"], "since": h["since"], "until": h["until"], "squares": sq,
+                                       "links": links, "checked": sum(1 for l in h["links"] if l.get("weather")),
+                                       "gridDeg": weather.GRID_DEG})
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
             if path in ("/api/analytics/links", "/api/analytics/links/compare"):   # link history (linkhistory.py)
                 try:
                     cache = {}
@@ -529,6 +570,16 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 except Exception as e:  # noqa: BLE001
                     log.exception("drive coverage failed")
                     return self._json({"error": f"drive coverage failed: {e}"}, 500)
+            if path == "/api/analytics/reach":   # each fixed station's direct neighbours, and the radios none hears directly
+                try:
+                    cache = {}
+                    describe = lambda i: cache.setdefault(i, mesh.describe(i))  # noqa: E731
+                    return self._json(reach.compute(runtime.DATA_DIR / "mesh.db", qs.get("range", "30d"), qs.get("station") or "*", describe))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("station reach failed")
+                    return self._json({"error": f"station reach failed: {e}"}, 500)
             if path == "/api/analytics/replay":
                 try:
                     cache = {}
@@ -598,8 +649,10 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
                 try:
                     if path == "/api/insights/estimates":
                         return self._json(insights.estimate_positions(dbp, station, runtime.BASE_ID, describe))
+                    if path == "/api/insights/anomalies":   # steady radios behaving unlike themselves now
+                        return self._json({"anomalies": anomalies.detect(dbp, station or analytics.ALL_STATIONS, describe), "baselineDays": anomalies.BASE_DAYS})
                     if path == "/api/insights/health":
-                        return self._json(insights.health(dbp, rng, station or "", describe))
+                        return self._json(insights.health(dbp, rng, station or analytics.ALL_STATIONS, describe))
                     if path == "/api/insights/coverage":
                         return self._json(insights.coverage(dbp, rng, qs.get("node") or None, qs.get("relayed") == "1", station))
                     if path == "/api/insights/traceroutes":

@@ -91,6 +91,10 @@ DEFAULTS = {
         "allow_changes": False,   # watch radios, pause/resume logging, alert settings, mark alerts read, back up, restart
         "allow_transmit": False,  # send text messages and run traceroutes from this radio (they go out on the mesh)
     },
+    "weather": {
+        "enabled": False,         # fetch hourly weather for each station's area from Open-Meteo (weather.py): only the
+                                  # centre of a ~10 km grid square is sent, never the mesh or an exact position
+    },
     "sync": {
         "mode": "off",            # "off"; "collector" = send what this station logs to a hub; "hub" = accept them
         "hub_url": "",            # collector: the hub's address, e.g. "http://home-pc:5190" (over Tailscale)
@@ -384,5 +388,5 @@ def write_setup(answers):
         lines += [notes[section], f"[{section}]"]
         lines += [f"{k} = {_toml(v)}" for k, v in values.items() if not (k == "data_dir" and v == "")] or ["# (defaults)"]
         lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    _write_private(path, "\n".join(lines))   # it may hold the station's sync token, as update_section knows
     return path

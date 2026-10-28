@@ -50,7 +50,9 @@ def test_analytics_tabs_load_only_what_they_show(page, demo_url):
     expect(page.locator("#tab-network")).to_be_hidden()
     heavy = ("/api/analytics/topology", "/api/analytics/critical", "/api/analytics/links", "/api/analytics/airtime",
              "/api/insights/")
-    assert not [u for u in asked if any(h in u for h in heavy)]     # Overview runs only the main summary
+    # Overview runs only the main summary, plus its own "Unusual right now" check
+    assert not [u for u in asked if any(h in u for h in heavy) and "/api/insights/anomalies" not in u]
+    expect(page.locator("#anomBody")).not_to_contain_text("Checking", timeout=15_000)
     for tab, el in (("network", "#critSummary"), ("channel", "#airSummary"), ("health", "#healthSummary"), ("radios", "#nodes tbody tr")):
         page.locator(f"#tabbtn-{tab}").click()
         assert page.url.endswith(f"#{tab}")

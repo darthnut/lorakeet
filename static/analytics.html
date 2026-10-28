@@ -42,6 +42,12 @@
   </nav>
 
   <div class="atab" id="tab-overview" data-tab="overview" role="tabpanel" aria-labelledby="tabbtn-overview">
+    <section class="card" id="anomCard">
+      <div class="card-head">
+        <div><h2>Unusual right now</h2><p class="sub">Steady radios behaving unlike themselves, each judged against its own last two weeks rather than a fixed threshold: unusually quiet, sending or relaying much less (or more) than usual, or heard much weaker (allowing for the link's daily pattern). Only time your stations were logging counts.</p></div>
+      </div>
+      <div id="anomBody"><p class="muted">Checking…</p></div>
+    </section>
     <section class="card">
       <div class="card-head">
         <div><h2>Traffic over time</h2><p class="sub">Packets heard per <span class="bucket">hour</span>, by type. Hatched = dashboard wasn't running, so no data (not zero).</p></div>
@@ -234,6 +240,20 @@
       </div>
       <p class="scope" id="healthSummary" style="margin:4px 0 8px"></p>
       <div id="healthBody"></div>
+    </section>
+
+    <section class="card" id="nzCard">
+      <div class="card-head">
+        <div><h2>Noise at your stations</h2><p class="sub">The noise floor each station's radio measures at its antenna, the receptions that failed their checksum, and how often the radio restarted. Every dB of extra noise is a dB less range for everything that station hears; the cause is usually close by (a USB 3 device, a power supply, a computer). Radio models measure differently: compare a station with itself.</p></div>
+      </div>
+      <div id="nzBody"><p class="muted">Loading…</p></div>
+    </section>
+
+    <section class="card" id="wxCard">
+      <div class="card-head">
+        <div><h2>Weather at your stations</h2><p class="sub">Hourly weather for the ~10 km square each station is in, and the links whose signal goes up and down with it. A link that follows the temperature isn't failing when it dips on a hot afternoon; one that drops while the weather holds steady has really changed.</p></div>
+      </div>
+      <div id="wxBody"><p class="muted">Loading…</p></div>
     </section>
 
     <section class="card" id="cmpCard" hidden>

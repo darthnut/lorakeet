@@ -133,6 +133,9 @@ More about each step, network radios and listening stations: [Setting it up](#se
   long enough to mean something at the station's usual packet rate. Areas the drive never explored can be
   dimmed, and a radio that never shares its position but was heard directly from several spots along the
   drives gets an estimated location.
+- **Station reach and gaps.** Each fixed station with a line to every radio it hears directly, and the radios
+  no station hears directly, only through relays, shaded in ~3 km squares: where another station would hear
+  what yours can't.
 - **Ask a station how it's doing, over the mesh.** For a station with no internet (in a car, at a remote
   site): send its radio `lk status` or `lk gps` as a private direct message from a radio you've allowed,
   and it answers. Read-only, off by default.
@@ -142,6 +145,13 @@ More about each step, network radios and listening stations: [Setting it up](#se
   possible impersonation, radios whose packets arrive with no hops to spare (a hop limit one short). All
   passive. Radios whose key is on Meshtastic's compromised list, or shared with
   other radios, carry a warning badge wherever they appear (map, node pages, packet browser, replay).
+- **Unusual right now.** Steady radios behaving unlike themselves, each judged against its own last two weeks
+  rather than a fixed threshold: quieter than it ever usually is, sending or relaying much less or more, or heard
+  much weaker. Link history finds lasting steps in a link's signal with its daily swing taken out, so an
+  ordinary afternoon dip isn't mistaken for a change.
+- **Conditions at your stations.** The noise floor each station's radio measures, failed receptions and radio
+  restarts (a USB port cutting out shows up here first). Optionally, the weather at each station from
+  Open-Meteo (only the ~10 km square's centre is sent), and which links' signal follows the temperature.
 - **Several listening stations.** Small stations (a Raspberry Pi and a radio) log locally and sync to one hub
   over your local network or Tailscale, so you can compare what different places hear; a per-station timeline
   shows their power dips and network drop-outs. Set it up on the Stations page: make one computer the hub, and
@@ -152,8 +162,9 @@ More about each step, network radios and listening stations: [Setting it up](#se
   [Sharing with another hub](#sharing-with-another-hub-peering) below.
 - **Ask an LLM.** An MCP server lets Claude Desktop, Claude Code or another LLM app read your mesh through
   Lorakeet's documented API instead of the screen. See [Good to know](#good-to-know).
-- **Alerts and backups.** Watched nodes going silent or low on battery, new nodes, nightly
-  integrity-checked database backups to folders you choose.
+- **Alerts and backups.** Watched nodes going silent or low on battery, new nodes (rolled into one alert when
+  a station starts, moves or hears a flood of them), radios behaving unusually, nightly integrity-checked database
+  backups to folders you choose.
 - **Diagnostics for bug reports.** Settings → Help and diagnostics saves one file with what a bug report needs
   (versions, the radio's model and firmware, the settings that matter, recent warnings), with personal details
   taken out.

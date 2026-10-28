@@ -29,8 +29,8 @@ all run `server.py` from the folder). Each module's docstring says what it holds
 | `peers.py` | `PeerManager` (hub-to-hub senders) |
 | `web.py` | `make_handler` (the request handler: pages, analytics, settings, login, SSE), access, connection limits |
 | `web_radio.py`, `web_hub.py` | route mixins: the Radio page (`/api/radio*`); ingest + the Stations page (`/api/ingest*`, `/api/hub*`). `make(...)` closes over make_handler's state, so their methods read `mesh`, `store` etc. as before |
-| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `meshcore_anatomy.py`, `packetsearch.py`, `graphmetrics.py` (critical relays: betweenness + what each radio/link would cut off from the stations, on topology's graph) |
-| features | `alerts.py`, `storage.py` (backups), `sync.py`, `pairing.py`, `remote.py`, `login.py`, `radio_setup.py`, `radio_advanced.py`, `demo.py`, `config.py`, `api_index.py`, `mcp_server.py`, `tray.py`, `supervise.pyw`, `lorakeet.pyw` |
+| analysis | `analytics.py`, `node_analytics.py`, `topology.py`, `compare.py`, `drive.py`, `reach.py`, `airtime.py`, `insights.py`, `keyflags.py`, `nodeids.py`, `anatomy.py`, `meshcore_anatomy.py`, `packetsearch.py`, `graphmetrics.py` (critical relays: betweenness + what each radio/link would cut off from the stations, on topology's graph) |
+| features | `noise.py` (station noise floor, failed receptions, radio restarts), `weather.py` (opt-in Open-Meteo weather per ~10 km square, `weather.db`), `alerts.py`, `storage.py` (backups), `sync.py`, `pairing.py`, `remote.py`, `login.py`, `radio_setup.py`, `radio_advanced.py`, `demo.py`, `config.py`, `api_index.py`, `mcp_server.py`, `tray.py`, `supervise.pyw`, `lorakeet.pyw` |
 
 Tests patch a name where it's read: `runtime.DATA_DIR`, `store_mod.DB_WAIT_S`, `web_mod.client_access`.
 
@@ -257,6 +257,11 @@ nonexistent radio.port).
   allow` list (the radio must still send with its recorded key, which 2.8 keeps), `[base] id` and its relay byte
   (`follow_base`, at start and every 5 min), watched radios (`Alerts._watched`), and per-station sync tokens
   (`sync.follow_tokens`). Needs the new number's NodeInfo to have been heard (that's what links the two).
+- **New-radio alerts** (`alerts._check_new_nodes` -> `_announce_new`): newcomers are grouped by the station that first
+  heard them. A station in its quiet period (`_warmup`: first packet, or a switch between two NAMED Wi-Fi networks,
+  within `newStationQuietH`, default 48) or with `newNodeBurst` (5) newcomers within NEW_BURST_WINDOW_S (1 h) gets ONE
+  `new-nodes` alert (node = the station) updated in place (title/detail/ts, read = 0) instead of a `new-node` each;
+  quiet-period ones never notify, a burst notifies once. Open digests persist in settings `new_digest`.
 - **Reception logging alarm** (`alerts._check_mining`): debug-log lines arriving and LoRa packets arriving for
   30 min with no RX/TX line recognised (`Mesh.log_counts`) raises "Reception logging has stopped" (a firmware
   log-format change); resolved when lines parse again. 2.8.1 already changed one thing: `Ch=` is decimal
@@ -282,6 +287,37 @@ nonexistent radio.port).
   card (`renderLinks`, `linkRowsHtml`/`linkSpark`, shared with node.js), `#links` opens the comparison; the Stations
   page's "Link history" sets the station picker and goes there. Validated on the real log: finds the 2026-10-13 desk
   antenna swap (+13 dB on the farthest link) and a station's move (-23 dB, matched to its Wi-Fi change).
+- **Unusual right now** (`anomalies.py`, `/api/insights/anomalies?station=`, the Overview card, `alerts._check_anomalies`):
+  robust median/MAD baselines over BASE_DAYS (14) of LOGGED time against the last day. Kinds: `quiet` (silence in
+  logged time > max(2 x p99 gap, 6 x median gap, 1 h)), `traffic` (packets per logged hour vs its daily rates: 3x
+  fewer/more and |z| >= 4), `relay` (resolved relay bytes, first_heard guard: down by half; a rise only for a radio
+  that usually relays, or every visitor "rises"), `signal` (direct SNR per radio and station with the link's daily
+  pattern taken out, spread at least 1 dB: +-6 dB and |z| >= 4). Only steady radios (4+ days, 40% of logged hours);
+  phantoms and stations excluded. Warnings become `anomaly` alerts once per key (settings `anomaly_open`, survives
+  restarts), resolved when gone; `info` ones only show on the card. Never stored. A radio sending every 3 h instead of
+  every 20 min is `quiet`, not `traffic`: the quiet check runs first and the others skip it.
+- **Noise** (`noise.py`, `/api/analytics/noise?range=`, the Health tab card): from each station radio's own reports
+  (node = station): localStats `noiseFloor` (~15 min) / MeshCore `noise_floor` (5 min); values <= -119 dBm are the
+  firmware's placeholder before its first sample (first ~45 min after boot) and are skipped. Failed = numPacketsRxBad vs
+  numPacketsRx (MeshCore recv_errors vs recv, whose recv stays 0 on some firmware: no share then), only increases within
+  one boot. Restarts = uptime going backwards (opening a USB serial port resets some boards, so Lorakeet restarts count).
+  Steps via linkhistory.find_steps (5 dB), spells = 6 dB+ over the median for 30 min+. anomalies: `noise` (+6 dB, z >= 4
+  with a MAD-only spread: `_robust`'s 5%-of-median floor is ~4.5 dB at -90 dBm) and `restarts` (absolute: 8+ in 24 h).
+  Found on day one: a Pi 5 on a 3 A supply (USB limited to 600 mA total) cutting its radio's power ~45 times a day.
+- **Weather** (`weather.py`, `[weather] enabled` default off, `/api/analytics/weather?range=`, the Health tab card): the
+  hub fetches Open-Meteo's forecast API (`past_days` backfill to the first logged packet + 1 day, max 92; then hourly
+  with the last 3 days) for each GRID_DEG (0.1) square holding a station (`station_squares`: STATION_LOCATIONS, else a
+  moving station's latest own fix). Only the square's centre (1 decimal) is ever sent: `tests/test_weather.py` checks
+  the exact query keys. `<data>/weather.db` (`squares`, `hourly` upserted per square + hour: model data the API revises,
+  so unlike mesh.db rows are replaced). `at_station` = hourly weather where a station was (moving: its track's square
+  each hour). `fit(obs, wx)` = Pearson r + slope of hourly median SNR against temp_c and rh (48+ hours, 5 C / 20 %
+  spread; `follows` at |r| >= 0.4): on every link-history link with a station end (`weather`). anomalies' signal check
+  takes out slope x (temp - usual temp) when |r| >= 0.5 instead of the daily pattern. Attribution "Weather data by
+  Open-Meteo.com" (CC BY 4.0) wherever it's shown.
+- **Daily patterns** (`linkhistory.daily_pattern`, `deseasoned`): each reading relative to its day's median, median per
+  local hour, circular 3-hour smoothing, centred; None under 12 hours with 3+ readings or a swing under 1.5 dB. Links
+  carry `daily`; find_steps runs on deseasoned readings. The pages draw it under the link's name (`dailySpark`).
+  Groundwork for per-station weather.
 - **Damaged packets** (`corruption.py`, worked out on request like keyflags, never stored): `certain` = a header with
   hop_limit > hop_start (relays only lower it); `likely` = a sender heard in <= 2 packets, never decrypted, no identity,
   its id <= 2 bits from a busy radio (20+ decrypted packets), header-only (16-byte) frames excepted; `possible` = a
@@ -333,6 +369,16 @@ nonexistent radio.port).
   dashed inside the silences. (The first version called every square crossed without a packet a hole: at ~1
   packet/min that was most squares on a highway drive.) Squares are a FIXED worldwide grid (latitude rows from the
   equator, columns sized per row), so a place is in the same square on every drive and range.
+  `_sent` reads its packets' copies, echoes, ports and texts in four range queries (it was four per sent packet:
+  45 s for the car's month).
+- **Station reach and gaps** (`reach.py`, `/api/analytics/reach?range=&station=`, `static/reach.js`, the Coverage
+  view's "View" picker): each fixed station's direct neighbours (packets at 0 hops, the station's first copies) as
+  lines, and ~3 km squares (CELL_KM: wider than a 13-bit public-channel box) of radios NO station shown hears
+  directly: where another station would add the most. Built instead of the suggested per-station grid of direct
+  receptions because that data is thin (2026-10-28: 39 of 615 radios heard directly by any station in 30 days, 20
+  with a position; 250 relayed-only radios had one). A radio's position = its most precise one in the last 30 days
+  (precisionKm kept; links to rounded ones are dashed). Moving stations (own fixes spanning 1 km) and stations with no
+  location are listed in `skipped`, not drawn. With one station picked, "gap" means not heard directly by it.
 - **Stay points** (`analytics.smooth_track`, used by drive.py and the moving map; analysis only, stored fixes
   untouched): a run of fixes within 100 m of its running centre for 3 min+ is one parked spot. A GPS in a vehicle
   cab jumps tens of metres to 100 m+ (multipath) while the radio's PDOP/satellite count look fine, and the exact

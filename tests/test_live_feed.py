@@ -58,3 +58,24 @@ def test_feed(tmp_path, monkeypatch):
     assert sorted(by[1027]["stations"].split(",")) == [HOME, PI]             # heard by both, listed once
     assert by[1027]["station"] == HOME                                       # the first copy
     assert all(r["arrival"] == "lora" for r in rows) and 5000 not in by
+
+
+def test_packets_naming_no_sender_reach_the_feed(tmp_path, monkeypatch):
+    # most MeshCore packets name no sender (from_id NULL): each is its own entry, not dropped or merged
+    monkeypatch.setattr(runtime, "DATA_DIR", tmp_path)
+    st = store_mod.Store(tmp_path / "mesh.db")
+    now = time.time()
+    for i, frm in enumerate((None, None, SENDERS[0])):
+        pk(st, now - 60 + i, frm, 7000 + i, HOME)
+    st.flush()
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(_Mesh(), st, None, None))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection(f"127.0.0.1:{srv.server_address[1]}", timeout=10)
+        c.request("GET", "/api/packets?limit=10")
+        rows = json.loads(c.getresponse().read())
+    finally:
+        srv.shutdown()
+        st.close()
+    assert [r["pkt_id"] for r in rows] == [7002, 7001, 7000]
+    assert all(r["stations"] == HOME for r in rows)

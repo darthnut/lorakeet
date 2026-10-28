@@ -137,6 +137,7 @@ def test_new_radio_alerts_skip_phantoms_and_wait_on_one_offs(tmp_path, monkeypat
     monkeypatch.setattr(alerts, "notify", lambda *x: None)
     s = a.settings()
     t = time.time() - 600
+    pk(st, t - 30 * 86400, ORIGINAL, 99)    # the station has logged for a month: past its new-station quiet period
     for i in range(25):
         pk(st, t - 7200 + i, ORIGINAL, i)
         rx(st, t - 7200 + i, ORIGINAL, i, 4, 3)
@@ -160,6 +161,7 @@ def test_a_clean_newcomer_alerts_at_once(tmp_path, monkeypatch):
     a = alerts.Alerts(st, FakeMesh(), path, None)
     monkeypatch.setattr(alerts, "notify", lambda *x: None)
     a.state["new_since"] = time.time() - 60
+    pk(st, time.time() - 30 * 86400, ORIGINAL, 99)    # a station that has logged for a month
     pk(st, time.time(), NEWBIE, 1)
     st.flush()
     a._check_new_nodes(a.settings())

@@ -258,8 +258,11 @@ class Mesh(RadioLink):
         # ...and only from this link's own kind of station: a MeshCore radio's receptions aren't "heard here" on a
         # Meshtastic radio's map (several radios, one Lorakeet), nor the other way round
         mine = "station LIKE 'mc:%'" if self.PROTOCOL == "meshcore" else "(station IS NULL OR station NOT LIKE 'mc:%')"
+        # ...and only this Lorakeet's own radios: on a hub, what a collector heard is rx_remote, not heard here
+        own = sorted(store.own_stations())
+        mine += f" AND (station IS NULL OR station IN ({','.join('?' * len(own))}))" if own else " AND station IS NULL"
         for r in store.query("SELECT from_id, MAX(ts) AS ts, snr, rssi, hops FROM packets WHERE from_id IS NOT NULL "
-                             f"AND {mine} GROUP BY from_id"):
+                             f"AND {mine} GROUP BY from_id", *own):
             self.rx[r["from_id"]] = {"ts": r["ts"], "snr": r["snr"], "rssi": r["rssi"], "hops": r["hops"], "count": 0}
         # latest position per node from our own log; the library's node DB doesn't always keep them
         self.pos = {r["node"]: r for r in store.query(
@@ -435,9 +438,12 @@ class Mesh(RadioLink):
         if self.debug_log and (iface is self.iface or not self.connected):
             self.debug_log.add(DebugLog.LEVELS.get(rec.level, str(rec.level)), rec.source or None,
                                rec.message, rec.time or None)
-        rx = parse_rx(rec.message)
-        tx = None if rx else parse_tx(rec.message)
-        self.log_counts["lines"] += 1
+        self.log_counts["lines"] += 1   # first: a line that won't parse still counts, so _check_mining sees it
+        try:
+            rx = parse_rx(rec.message)
+            tx = None if rx else parse_tx(rec.message)
+        except Exception:  # noqa: BLE001 - a format we don't know: not mined (and the mining alarm notices)
+            rx = tx = None
         if rx or tx:
             self.log_counts["mined"] += 1
             try:
@@ -460,8 +466,11 @@ class Mesh(RadioLink):
             self.debug_log.add("TEXT", None, line)
         # the same RX/TX lines appear here as plain text while the radio boots; mine them too
         msg = strip_text_prefix(line)
-        rx = parse_rx(msg)
-        tx = None if rx else parse_tx(msg)
+        try:
+            rx = parse_rx(msg)
+            tx = None if rx else parse_tx(msg)
+        except Exception:  # noqa: BLE001
+            rx = tx = None
         if rx or tx:
             try:
                 self._store_header(rx, tx)
@@ -779,9 +788,10 @@ class Mesh(RadioLink):
             # the library has dropped its response handler. Catch it here so the message shows delivered.
             req = d.get("requestId")
             if req and err == "NONE" and frm != self.local_id:
-                m = self.store.query("SELECT to_id, status FROM messages WHERE pkt_id = ? AND outgoing = 1", req)
+                m = self.store.query("SELECT rowid, to_id, status FROM messages WHERE pkt_id = ? AND outgoing = 1 "
+                                     "ORDER BY ts DESC LIMIT 1", req)
                 if m and m[0]["to_id"] == frm and m[0]["status"] != "delivered":
-                    self.store.execute("UPDATE messages SET status = 'delivered' WHERE pkt_id = ? AND outgoing = 1", req)
+                    self.store.execute("UPDATE messages SET status = 'delivered' WHERE rowid = ?", m[0]["rowid"])
                     self.broadcast("msgstatus", {"pkt_id": req, "status": "delivered"})
                     self.event("late_ack", pkt_id=req, from_id=frm, previous=m[0]["status"])
                     summary = "ack (late delivery confirmation)"
@@ -847,15 +857,15 @@ class Mesh(RadioLink):
         if dest != BROADCAST and not radioid.is_meshtastic(dest):
             # the library would take the id's last 8 hex digits as a node number: a DM to some other radio, or none
             raise ValueError("a Meshtastic radio can only message a Meshtastic radio (!xxxxxxxx)")
-        state = {"status": "sending", "pkt_id": None}
+        state = {"status": "sending", "pkt_id": None, "ts": None}
 
         def set_status(status):
             if state["status"] in ("delivered", status):  # never downgrade a confirmed delivery
                 return
             state["status"] = status
-            if state["pkt_id"] is not None:
-                self.store.execute("UPDATE messages SET status=? WHERE pkt_id=? AND outgoing=1",
-                                   status, state["pkt_id"])
+            if state["pkt_id"] is not None:   # this message: an id can come round again after a reboot
+                self.store.execute("UPDATE messages SET status=? WHERE pkt_id=? AND outgoing=1 AND to_id=? AND ts=?",
+                                   status, state["pkt_id"], dest, state["ts"])
                 self.broadcast("msgstatus", {"pkt_id": state["pkt_id"], "status": status})
 
         def on_response(p):
@@ -887,8 +897,8 @@ class Mesh(RadioLink):
                              portNum=portnums_pb2.PortNum.TEXT_MESSAGE_APP, wantAck=True,
                              onResponse=on_response, onResponseAckPermitted=True, channelIndex=channel,
                              hopLimit=hop_limit)
-        state["pkt_id"] = pkt.id
-        msg = dict(ts=time.time(), from_id=self.local_id, to_id=dest, channel=channel, text=text,
+        state["pkt_id"], state["ts"] = pkt.id, time.time()
+        msg = dict(ts=state["ts"], from_id=self.local_id, to_id=dest, channel=channel, text=text,
                    pkt_id=pkt.id, outgoing=1, status=state["status"], hop_limit=hop_limit)
         self.store.insert("messages", **msg)
         self.event("sent_text", to=dest, pkt_id=pkt.id, channel=channel, bytes=len(text.encode("utf-8")),

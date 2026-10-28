@@ -255,6 +255,10 @@ def main():
         HealthWatch(mesh.event).start()
     storage.start()
     alert_engine.start()
+    if CFG["weather"]["enabled"]:
+        import weather
+        weather.Weather(runtime.DATA_DIR / "mesh.db").start()
+        log.info("weather: on (Open-Meteo, ~10 km squares)")
     if isinstance(syncer, sync_mod.Collector):
         syncer.start()
     elif CFG["sync"]["mode"] != "collector":

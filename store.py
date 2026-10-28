@@ -230,11 +230,16 @@ MIGRATIONS = [
     # 0.5.0 (database layout 3): MeshCore receptions (mc_rx, in SCHEMA; station, src_rowid and received_via come from
     # the loops above, which run over every station table)
     "CREATE INDEX IF NOT EXISTS mc_rx_station_ts ON mc_rx(station, ts)",
+    # 0.5.3 (database layout 4): one radio's receptions, and one packet's copies, without reading all of rx_hops: a
+    # packet's anatomy 6 ms -> 0.01 ms, "last heard" 1 ms -> 0.005 ms, the hub's public-channel proof 12 -> 0.2 ms
+    # (measured on 100k receptions; ~3% more disk)
+    "CREATE INDEX IF NOT EXISTS rx_hops_from_ts ON rx_hops(from_id, ts)",
+    "CREATE INDEX IF NOT EXISTS rx_hops_pkt ON rx_hops(pkt_id)",
 ]
 # The database's layout version, stored in the file (PRAGMA user_version). Updates only ever ADD tables, columns
 # and indexes (MIGRATIONS above), never remove or rewrite logged data. Bump it with each change to SCHEMA or
 # MIGRATIONS, so an older Lorakeet opening a newer database can say so.
-SCHEMA_VERSION = 3  # 2: received_via on every station table; 3: mc_rx (MeshCore receptions)
+SCHEMA_VERSION = 4  # 2: received_via on every station table; 3: mc_rx (MeshCore receptions); 4: rx_hops indexes
 DB_WAIT_S = 30        # how long a write or read waits for the database before giving up
 # Rows are committed together this often (or once COMMIT_MAX_ROWS are waiting), not one transaction each: on a Pi
 # every commit rewrites several 4 KB pages (the table and each index) and flushes them, which is what wore SD cards.

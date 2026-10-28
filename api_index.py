@@ -88,6 +88,14 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/analytics/links", "tier": "read", "params": {"range": RANGE, "station": STATION},
      "summary": "Link history: each radio link's signal per hour or day (median, middle half, count; gaps where nothing was "
                 "logging), the steps where it changed by 5 dB or more, and station events (radio settings, a new Wi-Fi network)."},
+    {"method": "GET", "path": "/api/analytics/noise", "tier": "read", "params": {"range": RANGE, "station": STATION},
+     "summary": "Noise at each listening station, from its radio's own reports: noise floor per hour or day (median and "
+                "10th-90th percentile), its daily shape, lasting steps (with station events), noisy spells, receptions "
+                "that failed their checksum, and how often the radio restarted."},
+    {"method": "GET", "path": "/api/analytics/weather", "tier": "read", "params": {"range": RANGE, "station": STATION},
+     "summary": "Weather at the listening stations ([weather] enabled; Open-Meteo, per ~10 km grid square): each square's "
+                "stations, the weather now, the last day's range and hourly temperature/humidity/rain over the range, "
+                "plus the links whose signal follows the temperature or humidity (correlation and dB per degree or %)."},
     {"method": "GET", "path": "/api/analytics/links/compare", "tier": "read",
      "params": {"at": "unix time to compare around", "days": "days on each side (default 7, max 60)", "station": STATION},
      "summary": "Before/after: every link's signal and packets per day either side of a moment, links gained or lost, "
@@ -100,11 +108,18 @@ ENDPOINTS = [
      "params": {"range": "default 24h", "station": "a moving station (default: every station that moved)",
                 "bin": "square size in metres: 100, 250, 500 or 1000"},
      "summary": "Coverage along a moving station's route: squares heard / silent, receptions, SNR."},
+    {"method": "GET", "path": "/api/analytics/reach", "tier": "read",
+     "params": {"range": "default 30d", "station": "one station (default: every fixed station with a location)"},
+     "summary": "Each fixed station's direct neighbours, and ~3 km squares of radios no station hears directly (the gaps)."},
     {"method": "GET", "path": "/api/analytics/stations", "tier": "read", "params": {"range": RANGE},
      "summary": "Radio x station capture matrix: which station hears which radio, over minutes both were logging."},
     {"method": "GET", "path": "/api/analytics/compare", "tier": "read",
      "params": {"range": RANGE, "a": "station id", "b": "station id"},
      "summary": "Two stations compared over minutes both were logging: packets heard by both / only one, SNR differences."},
+    {"method": "GET", "path": "/api/insights/anomalies", "tier": "read", "params": {"station": STATION},
+     "summary": "Radios behaving unlike themselves right now, each judged against its own last two weeks: unusually "
+                "quiet, sending or relaying much less (or more) than usual, or heard much weaker or stronger (allowing "
+                "for the link's daily pattern)."},
     {"method": "GET", "path": "/api/insights/health", "tier": "read", "params": {"range": RANGE, "station": STATION},
      "summary": "Health and security findings (busy channel, chatty radios, weak or shared keys, impersonation...)."},
     {"method": "GET", "path": "/api/insights/estimates", "tier": "read", "params": {"station": STATION},

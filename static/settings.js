@@ -21,9 +21,13 @@ const SECTIONS = [
       { k: "notifyLowBattery", type: "bool", label: "…and notify" },
       { k: "notifyNewNodes", type: "bool", label: "Notify about new radios" },
       { k: "newNodeBatchMin", type: "num", step: 1, min: 1, unit: "min", label: "…at most once every" },
+      { k: "newStationQuietH", type: "num", step: 1, min: 0, unit: "h", label: "Quiet period for a new or moved station", help: "A station that just started logging, or moved (its Wi-Fi changed to another network), hears dozens of radios for the first time. For this long they go into one alert per station instead of one each, with no notifications." },
+      { k: "newNodeBurst", type: "num", step: 1, min: 2, label: "Roll a burst of new radios into one alert at", help: "This many new radios at one station within an hour become one alert, which keeps growing until an hour passes with no more." },
       { k: "notifyHealth", type: "bool", label: "Notify about new health warnings", help: "From the daily check (busy channel, weak keys, misconfigured radios…)." },
       { k: "stationSilenceMin", type: "num", step: 1, min: 1, unit: "min", label: "A station hasn't synced for", help: "On a hub: another of your Lorakeets has gone quiet." },
       { k: "notifyStation", type: "bool", label: "…and notify" },
+      { k: "anomalyAlerts", type: "bool", label: "Alert when a radio behaves unlike itself", help: "A steady radio unusually quiet, sending or relaying much less than usual, or heard much weaker: judged against its own last two weeks, not a fixed threshold." },
+      { k: "notifyAnomalies", type: "bool", label: "…and notify" },
       { k: "autoTraceroute", type: "bool", label: "Scheduled traceroutes", warn: "Transmits: a traceroute now and then to map routes through the mesh.", help: "Maps routes through the mesh, one radio at a time." },
       { k: "autoTracerouteMin", type: "num", step: 1, min: 5, unit: "min", label: "…at most one every" },
       { k: "autoTracerouteMaxChUtil", type: "num", step: 1, min: 1, max: 100, unit: "%", label: "…skipped while the channel is busier than" },
@@ -81,6 +85,10 @@ const SECTIONS = [
     fields: [
       { s: "remote", k: "enabled", type: "bool", label: "Answer commands", warn: "Transmits: the replies go out over the mesh." },
       { s: "remote", k: "allow", type: "list", label: "From these radios", help: "Radio ids, one per line (e.g. !1234abcd). Only private direct messages, with the key this station first recorded for them." },
+    ] },
+  { id: "weather", title: "Weather", src: "toml", about: "Hourly weather where each of your stations is (temperature, humidity, rain, wind), from Open-Meteo, so Lorakeet can tell a link that follows the weather from one that really changed. On a hub it covers every station.",
+    fields: [
+      { s: "weather", k: "enabled", type: "bool", label: "Fetch weather for my stations", warn: "Sends the centre of the ~10 km grid square each station is in to open-meteo.com, once an hour. Nothing about the mesh or an exact position." },
     ] },
   { id: "mcp", title: "LLM access", src: "toml", about: "What an LLM app connected through mcp_server.py may do besides reading (Claude Desktop, Claude Code…). Reading is always allowed; it never touches radio settings, keys or pairing.",
     fields: [
