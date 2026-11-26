@@ -207,7 +207,7 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/events", "tier": "internal",
      "summary": "Server-sent events: live packets, status, storage, debug lines (what the map page listens to)."},
     {"method": "POST", "path": "/api/ingest", "tier": "internal", "summary": "Stations and peer hubs send their rows here (token)."},
-    {"method": "POST", "path": "/api/ingest/hello", "tier": "internal", "summary": "A station's connection test (token)."},
+    {"method": "POST", "path": "/api/ingest/hello", "tier": "internal", "summary": "A station's connection test (token, or a pairing proof that never sends it: the reply then proves the hub)."},
     {"method": "POST", "path": "/api/login", "tier": "internal", "body": {"password": ""}, "summary": "Log in from another device."},
     {"method": "POST", "path": "/api/logout", "tier": "internal", "body": {}, "summary": "Log out."},
 ]

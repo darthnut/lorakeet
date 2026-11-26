@@ -43,7 +43,17 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                   # away from home needs the Tailscale one)
                   "addresses": [a["url"] for a in pairing.hub_addresses(CFG["http"]["port"])
                                 if pairing.allow_flags(CFG["sync"]["allow"]).get(a["kind"])]}
-            e = pairings.find(given)
+            # a phone's hello may prove its pairing without sending the token, and asks the hub to prove itself back
+            proof = pairing.parse_proof(self.headers.get("Authorization")) if hello else None
+            if proof is not None:
+                if not proof[0]:
+                    return self._json({"error": "bad proof header"}, 400)
+                e, hi["proof"] = pairings.find_proof(proof[0], claimed, proof[1])
+                if e is None:
+                    log.warning("hello refused from %s (%s): no pairing matches its proof", ip, claimed)
+                    return self._json({"error": "bad token"}, 401)
+            else:
+                e = pairings.find(given)
             if e is not None:  # made on the Stations page: a station's pairing, or a peer hub's
                 if e["revoked"]:
                     log.warning("ingest refused from %s (%s): pairing revoked", ip, claimed)
@@ -175,7 +185,10 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
             ids = {i for i in ids if i not in gone or i in metas or i in hubst}
             rows = []
             for sid in sorted(ids, key=lambda x: (x != mesh.local_id, x)):
-                m, p = metas.get(sid) or {}, next((e for e in plist if e.get("kind") != "peer" and sid in pairing.stations_of(e)), None)
+                # the live pairing a station is on, else the (revoked) one it was on: a radio moves to a new pairing
+                # only once the old one is revoked, and both list it
+                listed = [e for e in plist if e.get("kind") != "peer" and sid in pairing.stations_of(e)]
+                m, p = metas.get(sid) or {}, next((e for e in listed if not e["revoked"]), listed[0] if listed else None)
                 loc = analytics.station_location(sid)
                 via = (hubst.get(sid) or {}).get("via")
                 vp = pairings.by_hub(via) if via else None
