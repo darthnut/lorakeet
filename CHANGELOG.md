@@ -6,6 +6,20 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.5 (2026-11-26)
+
+**Security**
+
+- A station can prove its pairing in the connection test without sending its token (`Authorization: Lorakeet-Proof
+  <nonce>:<mac>`, an HMAC keyed with the token's hash, which is all the hub stores), and the hub's reply proves the hub
+  holds the same pairing. Lorakeet for Android uses it before any request carries the token: on someone else's network,
+  a device that happens to hold the hub's home address could otherwise have received the token and the phone's log.
+  Tokens still work as before.
+
+**Fixes**
+
+- The Stations page names a radio's live pairing after it moved to a new one (it showed the old, revoked pairing).
+
 ## 0.5.4 (2026-11-26)
 
 **New**

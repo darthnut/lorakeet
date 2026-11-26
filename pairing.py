@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import re
 import os
 import secrets
 import socket
@@ -34,6 +35,30 @@ LAN_NETS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "
 
 def _hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------- proving the hub before the token is sent
+
+PROOF_PREFIX = "Lorakeet-Proof "
+_NONCE = re.compile(r"^[0-9a-f]{32,64}$")
+_MAC = re.compile(r"^[0-9a-f]{64}$")
+
+
+def proof_mac(token_hash, role, nonce, station):
+    """HMAC-SHA256 keyed with the token's SHA-256 (what both ends hold; the hub never stores the token): role
+    "hello" is the station's half (it knows the pairing), "hub" the hub's (it does too). A phone sends its hello this
+    way before any request carries the token, so whatever answers at a hub address on another network (a café's
+    device that happens to hold the hub's LAN address) learns nothing usable and can't pass as the hub."""
+    return hmac.new(token_hash.encode(), f"lorakeet-{role}|{nonce}|{station or ''}".encode(), hashlib.sha256).hexdigest()
+
+
+def parse_proof(header):
+    """(nonce, mac) from an `Authorization: Lorakeet-Proof <nonce>:<mac>` header; None when it isn't one;
+    ("", "") when it is one but malformed."""
+    if not (header or "").startswith(PROOF_PREFIX):
+        return None
+    nonce, _, mac = header[len(PROOF_PREFIX):].strip().partition(":")
+    return (nonce, mac) if _NONCE.match(nonce) and _MAC.match(mac) else ("", "")
 
 
 # ---------------------------------------------------------------- pairing codes
@@ -128,6 +153,15 @@ class Pairings:
         with self.lock:
             e = next((x for x in self.entries if hmac.compare_digest(x["tokenHash"], h)), None)
             return {k: v for k, v in e.items() if k != "tokenHash"} if e else None
+
+    def find_proof(self, nonce, station, mac):
+        """(entry copy without its hash, the hub's proof) for a station's proof-hello, or (None, None)."""
+        with self.lock:
+            for x in self.entries:
+                if hmac.compare_digest(proof_mac(x["tokenHash"], "hello", nonce, station), mac):
+                    return ({k: v for k, v in x.items() if k != "tokenHash"},
+                            proof_mac(x["tokenHash"], "hub", nonce, station))
+        return None, None
 
     def bind(self, pid, station=None, hub=None):
         """Claim an unclaimed pairing for `station` (a station's) or `hub` (a peer's). False if it's taken or gone."""

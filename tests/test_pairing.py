@@ -1,5 +1,6 @@
 """Pairing stations with a hub: codes, the hub's registry (tokens stored only as hashes, claimed by the first station
 that uses them, revocable), the connection test, and the Stations page's endpoints, against a real hub handler."""
+import hashlib
 import gzip
 import http.client
 import json
@@ -231,6 +232,51 @@ def test_a_phone_adds_a_second_radio_on_its_one_code(hub):
     # revoking the phone's pairing stops all its radios
     req("POST", "/api/hub/station", {"action": "revoke", "pairing": d["id"]})
     assert _report(req, c["token"], "!a0000002")[0] == 401
+
+
+def test_a_phone_proves_its_pairing_and_the_hub_proves_itself(hub):
+    """A phone's hello can go without the token (a café device at the hub's LAN address learns nothing), and the
+    hub's answer proves it holds the same pairing: only then does the phone send its token."""
+    req, _, _ = hub
+    d = req("POST", "/api/hub/pair", {"label": "Pixel", "phone": True})[1]
+    c = pairing.parse_code(d["code"])
+    th = hashlib.sha256(c["token"].encode()).hexdigest()
+    nonce = "0" * 31 + "1"
+    mac = pairing.proof_mac(th, "hello", nonce, "!a0000001")
+    st, hello = req("POST", "/api/ingest/hello", b"{}", {"Authorization": f"Lorakeet-Proof {nonce}:{mac}",
+                                                          "X-Lorakeet-Station": "!a0000001"})
+    assert st == 200 and hello["proof"] == pairing.proof_mac(th, "hub", nonce, "!a0000001")
+    assert hello["maxStations"] == 4 and c["token"] not in json.dumps(hello)
+    # the station is part of the proof: the same proof for another station is refused
+    st, _ = req("POST", "/api/ingest/hello", b"{}", {"Authorization": f"Lorakeet-Proof {nonce}:{mac}",
+                                                     "X-Lorakeet-Station": "!a0000002"})
+    assert st == 401
+    # a made-up proof, and a malformed header
+    st, _ = req("POST", "/api/ingest/hello", b"{}", {"Authorization": f"Lorakeet-Proof {nonce}:{'f' * 64}",
+                                                     "X-Lorakeet-Station": "!a0000001"})
+    assert st == 401
+    assert req("POST", "/api/ingest/hello", b"{}", {"Authorization": "Lorakeet-Proof xyz",
+                                                    "X-Lorakeet-Station": "!a0000001"})[0] == 400
+    # a revoked pairing's proof gets the same refusal as its token
+    req("POST", "/api/hub/station", {"action": "revoke", "pairing": d["id"]})
+    assert req("POST", "/api/ingest/hello", b"{}", {"Authorization": f"Lorakeet-Proof {nonce}:{mac}",
+                                                    "X-Lorakeet-Station": "!a0000001"})[0] == 401
+    # proofs are only for hello: ingest itself still needs the token
+    assert _report(req, f"Lorakeet-Proof {nonce}:{mac}", "!a0000001")[0] == 401
+
+
+def test_a_radio_taken_over_after_a_revoke_shows_its_new_pairing(hub):
+    req, _, _ = hub
+    old = pairing.parse_code(req("POST", "/api/hub/pair", {"label": "Old phone", "phone": True})[1]["code"])
+    assert _report(req, old["token"], "!a0000001")[0] == 200
+    d = req("POST", "/api/hub/pair", {"label": "New phone", "phone": True})[1]
+    new = pairing.parse_code(d["code"])
+    assert _report(req, new["token"], "!a0000001")[0] == 409             # the old pairing is live: it keeps the radio
+    old_id = next(s["pairing"]["id"] for s in req("GET", "/api/hub")[1]["stations"] if s["id"] == "!a0000001")
+    req("POST", "/api/hub/station", {"action": "revoke", "pairing": old_id})
+    assert _report(req, new["token"], "!a0000001")[0] == 200             # revoked: the new one takes it over
+    row = next(s for s in req("GET", "/api/hub")[1]["stations"] if s["id"] == "!a0000001")
+    assert row["pairing"]["id"] == d["id"] and not row["pairing"]["revoked"]
 
 
 def test_a_claim_whose_pairing_bind_fails_is_released(hub, monkeypatch):

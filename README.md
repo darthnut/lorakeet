@@ -157,6 +157,11 @@ More about each step, network radios and listening stations: [Setting it up](#se
   shows their power dips and network drop-outs. Set it up on the Stations page: make one computer the hub, and
   pair each station with a one-time code. Stations are easy on SD cards: Lorakeet writes in batches every few
   seconds rather than row by row, and keeps the system log quiet. See [docs/PI-SETUP.md](docs/PI-SETUP.md).
+- **A phone as a station (Lorakeet for Android, in testing).** An Android app that logs one or more Meshtastic
+  radios over Bluetooth, in exactly the rows Lorakeet writes (per-reception detail included), and syncs to your hub
+  as a station: one per radio, up to 4 on one phone. The phone's GPS can be the station's track, so the Coverage view
+  maps a drive without a GPS radio, and it can sync away from home over a Tailscale connection built into the app.
+  It isn't released yet; this section will link to it when it is. Hubs from 0.5.4 on are ready for it (below).
 - **Sharing with someone else's hub (peering).** Two people with their own hubs can trade what they log, each
   choosing what the other sees. Every location is rounded to about 3 km unless you allow exact ones. See
   [Sharing with another hub](#sharing-with-another-hub-peering) below.
@@ -243,6 +248,11 @@ Undo last save reverses the last one. (The radio's name, id and port are replace
 **A dedicated listening station** (a Raspberry Pi with a radio, at home, somewhere else or in a car):
 see [docs/PI-SETUP.md](docs/PI-SETUP.md). Make a pairing code on the hub's Stations page, and the station's setup
 script does the rest: pairing, a Wi-Fi watchdog, and running at boot.
+
+**A phone running Lorakeet for Android** (in testing): on the Stations page, tick **A phone** when you make the
+pairing code, and scan the QR code in the app. That one code then covers every radio the phone logs (up to 4), each
+its own station; revoking it stops them all. A pairing made without the tick holds one radio; **let it add radios**
+on the Stations page switches it.
 
 ![The Stations page: this computer as the hub, its stations, and peers](docs/screenshots/stations.png)
 

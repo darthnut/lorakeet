@@ -166,6 +166,6 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 |---|---|---|---|
 | GET | `/api/events` | Server-sent events: live packets, status, storage, debug lines (what the map page listens to). |  |
 | POST | `/api/ingest` | Stations and peer hubs send their rows here (token). |  |
-| POST | `/api/ingest/hello` | A station's connection test (token). |  |
+| POST | `/api/ingest/hello` | A station's connection test (token, or a pairing proof that never sends it: the reply then proves the hub). |  |
 | POST | `/api/login` | Log in from another device. | `password` |
 | POST | `/api/logout` | Log out. |  |
