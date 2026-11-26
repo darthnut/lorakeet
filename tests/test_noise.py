@@ -46,8 +46,9 @@ def test_report_reads_noise_failures_steps_and_restarts(tmp_path):
     (s,) = noise.report(path, "30d", LOCAL, describe)["stations"]
     assert s["noise"]["lo"] >= -90 and s["noise"]["hi"] <= -78            # the -120 placeholders are skipped
     (step,) = s["steps"]
-    assert 9 <= step["delta"] <= 11 and abs(step["ts"] - (now - 5 * 86400)) <= 2 * 86400
-    # (steps are dated by day: up to two days off, by the time of day the test runs)
+    assert 9 <= step["delta"] <= 11 and abs(step["ts"] - (now - 5 * 86400)) <= 13 * 3600
+    # (steps sit on midnights: the one nearest the change. Before linkhistory._refine a midnight up to two days early
+    # could win and leave a second, phantom step, depending on the time of day the test ran.)
     assert s["restarts"]["lastDay"] >= 10 and s["restarts"]["inRange"] >= s["restarts"]["lastDay"]
     f = s["failed"]
     assert f["bad"] > 0 and f["received"] > 0 and 4 < f["pct"] < 14       # never negative across the reboots

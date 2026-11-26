@@ -105,13 +105,22 @@ FIELD_NOTES = [
                    "links from rx_hops/packets relay bytes at query time (not stored)."),
     ("messages", "*", "Derived from TEXT_MESSAGE packets plus messages this dashboard sent (outgoing = 1, status "
                       "updated as ACKs arrive). encrypted = 1 marks DMs to us that couldn't be decrypted."),
+    ("messages", "status", "Outgoing only. sending; relayed = our radio heard a neighbour rebroadcast it (the implicit "
+                           "ACK); delivered = the recipient's own ACK (direct messages); 'failed: <reason>' as the radio "
+                           "reported it ('max retransmit' = no rebroadcast heard after its retries, not proof nobody got "
+                           "it); no ack = nothing within 90 s; relayed (late) = the radio had given up, then heard its own "
+                           "packet rebroadcast within 90 s of sending (events: late_relay). A phone station writes the "
+                           "row once the outcome settles, so its hub gets the final status."),
     ("events", "detail", "Radio config snapshots have security.private_key, security.admin_key and channel PSKs "
                          "removed before storage. Everything else is as reported."),
     ("positions", "precision_bits", "Position precision the node shares at. Below 32 the coordinates are "
                                     "deliberately truncated: ~23 km box at 10 bits, halving per extra bit."),
     ("positions", "source", "'own' = the listening station's radio's own GPS fix (node = station), logged so a "
-                            "moving station's location is known over time; NULL = a position heard from the mesh."),
-    ("positions", "fix_time", "The GPS fix's own timestamp as the radio reported it (own fixes only)."),
+                            "moving station's location is known over time; 'phone' = the same, but from the GPS of "
+                            "the phone logging the radio (the Android app; the phone is within Bluetooth range of "
+                            "the radio); NULL = a position heard from the mesh."),
+    ("positions", "fix_time", "The GPS fix's own timestamp as the radio (or, for 'phone', the phone) reported it "
+                              "(own fixes only)."),
     ("*", "src_rowid", "Set on rows that came from elsewhere (a station sending to this hub, or a peer hub): the row's "
                        "number in the database of the station that logged it, so a resend, or the same row arriving by "
                        "two routes, is stored once (unique with station). Empty on rows this computer's radio logged."),
@@ -235,11 +244,15 @@ MIGRATIONS = [
     # (measured on 100k receptions; ~3% more disk)
     "CREATE INDEX IF NOT EXISTS rx_hops_from_ts ON rx_hops(from_id, ts)",
     "CREATE INDEX IF NOT EXISTS rx_hops_pkt ON rx_hops(pkt_id)",
+    # 0.5.4 (database layout 5): phone stations' own fixes (source 'phone', the Android app) read with the radio's;
+    # the WHERE is analytics.OWN_FIX word for word, so queries written with it can use this index
+    "CREATE INDEX IF NOT EXISTS positions_own_fix ON positions(station, node, ts) WHERE source IN ('own', 'phone')",
 ]
 # The database's layout version, stored in the file (PRAGMA user_version). Updates only ever ADD tables, columns
 # and indexes (MIGRATIONS above), never remove or rewrite logged data. Bump it with each change to SCHEMA or
 # MIGRATIONS, so an older Lorakeet opening a newer database can say so.
-SCHEMA_VERSION = 4  # 2: received_via on every station table; 3: mc_rx (MeshCore receptions); 4: rx_hops indexes
+SCHEMA_VERSION = 5  # 2: received_via on every station table; 3: mc_rx (MeshCore receptions); 4: rx_hops indexes;
+#                    5: positions_own_fix (phone stations' own fixes)
 DB_WAIT_S = 30        # how long a write or read waits for the database before giving up
 # Rows are committed together this often (or once COMMIT_MAX_ROWS are waiting), not one transaction each: on a Pi
 # every commit rewrites several 4 KB pages (the table and each index) and flushes them, which is what wore SD cards.

@@ -398,6 +398,10 @@ const STATUS = {
   relayed: ["✓ Relayed by a neighbour", "good"],
   delivered: ["✓✓ Delivered", "good"],
   "no ack": ["No confirmation heard", "bad"],
+  // the radio gave up, then heard its packet rebroadcast (a slow relay): it did go out
+  "relayed (late)": ["✓ Relayed (heard after the radio gave up)", "good"],
+  // the radio's own words for "heard no rebroadcast after its retries": not proof nobody received it
+  "failed: max retransmit": ["✕ No relay heard in time", "bad"],
 };
 function statusLabel(st) {
   if (!st) return ["", ""];

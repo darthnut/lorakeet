@@ -105,8 +105,10 @@ def test_pair_test_send_claim_and_revoke(hub):
     st, d = req("POST", "/api/hub/pair", {"label": "Garage Pi"})
     assert st == 200 and d["code"].startswith("lk1-")
     c = pairing.parse_code(d["code"])
+    assert d["qr"].startswith("<svg") and "</svg>" in d["qr"]  # the same code as a QR, for the Android app
     result, _ = pairing.test_hubs(c["hubs"], c["token"], "!a0000001")
     assert result["ok"] and result["hubName"] == "Hub radio"
+    assert result["addresses"] == c["hubs"]   # hello lists the hub's addresses: a station keeps its list current
     assert _report(req, c["token"], "!a0000001") == (200, {"ok": True})        # claims the pairing
     assert _report(req, c["token"], "!a0000002")[0] == 403                      # another radio can't reuse it
     info = req("GET", "/api/hub")[1]
@@ -190,3 +192,58 @@ def test_forget_takes_a_station_off_the_list_though_its_data_stays(hub):
     assert "!a0000001" in listed()
     req("POST", "/api/hub/station", {"action": "forget", "station": "!a0000001"})
     assert "!a0000001" not in listed()          # off the list, though its packets are still logged
+
+
+def test_a_phone_pairing_claims_several_radios_and_a_station_pairing_one(tmp_path):
+    reg = pairing.Pairings(tmp_path / "stations.json")
+    _, phone = reg.create("Pixel", max_stations=4)
+    for k in range(1, 5):
+        assert reg.check(phone, f"!a000000{k}") == "ok"
+    assert reg.check(phone, "!a0000005") == "other-station"            # four radios at most
+    assert pairing.stations_of(reg.list()[0]) == [f"!a000000{k}" for k in range(1, 5)]
+    reg.forget(station="!a0000002")                                    # forgetting one radio keeps the phone's pairing
+    assert pairing.stations_of(reg.list()[0]) == ["!a0000001", "!a0000003", "!a0000004"]
+    e, pi = reg.create("Garage Pi")
+    assert reg.check(pi, "!a0000006") == "ok" and reg.check(pi, "!a0000007") == "other-station"
+    reg.set_phone(e["id"], True)                                       # an existing pairing may become a phone's
+    assert reg.check(pi, "!a0000007") == "ok"
+    with pytest.raises(ValueError):
+        reg.set_phone(e["id"], False)                                  # never below what it already logs
+
+
+def test_a_phone_adds_a_second_radio_on_its_one_code(hub):
+    req, _, _ = hub
+    d = req("POST", "/api/hub/pair", {"label": "Pixel", "phone": True})[1]
+    c = pairing.parse_code(d["code"])
+    result, _ = pairing.test_hubs(c["hubs"], c["token"], "!a0000001")
+    assert _report(req, c["token"], "!a0000001") == (200, {"ok": True})
+    assert _report(req, c["token"], "!a0000002") == (200, {"ok": True})   # a second radio, same code
+    st, hello = req("POST", "/api/ingest/hello", b"{}", {"Authorization": f"Bearer {c['token']}",
+                                                          "X-Lorakeet-Station": "!a0000002"})
+    assert st == 200 and hello["stations"] == ["!a0000001", "!a0000002"] and hello["maxStations"] == 4
+    rows = {s["id"]: s for s in req("GET", "/api/hub")[1]["stations"]}
+    assert rows["!a0000001"]["pairing"]["id"] == rows["!a0000002"]["pairing"]["id"] == d["id"]
+    assert rows["!a0000002"]["pairing"]["stations"] == 2
+    # a radio another source owns is still refused: a phone's code can't take over a station
+    d2 = req("POST", "/api/hub/pair", {"label": "Other phone", "phone": True})[1]
+    c2 = pairing.parse_code(d2["code"])
+    assert _report(req, c2["token"], "!a0000001")[0] == 409
+    # revoking the phone's pairing stops all its radios
+    req("POST", "/api/hub/station", {"action": "revoke", "pairing": d["id"]})
+    assert _report(req, c["token"], "!a0000002")[0] == 401
+
+
+def test_a_claim_whose_pairing_bind_fails_is_released(hub, monkeypatch):
+    """Two requests racing for a pairing's last free slot: the one whose bind fails must not leave the station owned
+    by a pairing that doesn't list it (second-opinion security review, 2026-11-26)."""
+    req, _, _ = hub
+    d = req("POST", "/api/hub/pair", {"label": "Pixel", "phone": True})[1]
+    c = pairing.parse_code(d["code"])
+    real_bind = pairing.Pairings.bind
+    monkeypatch.setattr(pairing.Pairings, "bind", lambda self, pid, station=None, hub=None: False)  # lost the race
+    assert _report(req, c["token"], "!a0000003")[0] == 403
+    monkeypatch.setattr(pairing.Pairings, "bind", real_bind)
+    # the station isn't stuck: another pairing can still take it
+    d2 = req("POST", "/api/hub/pair", {"label": "Garage Pi"})[1]
+    c2 = pairing.parse_code(d2["code"])
+    assert _report(req, c2["token"], "!a0000003") == (200, {"ok": True})

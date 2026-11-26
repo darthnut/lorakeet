@@ -913,7 +913,11 @@ def make_handler(mesh, store, storage, alert_engine, syncer=None, login=None, pe
             if not login.enabled:
                 return self._json({"error": "no password is set: run  python server.py --set-password  on the dashboard PC"}, 400)
             try:
-                body = json.loads(self.rfile.read(min(self._length(), 4096)) or b"{}")
+                n = self._length()
+                if n > 4096:  # more than a login needs: refuse, and don't leave the rest to be read as a next request
+                    self.close_connection = True
+                    return self._json({"error": "request too large"}, 413)
+                body = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._json({"error": "bad request"}, 400)
             ip = self.client_address[0]

@@ -1,6 +1,6 @@
 """Drive coverage: what a moving station heard, and where.
 
-A mobile station logs its radio's own GPS fixes (positions with source = 'own', see analytics.station_track);
+A mobile station logs its own GPS fixes (positions with source 'own' or 'phone': analytics.OWN_FIX, station_track);
 fixes rounded to a channel's precision (precision_bits < 32) are never used.
 Each reception it logged is placed where the station was at that moment (analytics.station_position: the
 latest fix at or before it, within 12 minutes; never interpolated), then the route is binned into square
@@ -34,7 +34,7 @@ import statistics
 from collections import Counter, defaultdict
 
 import radioid
-from analytics import ALL_STATIONS, _connect, _window, smooth_track
+from analytics import ALL_STATIONS, OWN_FIX, _connect, _window, smooth_track
 from topology import relay_resolver
 
 MAX_FIX_AGE_S = 12 * 60   # a fix older than this doesn't place a reception: a parked station logs one every
@@ -64,7 +64,7 @@ def _compute(db, range_key, station, describe, bin_m):
         candidates = [station]
     else:
         candidates = [r[0] for r in db.execute(
-            "SELECT DISTINCT station FROM positions WHERE source = 'own' AND node = station AND (precision_bits IS NULL OR precision_bits >= 32) "
+            "SELECT DISTINCT station FROM positions WHERE " + OWN_FIX + " AND node = station AND (precision_bits IS NULL OR precision_bits >= 32) "
             "AND ts BETWEEN ? AND ?",
             (since, until)) if r[0]]
     explicit = bool(station and station != ALL_STATIONS)
@@ -74,7 +74,7 @@ def _compute(db, range_key, station, describe, bin_m):
         if not radioid.is_radio_id(st):
             continue
         fixes = [tuple(r) for r in db.execute(
-            "SELECT ts, lat, lon FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
+            "SELECT ts, lat, lon FROM positions WHERE node = ?1 AND station = ?1 AND " + OWN_FIX + " "
             "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (st, since - MAX_FIX_AGE_S, until))]
         fixes = smooth_track(fixes)  # parked stretches snapped to one spot: GPS jitter isn't travel
         if not fixes:

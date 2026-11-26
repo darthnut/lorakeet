@@ -63,6 +63,20 @@ def parse_code(code):
 
 # ---------------------------------------------------------------- the hub's paired stations
 
+# A phone (the Lorakeet Android collector) may log several radios on one pairing, each its own station; other
+# stations' pairings claim one radio, so a copied code is no use to another radio.
+PHONE_STATIONS = 4
+
+
+def stations_of(e):
+    """The stations a station's pairing has claimed (older entries hold just "station")."""
+    return list(e.get("stations") or ([e["station"]] if e.get("station") else []))
+
+
+def max_stations(e):
+    return int(e.get("maxStations") or 1)
+
+
 class Pairings:
     """stations.json: [{id, label, tokenHash, created, station, boundAt, revoked}]. Thread-safe; tokens never stored."""
 
@@ -92,11 +106,15 @@ class Pairings:
             except Exception:  # noqa: BLE001 - the data folder is already the user's; this is belt and braces
                 pass
 
-    def create(self, label, kind="station"):
+    def create(self, label, kind="station", max_stations=1):
+        """A new pairing. A station's pairing claims ONE station (its radio) unless made for a phone: a phone running
+        the Lorakeet app may log several radios, each its own station, all on its one pairing (up to PHONE_STATIONS)."""
         label = (label or "").strip()[:60] or ("A peer hub" if kind == "peer" else "New station")
         token = secrets.token_urlsafe(24)
         e = {"id": secrets.token_hex(4), "kind": kind, "label": label, "tokenHash": _hash(token), "created": int(time.time()),
              "station": None, "hub": None, "boundAt": None, "revoked": None, "lastContact": None}
+        if kind != "peer":
+            e["maxStations"] = PHONE_STATIONS if max_stations > 1 else 1
         with self.lock:
             self.entries.append(e)
             self._save()
@@ -117,7 +135,19 @@ class Pairings:
             for e in self.entries:
                 if e["id"] == pid and not e["revoked"]:
                     key, val = ("hub", hub) if e.get("kind") == "peer" else ("station", station)
-                    if e.get(key) not in (None, val) or not val:
+                    if not val:
+                        return False
+                    if key == "station":
+                        owned = stations_of(e)
+                        if val in owned:
+                            return True
+                        if len(owned) >= max_stations(e):
+                            return False
+                        e.update(station=owned[0] if owned else val, stations=owned + [val])
+                        e["boundAt"] = e.get("boundAt") or int(time.time())
+                        self._save()
+                        return True
+                    if e.get(key) not in (None, val):
                         return False
                     # a hub id is self-declared: one held by another LIVE peer pairing can't be claimed again, or a
                     # second peer could write into the first one's stations and "delete what it sent" would delete the
@@ -170,12 +200,16 @@ class Pairings:
                     e["lastContact"] = int(time.time())
                     self._save()
                 return "peer"
-            if e["station"] is None:
-                if bind and station:
-                    e.update(station=station, boundAt=int(time.time()))
-                    self._save()
+            owned = stations_of(e)
+            if not station or station in owned:
                 return "ok"
-            return "ok" if e["station"] == station or not station else "other-station"
+            if len(owned) >= max_stations(e):
+                return "other-station"
+            if bind:
+                e.update(station=owned[0] if owned else station, stations=owned + [station])
+                e["boundAt"] = e.get("boundAt") or int(time.time())
+                self._save()
+            return "ok"
 
     def set_paused(self, pid, paused):
         """Pause (or resume) a peer hub's pairing: its batches are declined until resumed, and it keeps them pending,
@@ -201,6 +235,19 @@ class Pairings:
                     return True
         return False
 
+    def set_phone(self, pid, phone):
+        """Let a station's pairing log several radios (a phone), or back to one. Never below what it already holds."""
+        with self.lock:
+            for e in self.entries:
+                if e["id"] == pid and e.get("kind") != "peer" and not e["revoked"]:
+                    n = PHONE_STATIONS if phone else 1
+                    if len(stations_of(e)) > n:
+                        raise ValueError(f"it already logs {len(stations_of(e))} radios")
+                    e["maxStations"] = n
+                    self._save()
+                    return True
+        return False
+
     def revoke(self, pid):
         with self.lock:
             for e in self.entries:
@@ -213,8 +260,16 @@ class Pairings:
     def forget(self, pid=None, station=None):
         with self.lock:
             before = len(self.entries)
-            self.entries = [e for e in self.entries if not (e["id"] == pid or (station and e["station"] == station))]
-            if len(self.entries) != before:
+            changed = False
+            if station:  # a phone's pairing keeps its other radios: only this station leaves it
+                for e in self.entries:
+                    owned = stations_of(e)
+                    if station in owned and len(owned) > 1:
+                        rest = [s for s in owned if s != station]
+                        e.update(station=rest[0], stations=rest)
+                        changed = True
+            self.entries = [e for e in self.entries if not (e["id"] == pid or (station and stations_of(e) == [station]))]
+            if changed or len(self.entries) != before:
                 self._save()
 
     def list(self):
@@ -352,7 +407,8 @@ def hello(url, token, station=None, timeout=8, hub_id=None):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read())
             return {"ok": True, "url": url, "hubName": d.get("hub"), "hubVersion": d.get("version"), "hubId": d.get("hubId"),
-                    "paused": bool(d.get("paused"))}
+                    "paused": bool(d.get("paused")), "addresses": [u for u in d.get("addresses") or []
+                                                                    if isinstance(u, str) and u.startswith(("http://", "https://"))]}
     except urllib.error.HTTPError as e:
         try:
             msg = json.loads(e.read()).get("error", "")

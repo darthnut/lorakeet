@@ -122,3 +122,33 @@ def test_drive_pings_follow_distance_and_time():
     assert mesh_mod.ping_due(a, 0, b, 120, 1000, 60)
     assert not mesh_mod.ping_due(a, 0, b, 30, 1000, 60)              # too soon
     assert not mesh_mod.ping_due(a, 0, (47.6001, -122.33), 600, 1000, 60)  # parked: jitter, not distance
+
+
+def test_phone_fixes_count_like_the_radios_own(tmp_path):
+    """The Android app logs the phone's GPS as source 'phone': a drive, a track and a position like radio fixes."""
+    path = tmp_path / "mesh.db"
+    store = store_mod.Store(path)
+    t0 = time.time() - 3600
+    for k in range(40):
+        store.insert("positions", ts=t0 + 30 * k, node=CAR, lat=47.60, lon=-122.33 + 0.0015 * k, alt=50,
+                     precision_bits=32, source="phone", fix_time=int(t0 + 30 * k), station=CAR)
+    for k in range(0, 600, 20):
+        store.insert("rx_hops", ts=t0 + k + 3, from_id="!c0000001", hops=0, relay=None, snr=4.0, rssi=-90,
+                     pkt_id=6000 + k, channel=8, directed=0, to_id="^all", length=40, encrypted=1, hop_start=3,
+                     hop_limit=3, station=CAR)
+    # a position heard from the mesh (no source) is never the station's
+    store.insert("positions", ts=t0 + 31, node=CAR, lat=10.0, lon=10.0, alt=None, precision_bits=32, station=CAR)
+    store.insert("packets", ts=t0, from_id="!c0000001", station=CAR, raw=json.dumps({}))
+    store.close()
+    r = drive.compute(path, "24h", None, synth.describe, 250)
+    assert [s["id"] for s in r["stations"]] == [CAR]
+    db = analytics._connect(path)
+    try:
+        p = analytics.station_position(db, CAR, t0 + 61)
+        assert p[3] == "track" and abs(p[1] - (-122.33 + 0.0015 * 2)) < 1e-9
+        plan = " ".join(str(x) for row in db.execute(
+            "EXPLAIN QUERY PLAN SELECT ts FROM main.positions WHERE station = ?1 AND node = ?1 AND "
+            + analytics.OWN_FIX + " ORDER BY ts", (CAR,)) for x in row)
+        assert "positions_own_fix" in plan
+    finally:
+        db.close()

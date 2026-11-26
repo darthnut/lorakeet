@@ -126,19 +126,25 @@ def arrival_of(packet):
     return "unknown"
 BROADCAST = "^all"
 MAX_TEXT_BYTES = 200
-TRACEROUTE_COOLDOWN_S = 30  # firmware rate-limits traceroutes too; be a good neighbour on a shared channel
+TRACEROUTE_COOLDOWN_S = 30
+# A message our radio gave up on (no relay heard after its retries) but then heard rebroadcast this soon after
+# sending: "relayed (late)" (Mesh._late_relay). The same window as the "no ack" timer.
+LATE_RELAY_S = 90
+LATE_UPGRADABLE = ("failed: max retransmit", "no ack")  # firmware rate-limits traceroutes too; be a good neighbour on a shared channel
 UNKNOWN_HOP = 0xFFFFFFFF
 UNK_SNR = -128
 
 
 def node_status_text(payload):
-    """The status string from a NODE_STATUS_APP payload (base64 protobuf, field 1 = string).
+    """The status string from a NODE_STATUS_APP payload (protobuf, field 1 = string).
 
-    Library 2.7.11 has no message type for this port, so it hands us the raw bytes. Only the summary
-    is derived here; the stored raw JSON keeps the payload exactly as received."""
+    Library 2.7.11 has no message type for this port, so it hands us the raw bytes; base64 text (the payload as
+    packets.raw stores it) is accepted too. Only the summary is derived here; the stored raw JSON keeps the payload
+    exactly as received. Until 0.5.4 the bytes were base64-decoded as if they were text, so every summary was empty
+    (tests/test_node_status.py)."""
     import base64
     try:
-        b = base64.b64decode(payload or "")
+        b = bytes(payload) if isinstance(payload, (bytes, bytearray)) else base64.b64decode(payload or "")
         i, out = 0, []
         while i < len(b):
             key, shift = 0, 0
@@ -268,6 +274,7 @@ class Mesh(RadioLink):
         self.pos = {r["node"]: r for r in store.query(
             "SELECT node, MAX(ts) AS ts, lat, lon, alt, precision_bits FROM positions GROUP BY node")}
         self.last_traceroute = 0
+        self._sent = {}  # pkt_id -> our message's state while a late rebroadcast can still upgrade it (send_text)
         self._own_fix = None  # our radio's last logged GPS fix (_track_self); None = not looked up yet
         self._own_refresh = 0  # last node-list request for our exact position (_refresh_own_fix)
         self._ping = {"n": 0, "pos": None, "ts": 0}  # drive pings: count, where and when the last one went
@@ -456,6 +463,20 @@ class Mesh(RadioLink):
         if rx and not keep_recipient(h.get("from_id"), h.get("to_id"), self.local_id):
             h["to_id"] = None  # directed flag is kept; only who it was for is dropped
         self.store.insert("rx_hops" if rx else "tx_log", ts=time.time(), **h)
+        if rx:
+            self._late_relay(h)
+
+    def _late_relay(self, h):
+        """Our radio heard its own packet rebroadcast after it had given up (max retransmit): someone did relay it.
+        The ACK it waited for is that rebroadcast, which can come after its last retry (a slow relay). Within
+        LATE_RELAY_S of sending, such a message becomes "relayed (late)"; a confirmed delivery is never changed."""
+        e = self._sent.get(h.get("pkt_id"))
+        if not e or h.get("from_id") != self.local_id or not (h.get("hops") or 0) >= 1 or time.time() > e["until"]:
+            return
+        previous = e["state"]["status"]
+        if previous in LATE_UPGRADABLE:
+            e["set"]("relayed (late)")
+            self.event("late_relay", pkt_id=h.get("pkt_id"), previous=previous, relay=h.get("relay"))
 
     def _on_log_line(self, line, interface, **_):
         if interface is not self.iface and interface is not self._connecting:
@@ -905,6 +926,9 @@ class Mesh(RadioLink):
                    hop_limit=hop_limit, known_hops=known)
         self.broadcast("message", {**msg, "name": self.name(self.local_id)})
         threading.Timer(90, lambda: state["status"] == "sending" and set_status("no ack")).start()
+        now = time.time()
+        self._sent = {k: v for k, v in self._sent.items() if v["until"] > now}
+        self._sent[pkt.id] = {"state": state, "set": set_status, "until": state["ts"] + LATE_RELAY_S}
         return msg
 
     def traceroute(self, target, origin="manual"):

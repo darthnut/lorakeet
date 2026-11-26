@@ -100,8 +100,8 @@ def station_squares(db_path, now=None):
         try:
             for sid, lat, lon in db.execute(
                     "SELECT p.station, p.lat, p.lon FROM positions p JOIN (SELECT station, MAX(ts) AS ts FROM positions "
-                    "WHERE source = 'own' AND node = station AND ts > ? AND (precision_bits IS NULL OR precision_bits >= 32) "
-                    "GROUP BY station) m ON p.station = m.station AND p.ts = m.ts WHERE p.source = 'own' AND p.node = p.station",
+                    "WHERE " + analytics.OWN_FIX + " AND node = station AND ts > ? AND (precision_bits IS NULL OR precision_bits >= 32) "
+                    "GROUP BY station) m ON p.station = m.station AND p.ts = m.ts WHERE p." + analytics.OWN_FIX + " AND p.node = p.station",
                     (now - 86400,)):
                 if sid not in analytics.STATION_LOCATIONS and lat is not None and lon is not None:
                     out.setdefault(cell_of(lat, lon), []).append(sid)

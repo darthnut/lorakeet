@@ -672,6 +672,18 @@ class Hub:
         return any(self.store.db.execute(f"SELECT 1 FROM {t} WHERE station = ? LIMIT 1", (station,)).fetchone()
                    for t in ("packets", "positions", "rx_hops"))
 
+    def unclaim(self, station, writer):
+        """Undo a claim that went no further (the pairing then had no room for it): `station` loses its owner, but only if
+        `writer` is still that owner. Without this a station claimed by a request whose pairing bind then failed (two at
+        once racing for the last free slot) would be owned by a pairing that doesn't list it: stuck until a revoke."""
+        with self.lock, self.store.lock:
+            r = self.store.db.execute("SELECT value FROM settings WHERE key='station_owners'").fetchone()
+            owners = json.loads(r[0]) if r else {}
+            if owners.get(station) == writer:
+                del owners[station]
+                self.store.db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('station_owners', ?)", (json.dumps(owners),))
+                self.store.db.commit()
+
     def claim(self, station, writer):
         """May `writer` write `station`? Records the first writer as its owner. writer tags: "pair:<id>" (a paired
         station), "peer:<hub id>" (a peer hub), "shared" (the shared [sync] token), "token" (a per-station [sync]

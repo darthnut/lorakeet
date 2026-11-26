@@ -15,7 +15,7 @@ import corruption
 import keyflags
 import topology
 import weak_keys
-from analytics import STATION_LOCATIONS, _connect, _window, scope_local
+from analytics import OWN_FIX, STATION_LOCATIONS, _connect, _window, scope_local
 import radioid
 
 # ------------------------------------------------------------------ helpers
@@ -70,7 +70,7 @@ def drive_estimates(db_path, exclude=()):
     from analytics import ALL_STATIONS, smooth_track
     db = _connect(db_path, ALL_STATIONS)
     try:
-        exact = "source = 'own' AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
+        exact = OWN_FIX + " AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
         movers = [r[0] for r in db.execute(f"SELECT DISTINCT node FROM positions WHERE {exact}")]
         stations = set(movers) | {r[0] for r in db.execute("SELECT id FROM _stations")} | set(exclude)
         spots = dd(lambda: dd(list))  # node -> spot -> [(lat, lon, snr)]
