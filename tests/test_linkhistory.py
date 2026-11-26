@@ -98,3 +98,19 @@ def test_a_relay_byte_never_means_a_radio_not_yet_heard(tmp_path):
     st.close()
     r = {(l["a"], l["b"]): l for l in linkhistory.history(path, "all", LOCAL, describe)["links"]}[(RELAY, LOCAL)]
     assert r["first"] > early + 86400                       # those old readings weren't pinned on it
+
+
+def test_one_change_is_one_step_at_the_nearest_midnight_whatever_the_hour():
+    """A single 10 dB change, at every hour of the day: exactly one step, on the midnight nearest the change. (Before
+    linkhistory._refine, changes in the afternoon came back as two steps, the first up to two days early.)"""
+    base = datetime(2026, 3, 2).timestamp()          # synthetic dates; no DST change within the data
+    for hour in range(24):
+        change = base + 8 * 86400 + hour * 3600 + 600
+        obs = [(t, (-5.0 if t < change else 5.0) + (k % 3) * 0.25)
+               for k, t in enumerate(base + i * 1800 for i in range(16 * 48))]
+        steps = linkhistory.find_steps(obs)
+        assert len(steps) == 1, (hour, [(datetime.fromtimestamp(s["ts"]), s["delta"]) for s in steps])
+        day = datetime.fromtimestamp(change).replace(hour=0, minute=0, second=0, microsecond=0)
+        nearest = min((day, day + timedelta(days=1)), key=lambda d: abs(d.timestamp() - change))
+        assert steps[0]["ts"] == nearest.timestamp() and steps[0]["delta"] == 10.0, hour
+

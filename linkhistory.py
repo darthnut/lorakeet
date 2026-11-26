@@ -34,6 +34,7 @@ STEP_MIN_OBS = 8
 STEP_WINDOW_S = 7 * 86400
 STEP_MIN_DAYS = 2
 MAX_STEPS = 3
+STEP_REFINE_S = 2 * 86400   # a chosen step may move this far to the cut that best separates the levels (_refine)
 EVENT_NEAR_S = 12 * 3600
 MIN_OBS = 3          # a link needs this many readings in range to be listed
 MAX_LINKS = 300
@@ -199,6 +200,42 @@ def deseasoned(obs, pattern):
     return [(t, s - o[datetime.fromtimestamp(t).hour]) for t, s in obs]
 
 
+def _refine(best, ts, snr, side, cuts):
+    """Move a chosen step to the candidate within STEP_REFINE_S that puts the fewest readings on the wrong side.
+
+    The score favours cuts with more readings on both sides, and a quartile-based spread doesn't see a side that is
+    up to ~25% the other level, so a midnight up to two days before the real change could win. The rest of that
+    before-the-change stretch then showed up as a second step the same way (seen in tests/test_noise.py at some times
+    of day). Here every candidate near the winner (midnights and events, inside its segment) is scored by how many
+    readings around the change sit on the wrong side of the midpoint between the two levels; the fewest wins."""
+    lo, hi = best["seg"]
+    t0, t1 = max(lo, best["ts"] - 2 * STEP_REFINE_S), min(hi, best["ts"] + 2 * STEP_REFINE_S)
+    i, j = bisect.bisect_left(ts, t0), bisect.bisect_left(ts, t1)
+    near = list(zip(ts[i:j], snr[i:j]))
+    mid, up = (best["before"]["med"] + best["after"]["med"]) / 2, best["delta"] > 0
+
+    def wrong(cut):   # readings around the change on the wrong side of the midpoint, for a step at `cut`
+        return sum(1 for t, v in near if (t < cut) == ((v > mid) == up))
+
+    pick, fewest = best, wrong(best["ts"])
+    window = [c for c in sorted(set(_midnights(lo, hi)) | {c for c in cuts if lo < c < hi})
+              if abs(c - best["ts"]) <= STEP_REFINE_S and c != best["ts"]]
+    for cut in window:
+        n = wrong(cut)
+        if n >= fewest:
+            continue
+        b, nb = side(max(lo, cut - STEP_WINDOW_S), cut)
+        a, na = side(cut, min(hi, cut + STEP_WINDOW_S))
+        if len(b) < STEP_MIN_OBS or len(a) < STEP_MIN_OBS or nb < STEP_MIN_DAYS or na < STEP_MIN_DAYS:
+            continue
+        sb, sa = _stats(b), _stats(a)
+        delta = sa["med"] - sb["med"]
+        if abs(delta) < STEP_DB or (delta > 0) != up:
+            continue
+        pick, fewest = {"ts": cut, "seg": (lo, hi), "before": sb, "after": sa, "delta": round(delta, 2)}, n
+    return pick
+
+
 def find_steps(obs, cuts=(), events=()):
     """Where a link's signal stepped. obs: sorted [(ts, snr)]. cuts: extra candidate split times (event times).
     Returns [{ts, before, after, delta, nBefore, nAfter, events}] in time order."""
@@ -233,8 +270,9 @@ def find_steps(obs, cuts=(), events=()):
                     best = {"ts": cut, "seg": (lo, hi), "before": sb, "after": sa, "delta": round(delta, 2), "score": score}
         if not best:
             break
+        best = _refine(best, ts, snr, side, cuts)
         lo, hi = best.pop("seg")
-        best.pop("score")
+        best.pop("score", None)   # (a refined step has none)
         segments.remove((lo, hi))
         segments += [(lo, best["ts"]), (best["ts"], hi)]
         steps.append(best)

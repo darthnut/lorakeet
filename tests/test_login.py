@@ -165,3 +165,41 @@ def test_radio_page_is_this_computer_only_even_logged_in(lan_server, monkeypatch
     assert req("POST", "/api/radio/station", {"name": "x"}, cookie=cookie)[0] == 403
     assert req("POST", "/api/radio/restart", {}, cookie=cookie)[0] == 403
     assert req("GET", "/api/radio/location-check?lat=1&lon=2", cookie=cookie)[0] == 403
+
+
+def test_an_oversized_login_body_is_refused_not_left_on_the_connection(lan_server, monkeypatch):
+    monkeypatch.setitem(server.CFG["http"], "lan", "view")
+    req = lan_server
+    st, h, d = req("POST", "/api/login", {"password": PW, "pad": "x" * 5000})
+    assert st == 413 and "too large" in d["error"]
+    assert req("POST", "/api/login", {"password": PW})[0] == 200   # a normal login still works
+
+
+def test_an_oversized_login_closes_the_connection_so_the_rest_is_never_read_as_a_request(tmp_path, monkeypatch):
+    import socket
+    monkeypatch.setattr(web_mod, "client_access", lambda ip: "view")
+    monkeypatch.setitem(server.CFG["http"], "lan", "view")
+    lg = login_mod.Login(tmp_path / "login.json")
+    lg.set_password(PW)
+    srv = web_mod.ThreadingHTTPServer(("127.0.0.1", 0), web_mod.make_handler(types.SimpleNamespace(local_id=None, paused=False), None, None, _Alerts(), None, lg))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    host, port = srv.server_address
+    crlf = b"\r\n"
+    try:
+        # the body's tail is itself a complete request: it must not be answered on this connection
+        smuggled = b"GET /api/whoami HTTP/1.1" + crlf + b"Host: 127.0.0.1" + crlf + crlf
+        body = b"{" + b" " * 5000 + b"}" + smuggled
+        head = crlf.join([b"POST /api/login HTTP/1.1", b"Host: 127.0.0.1:%d" % port, b"Origin: http://127.0.0.1:%d" % port,
+                          b"Content-Type: application/json", b"Content-Length: %d" % len(body)]) + crlf + crlf
+        s = socket.create_connection((host, port), timeout=5)
+        s.sendall(head + body)
+        got = b""
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            got += chunk
+        s.close()
+        assert got.count(b"HTTP/1.") == 1 and b" 413 " in got.split(crlf, 1)[0]
+    finally:
+        srv.shutdown()

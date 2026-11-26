@@ -37,7 +37,12 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                 return self._json({"error": "bad station header"}, 400)
             given = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
             from_hub = (self.headers.get("X-Lorakeet-Hub") or "")[:64]
-            hi = {"ok": True, "hub": hub_name(), "version": runtime.VERSION, "hubId": hub_id}
+            hi = {"ok": True, "hub": hub_name(), "version": runtime.VERSION, "hubId": hub_id,
+                  # the hub's current addresses, as a pairing code carries them: only sent after the token checks
+                  # below. A station keeps its list current with them (a hub's LAN address can change; a phone
+                  # away from home needs the Tailscale one)
+                  "addresses": [a["url"] for a in pairing.hub_addresses(CFG["http"]["port"])
+                                if pairing.allow_flags(CFG["sync"]["allow"]).get(a["kind"])]}
             e = pairings.find(given)
             if e is not None:  # made on the Stations page: a station's pairing, or a peer hub's
                 if e["revoked"]:
@@ -58,22 +63,28 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                         return self._json({"error": "paused by the receiving hub (nothing is lost: it's sent when they "
                                                     "resume)"}, 423)
                     return self._ingest_body(ip, claimed, via=from_hub, writer=f"peer:{from_hub}")
-                if e["station"] and claimed and e["station"] != claimed:
+                owned, room = pairing.stations_of(e), pairing.max_stations(e)
+                if claimed and claimed not in owned and len(owned) >= room:
                     log.warning("ingest refused from %s (%s): pairing belongs to another station", ip, claimed)
-                    return self._json({"error": "this pairing code belongs to a different station"}, 403)
-                if hello:
-                    return self._json(hi)
+                    return self._json({"error": "this pairing code belongs to a different station" if room == 1 else
+                                       f"this pairing already logs its {room} radios"}, 403)
+                if hello:  # what this pairing may log: a phone adds radios to it (the Android app's radio list)
+                    return self._json({**hi, "stations": owned, "maxStations": room})
                 if not claimed:
                     return self._json({"error": "send X-Lorakeet-Station"}, 401)
                 writer = f"pair:{e['id']}"
-                if e["station"] is None:  # first use: the station must be free for it before the code is claimed
+                if claimed not in owned:  # a new radio: the station must be free for it before the code claims it
                     try:
                         syncer.claim(claimed, writer)
                     except sync_mod.IngestError as err:
                         log.warning("ingest refused from %s (%s): %s", ip, claimed, err)
                         return self._json({"error": str(err)}, err.status)
                     if not pairings.bind(e["id"], station=claimed):
-                        return self._json({"error": "this pairing code belongs to a different station"}, 403)
+                        # another request took the pairing's last free slot in between: release this claim, or the
+                        # station would be owned by a pairing that doesn't list it (found by a second-opinion review)
+                        syncer.unclaim(claimed, writer)
+                        return self._json({"error": "this pairing code belongs to a different station" if room == 1 else
+                                           f"this pairing already logs its {room} radios"}, 403)
                 return self._ingest_body(ip, claimed, writer=writer)
             tokens = sync_mod.follow_tokens(sync_mod.station_tokens(CFG["sync"]["station_tokens"]),
                                             nodeids.info(runtime.DATA_DIR / "mesh.db")["aliases"])
@@ -156,20 +167,22 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
             metas, over = station_meta(), station_overrides(store)
             hubst = syncer.status()["stations"] if isinstance(syncer, sync_mod.Hub) else {}
             plist = pairings.list()
-            ids = {r["id"] for r in analytics.stations(runtime.DATA_DIR / "mesh.db")} | set(metas) | {e["station"] for e in plist if e["station"]}
+            ids = ({r["id"] for r in analytics.stations(runtime.DATA_DIR / "mesh.db")} | set(metas)
+                   | {s for e in plist if e.get("kind") != "peer" for s in pairing.stations_of(e)})
             # forgotten stations stay out of the list (their logged data stays in Analytics) until they send again
             gone = json.loads((store.query("SELECT value FROM settings WHERE key='stations_forgotten'")
                                or [{"value": "{}"}])[0]["value"])
             ids = {i for i in ids if i not in gone or i in metas or i in hubst}
             rows = []
             for sid in sorted(ids, key=lambda x: (x != mesh.local_id, x)):
-                m, p = metas.get(sid) or {}, next((e for e in plist if e["station"] == sid), None)
+                m, p = metas.get(sid) or {}, next((e for e in plist if e.get("kind") != "peer" and sid in pairing.stations_of(e)), None)
                 loc = analytics.station_location(sid)
                 via = (hubst.get(sid) or {}).get("via")
                 vp = pairings.by_hub(via) if via else None
                 rows.append({"id": sid, "name": station_name(sid), "here": sid == mesh.local_id,
                              "via": via and {"hub": via, "label": vp["label"] if vp else "a peer hub"},
-                             "pairing": p and {"id": p["id"], "label": p["label"], "revoked": p["revoked"]},
+                             "pairing": p and {"id": p["id"], "label": p["label"], "revoked": p["revoked"],
+                                               "stations": len(pairing.stations_of(p)), "maxStations": pairing.max_stations(p)},
                              "sharedToken": sid != mesh.local_id and not p and not via and bool(m or hubst.get(sid)),
                              "lastContact": (hubst.get(sid) or {}).get("last") or m.get("received"),
                              "version": m.get("version"), "backlog": m.get("backlog"), "mobile": m.get("mobile"),
@@ -212,10 +225,13 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                     urls = [a["url"] for a in pairing.hub_addresses(CFG["http"]["port"]) if allow.get(a["kind"])]
                     if not urls:
                         raise ValueError("this computer has no address in the networks this hub allows")
-                    e, token = pairings.create(body.get("label"))
+                    e, token = pairings.create(body.get("label"), max_stations=pairing.PHONE_STATIONS if body.get("phone") else 1)
                     log.info("stations: pairing code made for %r (%s)", e["label"], e["id"])
+                    code = pairing.make_code(urls, token, hub_name())
+                    import radio_setup  # (segno QR; imported here like web_radio does)
+                    # the QR is the same code, for phones (the Android collector scans it)
                     return self._json({"ok": True, "id": e["id"], "label": e["label"], "addresses": urls,
-                                       "code": pairing.make_code(urls, token, hub_name())})
+                                       "code": code, "qr": radio_setup.qr_svg(code)})
                 if path == "/api/hub/station":
                     act, sid, pid = body.get("action"), body.get("station"), body.get("pairing")
                     if sid and not radioid.is_radio_id(sid):
@@ -237,6 +253,10 @@ def make(mesh, store, storage, alert_engine, syncer, login, peering, pairings, h
                         if not pairings.relabel(pid, str(body.get("label") or "")):
                             raise ValueError("no such pairing")
                         log.info("stations: pairing %s renamed", pid)
+                    elif act in ("phone", "single"):  # let a pairing log several radios (a phone), or one
+                        if not pairings.set_phone(pid, act == "phone"):
+                            raise ValueError("no such pairing (or it was revoked)")
+                        log.info("stations: pairing %s may now log %s", pid, "several radios" if act == "phone" else "one radio")
                     elif act == "revoke":
                         if not pairings.revoke(pid):
                             raise ValueError("no such pairing (or already revoked)")

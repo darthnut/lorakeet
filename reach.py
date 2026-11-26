@@ -19,7 +19,7 @@ import math
 import statistics
 
 import radioid
-from analytics import ALL_STATIONS, STATION_LOCATIONS, _connect, _window
+from analytics import ALL_STATIONS, OWN_FIX, STATION_LOCATIONS, _connect, _window
 
 POS_DAYS = 30      # a radio's position: the most precise one it sent in this long before the range ends
 CELL_KM = 3.0      # gap squares: wider than the ~3 km box of a 13-bit (public channel) position
@@ -47,7 +47,7 @@ def compute(db_path, range_key, station, describe):
 
 def _station_place(db, st, since, until):
     """(lat, lon, "configured" | "gps") for a fixed station, "moving" for one whose GPS track spans MOVED_KM, or None."""
-    fixes = db.execute("SELECT lat, lon FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
+    fixes = db.execute("SELECT lat, lon FROM positions WHERE node = ?1 AND station = ?1 AND " + OWN_FIX + " "
                        "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts BETWEEN ?2 AND ?3", (st, since, until)).fetchall()
     if fixes:
         lats, lons = [f[0] for f in fixes], [f[1] for f in fixes]

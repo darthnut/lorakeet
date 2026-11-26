@@ -6,6 +6,34 @@ are on the [releases page](https://github.com/darthnut/lorakeet/releases). Your 
 
 Updates never remove or rewrite data you've logged. See "Updating" in the README.
 
+## 0.5.4 (2026-11-26)
+
+**New**
+- **A phone can log several radios on one pairing:** Stations → Add a station → "A phone" makes a code that may claim up
+  to 4 radios, each its own station (the Lorakeet Android app's radio list); an existing pairing can be switched with "let it
+  add radios". Other pairings still claim one radio. Revoking a phone's pairing stops all its radios.
+- **Phone GPS for phone stations:** a station's track can come from the GPS of the phone logging it (positions
+  `source = 'phone'`, from the Lorakeet Android collector); routes, drive coverage and station positions use it like
+  the radio's own fixes. Database layout 5 adds an index for it.
+- **Hubs tell stations their current addresses** in the connection check, so a station can keep up when the hub's
+  local address changes, or reach it over Tailscale when the local one doesn't answer (the Android collector uses this).
+- **Pairing codes as QR codes:** Stations → Add a station now shows the new code as a QR next to the text, for
+  stations on a phone (the Lorakeet Android collector, in development, scans it).
+
+**Fixed**
+- **A station claim that lost a race is released:** two stations claiming a pairing's last free slot at once could
+  leave the loser owned by a pairing that doesn't list it, so nothing could write it until a revoke.
+- **An oversized login request is refused** (413) and its connection closed, instead of its unread remainder being
+  read as the next request on the same connection.
+- **Link history and noise steps** land on the right day: a change could be dated up to two days early, and the days
+  in between could show as a second, phantom step. Steps now sit at the midnight (or station event) that best
+  separates before from after, e.g. a station's move lines up with its Wi-Fi change.
+- **Sent messages a slow relay passed on:** when your radio gives up ("no relay heard in time") and then hears its message
+  rebroadcast within 90 seconds, the message now shows **Relayed (heard after the radio gave up)** instead of failed.
+- **Node status packets** (a radio's short status line, port 36) now show their text in the traffic feed and packet
+  browser. Their summary was always empty: the payload was read the wrong way. The packets themselves were logged in
+  full all along; ones logged before this update keep their empty summary.
+
 ## 0.5.3 (2026-10-28)
 
 **New**

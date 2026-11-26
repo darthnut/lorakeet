@@ -281,7 +281,9 @@ nonexistent radio.port).
   p25/p75, n, `covered` (analytics coverage). `find_steps`: binary segmentation over midnights + station event times;
   a split needs |median shift| >= 5 dB, >= 8 readings over >= 2 days each side (7-day windows) and non-overlapping
   middle halves; the best split is the most SEPARATED one (shift / robust spread), not the biggest shift (a late cut
-  mixing both sides can show a bigger gap). Station events (`station_events`, from main.events: every station's):
+  mixing both sides can show a bigger gap); then `_refine` moves it to the candidate within 2 days that puts the fewest
+  readings on the wrong side (the score alone let a midnight up to 2 days EARLY win and left a phantom second step;
+  on the real log it moved 4 of 21 steps, e.g. a station's move onto its Wi-Fi change). Station events (`station_events`, from main.events: every station's):
   `radio_settings`, and `network` only when it switches between two NAMED networks ("no network" in between is a
   dropout). `compare` skips phantoms (corruption.py) in the radios-only-before/after lists. Pages: the Analytics
   card (`renderLinks`, `linkRowsHtml`/`linkSpark`, shared with node.js), `#links` opens the comparison; the Stations

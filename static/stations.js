@@ -110,7 +110,9 @@ function renderStations() {
   const rows = H.stations.map((s) => {
     const stale = s.lastContact && Date.now() / 1000 - s.lastContact > 600;
     const p = s.pairing;
-    const relabel = p ? ` <button class="linkbtn" data-act="relabel" data-p="${esc(p.id)}" title="Rename this pairing">rename</button>` : "";
+    const relabel = p ? ` <button class="linkbtn" data-act="relabel" data-p="${esc(p.id)}" title="Rename this pairing">rename</button>`
+      + (p.revoked ? "" : p.maxStations > 1 ? ` <span class="muted" title="A phone's pairing: each radio it logs is its own station">(phone: ${p.stations} of ${p.maxStations} radios)</span>`
+        : ` <button class="linkbtn" data-act="phone" data-p="${esc(p.id)}" title="For the Lorakeet phone app: let this code log more radios">let it add radios</button>`) : "";
     const how = s.here ? "this computer" : s.via ? `from peer: ${esc(s.via.label)}` : p ? (p.revoked ? `<span class="bad">revoked</span> (${esc(p.label)})${relabel}` : `paired: ${esc(p.label)}${relabel}`)
       : s.sharedToken ? '<span title="Set up by hand with the shared [sync] token. It keeps working; pair it again to give it its own token you can revoke.">shared token</span>' : "—";
     const loc = s.location ? `${(+s.location[0]).toFixed(4)}, ${(+s.location[1]).toFixed(4)}${s.override.location ? " <span class=\"muted\">(set here)</span>" : ""}` : '<span class="muted">not set</span>';
@@ -147,9 +149,11 @@ $("stationList").addEventListener("click", async (e) => {
     relabelPairing(body.pairing);
     return;
   } else if (act === "revoke") {
-    if (!confirm("Revoke this pairing? The station can no longer send to this hub until it's paired again.")) return;
+    const n = H.stations.filter((s) => s.pairing?.id === body.pairing).length;
+    if (!confirm(n > 1 ? `Revoke this pairing? It's a phone's: all ${n} of its radios stop sending to this hub until it's paired again.`
+      : "Revoke this pairing? The station can no longer send to this hub until it's paired again.")) return;
   } else if (act === "forget") {
-    if (!confirm("Forget this station? It disappears from this list and the maps (its logged data stays). If it's still paired, its pairing goes too.")) return;
+    if (!confirm("Forget this station? It disappears from this list and the maps (its logged data stays). If it's still paired, its pairing goes too (a phone's pairing just drops this radio).")) return;
   }
   const r = await post("/api/hub/station", body);
   if (r.error) { $("err").textContent = r.error; return; }
@@ -158,12 +162,14 @@ $("stationList").addEventListener("click", async (e) => {
 
 $("pairBtn").addEventListener("click", async () => {
   $("pairBtn").disabled = true;
-  const r = await post("/api/hub/pair", { label: $("pairLabel").value });
+  const r = await post("/api/hub/pair", { label: $("pairLabel").value, phone: $("pairPhone").checked });
   $("pairBtn").disabled = false;
   if (r.error) { $("err").textContent = r.error; return; }
   $("pairLabel").value = "";
-  $("pairOut").innerHTML = `<div class="sharebox"><div style="flex:1 1 100%">
+  // r.qr is an SVG the server made from the code (segno): markup we generated, not user input
+  $("pairOut").innerHTML = `<div class="sharebox">${r.qr ? `<div class="qr" title="Scan with the Lorakeet Android app">${r.qr}</div>` : ""}<div style="flex:1 1 260px">
     <h3>Pairing code for “${esc(r.label)}”</h3>
+    <p class="note">On a phone: open the Lorakeet app → Station → <b>Pair with a hub</b> and scan this code.</p>
     <textarea readonly rows="3" id="codeBox" spellcheck="false">${esc(r.code)}</textarea>
     <p><button class="btn" id="codeCopy">Copy</button></p>
     <p class="note">On the station: in Lorakeet's setup choose <b>This station sends to a hub</b> and paste it (or its Stations page → Send to a hub). On a Raspberry Pi without a screen: <code>venv/bin/python server.py --join &lt;code&gt;</code>, then restart Lorakeet.<br>

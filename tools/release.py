@@ -255,6 +255,12 @@ def verify_download(tag, version, wait_s=600):
 
 def main(argv=None):
     global DRY
+    # the changelog and pull request text hold non-ASCII (arrows, quotes): a Windows console's cp1252 can't print them
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("action", choices=["prepare", "finish"])
     ap.add_argument("version", help="e.g. 0.5.0")

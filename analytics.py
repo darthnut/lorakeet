@@ -96,8 +96,11 @@ def dist_m(lat1, lon1, lat2, lon2):
     return 2 * 6371000 * math.asin(math.sqrt(a))
 
 
-# A station's own GPS fixes are positions rows with node = station = that radio and source = 'own'
-# (server.py Mesh._track_self). A mobile station has no fixed location; these say where it was.
+# A station's own GPS fixes are positions rows with node = station = that radio and source = 'own' (Mesh._track_self:
+# the radio's GPS) or 'phone' (the Android app: the phone's GPS, which is always within Bluetooth range of the
+# radio). A mobile station has no fixed location; these say where it was. Every query reads them through OWN_FIX,
+# written exactly like the positions_own_fix index's WHERE so SQLite can use that index.
+OWN_FIX = "source IN ('own', 'phone')"
 TRACK_MAX_AGE_S = 10 * 60  # an older fix doesn't say where a moving station is now
 
 
@@ -131,7 +134,7 @@ def smooth_track(fixes, stay_m=STAY_M, stay_s=STAY_S):
 def station_track(db, station, since, until):
     """A station's own GPS fixes in [since, until], oldest first: [(ts, lat, lon, alt), ...]."""
     return [tuple(r) for r in db.execute(
-        "SELECT ts, lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
+        "SELECT ts, lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND " + OWN_FIX + " "
         "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts BETWEEN ?2 AND ?3 ORDER BY ts", (station, since, until))]
 
 
@@ -142,7 +145,7 @@ def station_position(db, station, ts, max_age_s=TRACK_MAX_AGE_S):
     loc = STATION_LOCATIONS.get(station)
     if loc:
         return (*loc[:3], "fixed")
-    r = db.execute("SELECT lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND source = 'own' "
+    r = db.execute("SELECT lat, lon, alt FROM positions WHERE node = ?1 AND station = ?1 AND " + OWN_FIX + " "
                    "AND (precision_bits IS NULL OR precision_bits >= 32) AND ts <= ?2 AND ts >= ?3 ORDER BY ts DESC LIMIT 1", (station, ts, ts - max_age_s)).fetchone()
     return (r[0], r[1], r[2], "track") if r else None
 
@@ -176,8 +179,8 @@ _COMBINED = [
     _first("messages", "CASE WHEN outgoing = 1 OR pkt_id IS NULL THEN rowid ELSE COALESCE(from_id, '') || ':' || pkt_id END"),
     _first("links", "a, b, source, snr, CAST(ts / 120 AS INT)"),
     _first("telemetry", "node, battery, voltage, ch_util, air_util, uptime, temperature, CAST(ts / 120 AS INT)"),
-    # a station's own GPS fixes (source 'own') are each kept: they're its track, not a reception to de-duplicate
-    _first("positions", "source, CASE WHEN source = 'own' THEN rowid END, node, lat, lon, alt, CAST(ts / 120 AS INT)"),
+    # a station's own GPS fixes (OWN_FIX) are each kept: they're its track, not a reception to de-duplicate
+    _first("positions", "source, CASE WHEN " + OWN_FIX + " THEN rowid END, node, lat, lon, alt, CAST(ts / 120 AS INT)"),
     _first("telemetry_full", "node, kind, data, CAST(ts / 120 AS INT)"),
     _first("node_info", "node, long_name, short_name, hw_model, role, public_key"),
 ]

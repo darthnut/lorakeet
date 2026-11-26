@@ -147,8 +147,8 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"id": "!1234abcd", "wat
 | POST | `/api/radio/use` | Log from this radio: remembered by its USB serial number and found again on any port. | `device`: a USB port with a radio |
 | GET | `/api/hub` | The Stations page: hub mode, addresses, pairings, peers. |  |
 | POST | `/api/hub/mode` | Make this computer a hub (or stop). |  |
-| POST | `/api/hub/pair` | Make a station pairing code. |  |
-| POST | `/api/hub/station` | Rename, place, revoke or forget a station; rename a pairing. |  |
+| POST | `/api/hub/pair` | Make a station pairing code (phone: true = it may log several radios, each its own station). |  |
+| POST | `/api/hub/station` | Rename, place, revoke or forget a station; rename a pairing; let a pairing log several radios (phone) or one (single). |  |
 | POST | `/api/hub/test` | Test a pairing code's hub addresses. |  |
 | POST | `/api/hub/join` | Send this station's log to a hub. |  |
 | POST | `/api/hub/leave` | Stop sending to the hub. |  |

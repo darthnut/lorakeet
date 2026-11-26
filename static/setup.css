@@ -55,6 +55,9 @@ body.setup-page { background: var(--surface-2); min-height: 100vh; margin: 0; ov
 .radio .sharebox { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 8px; }
 .radio .sharebox .qr svg { display: block; border-radius: 6px; }
 .radio .sharebox > div:last-child { flex: 1 1 260px; min-width: 0; }
+/* Stations page: a new pairing code, with its QR for the Android app */
+#pairOut .sharebox { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 8px; }
+#pairOut .sharebox .qr svg { display: block; border-radius: 6px; }
 .radio .sharebox h3 { margin: 0 0 6px; font-size: 15px; }
 .radio .sharebox input { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); max-width: 100%; }
 .radio .checks { list-style: none; padding: 0; margin: 0 0 8px; font-size: 13px; }

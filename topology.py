@@ -17,7 +17,7 @@ from collections import defaultdict
 
 import corruption
 import radioid
-from analytics import (_connect, alias_map, smooth_track, _coverage, _window, measured_neighbors, port_group, resolve_relay, scope_local,
+from analytics import (OWN_FIX, _connect, alias_map, smooth_track, _coverage, _window, measured_neighbors, port_group, resolve_relay, scope_local,
                        station_ids, station_location)
 
 MEASURED = ("direct", "traceroute", "neighborinfo")
@@ -228,7 +228,7 @@ def station_tracks(db, since, until):
     before the range, so the station has a place from the start. "dwell" is where it spent the most time
     (fixes weighted by how long until the next one, capped at TRACK_FIX_MAX_AGE_S, in ~200 m squares):
     the one spot to draw it at when a single place is needed."""
-    exact = "source = 'own' AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
+    exact = OWN_FIX + " AND node = station AND (precision_bits IS NULL OR precision_bits >= 32)"
     out = {}
     for (sid,) in db.execute(f"SELECT DISTINCT node FROM positions WHERE {exact} AND ts BETWEEN ? AND ?", (since, until)).fetchall():
         before = db.execute(f"SELECT ts, lat, lon FROM positions WHERE {exact} AND node = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
